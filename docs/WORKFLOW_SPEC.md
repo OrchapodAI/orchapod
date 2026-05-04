@@ -1,0 +1,67 @@
+# Workflow YAML Specification
+
+A workflow is a YAML file describing a DAG of nodes to execute in order.
+YAML is the source of truth — the canvas JSON derives from it on every save.
+
+## Full schema
+
+```yaml
+name: "your-workflow-name"     # display name
+version: 1                     # increment on breaking changes
+
+inputs:                        # user-provided parameters at run time
+  my_input:
+    type: string               # string | integer | float | boolean
+    description: "What this input does"
+    default: "optional default"
+
+nodes:
+  - id: unique_node_id         # must be unique within the workflow
+    type: data-prep            # one of the 7 node types
+    needs: [other_node_id]     # dependency list (empty = no deps, runs first)
+    inputs:
+      key: value               # scalar
+      key: ${{ inputs.my_input }}            # reference to workflow input
+      key: ${{ nodes.other_id.outputs.name }} # reference to another node's output
+    resources:
+      gpu: "1xH100"            # GPU spec (omit for CPU-only nodes like data-prep)
+      provider_pref: ["runpod", "vastai"]    # provider preference order
+```
+
+## The 7 node types
+
+### `data-prep`
+Load, validate, split, reformat dataset to ChatML. CPU-only (no GPU pod).
+
+### `unsloth-train`
+LoRA SFT via Unsloth. 2-5x faster, ~80% less VRAM than vanilla HF.
+
+### `distill-sft`
+Off-policy knowledge distillation: teacher inference → student SFT.
+
+### `quantize`
+GGUF (for Ollama/llama.cpp) or AWQ (for vLLM). Can run after distill or train.
+
+### `lm-eval`
+Benchmark evaluation with lm-evaluation-harness + LLM-as-judge comparison.
+
+### `vllm-serve`
+Deploy as OpenAI-compatible endpoint via vLLM. Pod stays alive after training.
+
+## Input reference syntax
+
+| Syntax | Resolves to |
+|--------|-------------|
+| `${{ inputs.name }}` | Value provided by user at run time |
+| `${{ nodes.node_id.outputs.artifact_name }}` | R2 URI of artifact from completed node |
+
+## Demo workflow (the YC demo)
+
+```
+prep → train → distill → quant_gguf (parallel)
+                        → quant_awq  (parallel)
+                        → eval
+                        → deploy (depends on quant_awq + eval)
+```
+
+Expected runtime: ~25 minutes. Expected cost: under $5 on Vast.ai.

@@ -1,0 +1,83 @@
+# Local development environment
+# Runs all control-plane dependencies on a single machine.
+# GPU pods still run on RunPod/Vast.ai — this is just the orchestration layer.
+#
+# Usage: docker compose -f infra/docker-compose.dev.yml up -d
+
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: orchapod
+      POSTGRES_USER: orchapod
+      POSTGRES_PASSWORD: orchapod_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orchapod"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # MinIO as local R2 stand-in (S3-compatible)
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: orchapod
+      MINIO_ROOT_PASSWORD: orchapod_dev
+    ports:
+      - "9000:9000"   # S3 API (set ORCHAPOD_R2_ENDPOINT=http://localhost:9000)
+      - "9001:9001"   # Console UI
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # FastAPI control plane
+  api:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile.dev
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://orchapod:orchapod_dev@postgres:5432/orchapod
+      REDIS_URL: redis://redis:6379
+      ORCHAPOD_R2_ENDPOINT: http://minio:9000
+      ORCHAPOD_R2_ACCESS_KEY: orchapod
+      ORCHAPOD_R2_SECRET_KEY: orchapod_dev
+      ORCHAPOD_R2_BUCKET: orchapod-artifacts
+      ORCHAPOD_CONTROL_URL: http://api:8000
+      RUNPOD_API_KEY: ${RUNPOD_API_KEY}
+      VASTAI_API_KEY: ${VASTAI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../apps/api:/app/api    # hot reload
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  postgres_data:
+  minio_data:

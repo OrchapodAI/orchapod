@@ -9,12 +9,10 @@ import os
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-engine = create_async_engine(
-    os.environ["DATABASE_URL"],
-    echo=False,
-    pool_size=10,
-    max_overflow=20,
-)
+_db_url = os.environ["DATABASE_URL"]
+_pool_kwargs = {} if _db_url.startswith("sqlite") else {"pool_size": 10, "max_overflow": 20}
+
+engine = create_async_engine(_db_url, echo=False, **_pool_kwargs)
 
 SessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
     engine,

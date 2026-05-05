@@ -59,9 +59,9 @@ class Workflow(SQLModel, table=True):
 
 
 class Run(SQLModel, table=True):
-    """One execution of a workflow."""
+    """One execution of a workflow, or a standalone single-node run."""
     id:           uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    workflow_id:  uuid.UUID = Field(foreign_key="workflow.id")
+    workflow_id:  Optional[uuid.UUID] = Field(default=None, foreign_key="workflow.id")  # None for standalone runs
     user_id:      uuid.UUID
     status:       RunStatus = Field(default=RunStatus.PENDING)
     inputs:       dict = Field(default={}, sa_column=Column(JSON))  # user params at runtime

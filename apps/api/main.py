@@ -20,6 +20,7 @@ from sqlmodel import SQLModel
 
 from api.database import engine
 from api.routes.internal import router as internal_router
+from api.routes.runs import router as runs_router
 
 
 @asynccontextmanager
@@ -46,6 +47,7 @@ app = FastAPI(
 )
 
 app.include_router(internal_router)
+app.include_router(runs_router)
 
 
 @app.get("/healthz")

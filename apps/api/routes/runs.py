@@ -226,7 +226,9 @@ async def _execute_standalone_node(
             run.status           = RunStatus.FAILED
             run.finished_at      = datetime.utcnow()
             await db.commit()
-            raise
+            # Do not re-raise: this runs inside asyncio.create_task with no awaiter.
+            # Re-raising produces an unhandled exception warning and the error is
+            # already persisted to the DB — the user sees it via GET /runs/{id}.
 
 
 def _build_env(inputs: dict[str, Any], node_run: NodeRun) -> dict[str, str]:

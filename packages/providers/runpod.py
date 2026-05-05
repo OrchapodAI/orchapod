@@ -84,16 +84,31 @@ class RunPodProvider:
         )
 
     async def stream_logs(self, pod: Pod) -> AsyncIterator[str]:
-        # TODO: implement using RunPod log streaming API
-        # runpod.get_pod_log(pod.pod_id) returns lines
-        while True:
-            await asyncio.sleep(1)
-            yield "[RunPod] log streaming not yet implemented — polling every 1s"
+        # RunPod does not expose a real-time log stream via the Python SDK.
+        # Containers push log lines themselves via POST /internal/log.
+        # This method is only called by run_workflow.py (pipeline path), not
+        # the standalone path in runs.py, so a no-op is safe for now.
+        return
+        yield  # make this an async generator
 
     async def wait(self, pod: Pod) -> int:
-        # TODO: poll pod status until EXITED
-        # runpod.get_pod(pod.pod_id)["desiredStatus"] == "EXITED"
-        raise NotImplementedError("RunPodProvider.wait() — implement in week 3")
+        """Poll pod status every 10 s until the container exits. Returns exit code."""
+        _TERMINAL = {"EXITED", "DEAD", "TERMINATED"}
+        _POLL_INTERVAL = 10
+
+        while True:
+            info = runpod.get_pod(pod.pod_id)
+            if info is None:
+                return 1  # pod disappeared unexpectedly
+
+            status = info.get("desiredStatus", "")
+            if status in _TERMINAL:
+                runtime   = info.get("runtime") or {}
+                container = runtime.get("container") or {}
+                exit_code = container.get("exitCode")
+                return exit_code if exit_code is not None else 0
+
+            await asyncio.sleep(_POLL_INTERVAL)
 
     async def terminate(self, pod: Pod) -> None:
         runpod.terminate_pod(pod.pod_id)

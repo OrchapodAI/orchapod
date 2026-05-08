@@ -36,7 +36,7 @@ async def test_register_artifact_creates_record_and_updates_outputs(client, db, 
     assert artifact is not None
     assert artifact.name == "gguf_file"
     assert artifact.uri  == "r2://orchapod-artifacts/runs/abc/node/gguf_file"
-    assert artifact.metadata["precision"] == "q4_k_m"
+    assert artifact.meta["precision"] == "q4_k_m"
 
     await db.refresh(node_run)
     assert node_run.outputs["gguf_file"] == "r2://orchapod-artifacts/runs/abc/node/gguf_file"
@@ -111,7 +111,7 @@ async def test_register_ttl_creates_endpoint_artifact(client, db, seeded_node_ru
     artifact = result.first()
     assert artifact is not None
     assert artifact.uri == "https://pod-abc-8000.proxy.runpod.net/v1"
-    assert artifact.metadata["keep_alive_min"] == 30
+    assert artifact.meta["keep_alive_min"] == 30
 
 
 async def test_register_ttl_unknown_run_returns_404(client):

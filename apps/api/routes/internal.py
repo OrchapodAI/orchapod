@@ -66,7 +66,7 @@ async def register_artifact(body: RegisterArtifactRequest, db: AsyncSession = De
         name=body.artifact.name,
         kind=kind,
         uri=body.artifact.uri,
-        metadata=body.artifact.metadata,
+        meta=body.artifact.metadata,
     )
     db.add(artifact)
 
@@ -158,7 +158,7 @@ async def register_ttl(body: RegisterTTLRequest, db: AsyncSession = Depends(get_
         name="endpoint_url",
         kind=ArtifactKind.ENDPOINT,
         uri=body.endpoint_url,
-        metadata={"keep_alive_min": body.keep_alive_min},
+        meta={"keep_alive_min": body.keep_alive_min},
     )
     db.add(artifact)
     await db.commit()

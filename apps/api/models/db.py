@@ -110,7 +110,7 @@ class Artifact(SQLModel, table=True):
     kind:        ArtifactKind
     uri:         str                        # r2://orchapod-artifacts/runs/...
     size_bytes:  Optional[int] = None
-    metadata:    dict = Field(default={}, sa_column=Column(JSON))
+    meta:        dict = Field(default={}, sa_column=Column(JSON))
     created_at:  datetime = Field(default_factory=datetime.utcnow)
 
 

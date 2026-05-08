@@ -42,6 +42,12 @@ class ArtifactKind(str, Enum):
     ENDPOINT = "endpoint"
 
 
+class ModelFormat(str, Enum):
+    HF   = "hf"     # full HuggingFace safetensors/pytorch format
+    AWQ  = "awq"    # AutoAWQ quantized
+    GGUF = "gguf"   # llama.cpp GGUF
+
+
 # ---------------------------------------------------------------------------
 # Tables
 # ---------------------------------------------------------------------------
@@ -106,3 +112,27 @@ class Artifact(SQLModel, table=True):
     size_bytes:  Optional[int] = None
     metadata:    dict = Field(default={}, sa_column=Column(JSON))
     created_at:  datetime = Field(default_factory=datetime.utcnow)
+
+
+class Model(SQLModel, table=True):
+    """
+    Canonical model record — the searchable, shareable unit of a trained/quantized model.
+    Auto-populated when a node uploads a model artifact via /internal/artifact.
+    Weights live in R2; this table stores metadata + lineage.
+    """
+    id:              uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id:         uuid.UUID
+    name:            str                         # e.g. "qwen3-4b-dolly-q4"
+    description:     Optional[str] = None
+    base_model:      str                         # HF model ID it derives from
+    format:          ModelFormat
+    uri:             str                         # R2 URI to weights
+    size_bytes:      Optional[int] = None
+    tags:            list = Field(default=[], sa_column=Column(JSON))
+
+    # Lineage — denormalised for query speed
+    artifact_id:     Optional[uuid.UUID] = Field(default=None, foreign_key="artifact.id")
+    node_run_id:     Optional[uuid.UUID] = Field(default=None, foreign_key="noderun.id")
+    run_id:          Optional[uuid.UUID] = Field(default=None, foreign_key="run.id")
+
+    created_at:      datetime = Field(default_factory=datetime.utcnow)

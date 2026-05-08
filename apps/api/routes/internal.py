@@ -21,7 +21,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.database import get_db
-from api.models.db import Artifact, ArtifactKind, NodeRun, NodeStatus, Run, RunStatus
+from api.models.db import Artifact, ArtifactKind, Model, ModelFormat, NodeRun, NodeStatus, Run, RunStatus
 
 router = APIRouter(prefix="/internal", tags=["internal"])
 
@@ -75,8 +75,52 @@ async def register_artifact(body: RegisterArtifactRequest, db: AsyncSession = De
     outputs[body.artifact.name] = body.artifact.uri
     node_run.outputs = outputs
 
+    await db.flush()  # get artifact.id before auto-registering model
+
+    # Auto-register model record for any model artifact
+    if kind == ArtifactKind.MODEL:
+        _auto_register_model(db, artifact, node_run, body.artifact.metadata)
+
     await db.commit()
     return {"artifact_id": str(artifact.id)}
+
+
+def _auto_register_model(
+    db:       AsyncSession,
+    artifact: Artifact,
+    node_run: NodeRun,
+    metadata: dict,
+) -> None:
+    """
+    Create a Model registry entry from a model artifact.
+    format + base_model are inferred from the artifact metadata written by containers.
+    """
+    fmt_str    = metadata.get("format", "hf").lower()
+    base_model = metadata.get("base_model") or node_run.inputs.get("model", "unknown")
+
+    try:
+        fmt = ModelFormat(fmt_str)
+    except ValueError:
+        fmt = ModelFormat.HF
+
+    # Derive a default name: base_model slug + format + precision/bits if present
+    slug = base_model.split("/")[-1].lower().replace(".", "-")
+    suffix = metadata.get("precision") or (f"awq{metadata.get('bits','4')}" if fmt == ModelFormat.AWQ else "")
+    name = f"{slug}-{fmt.value}" + (f"-{suffix}" if suffix else "")
+
+    model = Model(
+        user_id=node_run.run_id,   # placeholder — replaced with real auth in V1
+        name=name,
+        base_model=base_model,
+        format=fmt,
+        uri=artifact.uri,
+        size_bytes=artifact.size_bytes,
+        tags=[fmt.value, base_model],
+        artifact_id=artifact.id,
+        node_run_id=node_run.id,
+        run_id=node_run.run_id,
+    )
+    db.add(model)
 
 
 # ---------------------------------------------------------------------------

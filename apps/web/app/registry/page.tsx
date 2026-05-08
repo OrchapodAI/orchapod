@@ -1,10 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ExternalLink, Cpu, BookOpen } from "lucide-react";
 import { api } from "@/lib/api";
 import type { BaseModel, PublicDataset } from "@/lib/types";
-import clsx from "clsx";
 
 type Tab = "models" | "datasets";
 
@@ -19,123 +17,144 @@ export default function RegistryPage() {
   }, []);
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="px-8 py-6 border-b border-slate-800">
-        <h1 className="text-xl font-semibold text-slate-100">Registry</h1>
-        <p className="text-sm text-slate-500 mt-0.5">
-          Curated base models and public datasets ready to use.
-        </p>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      {/* Topbar */}
+      <div className="op-topbar">
+        <div className="op-crumbs">
+          <span>orbital-research</span>
+          <span className="sep">/</span>
+          <span className="here">Registry</span>
+        </div>
+        <div className="spacer" />
       </div>
 
-      {/* Tabs */}
-      <div className="flex items-center gap-1 px-8 pt-4">
-        {(["models", "datasets"] as Tab[]).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={clsx(
-              "px-5 py-2 text-sm font-medium rounded-lg transition-colors capitalize",
-              tab === t
-                ? "bg-violet-600/20 text-violet-300"
-                : "text-slate-500 hover:text-slate-300"
-            )}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
+      {/* Body */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div style={{ padding: "24px 24px 0" }}>
+          <h1 style={{ fontSize: 22, fontWeight: 500, letterSpacing: "-0.02em" }}>Registry</h1>
+          <div className="muted" style={{ fontSize: 13.5, marginTop: 2 }}>Curated base models and public datasets</div>
+        </div>
 
-      <div className="flex-1 overflow-auto px-8 py-4">
-        {tab === "models" && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {models.map((m) => (
-              <div key={m.id} className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <h3 className="text-sm font-semibold text-slate-100">{m.name}</h3>
-                    <p className="text-xs text-slate-500 mt-0.5">{m.family}</p>
-                  </div>
-                  <a
-                    href={m.hf_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="p-1.5 text-slate-600 hover:text-slate-300 transition-colors"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
-                </div>
+        {/* Underline tabs */}
+        <div className="row" style={{ borderBottom: "1px solid var(--line)", padding: "0 24px", gap: 4, fontSize: 13, marginTop: 16 }}>
+          {(["models", "datasets"] as Tab[]).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              style={{
+                padding: "10px 8px",
+                border: "none", background: "transparent",
+                borderBottom: tab === t ? "2px solid var(--brand)" : "2px solid transparent",
+                color: tab === t ? "var(--brand-ink)" : "var(--ink-3)",
+                fontWeight: tab === t ? 500 : 400,
+                cursor: "pointer", fontFamily: "var(--font-ui)", fontSize: 13,
+                textTransform: "capitalize",
+              }}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
 
-                <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-                  <div className="bg-slate-950 rounded-lg p-2.5">
-                    <p className="text-slate-600">Params</p>
-                    <p className="text-slate-200 font-medium mt-0.5">{m.params_b}B</p>
-                  </div>
-                  <div className="bg-slate-950 rounded-lg p-2.5">
-                    <p className="text-slate-600">Context</p>
-                    <p className="text-slate-200 font-medium mt-0.5">{(m.context_len / 1000).toFixed(0)}K</p>
-                  </div>
-                </div>
-
-                <div className="mt-3 flex items-center gap-1.5">
-                  <Cpu className="w-3 h-3 text-slate-600" />
-                  <span className="text-[10px] text-slate-500">{m.recommended_gpu}</span>
-                  {m.requires_hf_token && (
-                    <span className="ml-auto text-[10px] text-amber-400 bg-amber-900/30 px-1.5 py-0.5 rounded-full">
-                      HF token required
-                    </span>
-                  )}
-                </div>
-
-                <div className="mt-3 flex flex-wrap gap-1">
-                  {m.use_cases.map((uc) => (
-                    <span key={uc} className="text-[10px] bg-slate-800 text-slate-500 px-2 py-0.5 rounded-full">
-                      {uc}
-                    </span>
+        <div style={{ flex: 1, padding: 24, overflow: "auto" }}>
+          {tab === "models" && (
+            <div className="card" style={{ overflow: "hidden" }}>
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th style={{ width: "30%" }}>Model</th>
+                    <th>Family</th>
+                    <th>Params</th>
+                    <th>Context</th>
+                    <th>GPU</th>
+                    <th>Use cases</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {models.map((m) => (
+                    <tr key={m.id}>
+                      <td>
+                        <div style={{ fontWeight: 500 }}>{m.name}</div>
+                        {m.requires_hf_token && (
+                          <span className="tag" style={{ background: "var(--amber-soft)", color: "var(--amber-ink)", marginTop: 2 }}>HF Token</span>
+                        )}
+                      </td>
+                      <td className="muted">{m.family}</td>
+                      <td className="mono">{m.params_b}B</td>
+                      <td className="mono">{(m.context_len / 1000).toFixed(0)}K</td>
+                      <td className="muted" style={{ fontSize: 12 }}>{m.recommended_gpu}</td>
+                      <td>
+                        <div className="row" style={{ gap: 4, flexWrap: "wrap" }}>
+                          {m.use_cases.slice(0, 3).map((uc) => (
+                            <span key={uc} className="tag" style={{ background: "var(--bg-3)", color: "var(--ink-2)" }}>{uc}</span>
+                          ))}
+                        </div>
+                      </td>
+                      <td>
+                        <a
+                          href={m.hf_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="btn btn-sm btn-ghost"
+                          style={{ textDecoration: "none" }}
+                        >
+                          HF ↗
+                        </a>
+                      </td>
+                    </tr>
                   ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+                </tbody>
+              </table>
+            </div>
+          )}
 
-        {tab === "datasets" && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {datasets.map((ds) => (
-              <div key={ds.id} className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <h3 className="text-sm font-semibold text-slate-100">{ds.name}</h3>
-                    <p className="text-xs text-slate-500 mt-1 leading-relaxed">{ds.description}</p>
-                  </div>
-                  <a
-                    href={ds.hf_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="p-1.5 text-slate-600 hover:text-slate-300 transition-colors shrink-0"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
-                </div>
-
-                <div className="mt-4 flex items-center gap-4 text-xs text-slate-500">
-                  <span className="flex items-center gap-1.5">
-                    <BookOpen className="w-3.5 h-3.5" />
-                    {ds.size}
-                  </span>
-                  <span className="bg-slate-800 px-2 py-0.5 rounded-full font-mono">{ds.format}</span>
-                </div>
-
-                <div className="mt-3 flex flex-wrap gap-1">
-                  {ds.use_cases.map((uc) => (
-                    <span key={uc} className="text-[10px] bg-slate-800 text-slate-500 px-2 py-0.5 rounded-full">
-                      {uc}
-                    </span>
+          {tab === "datasets" && (
+            <div className="card" style={{ overflow: "hidden" }}>
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th style={{ width: "30%" }}>Dataset</th>
+                    <th>Format</th>
+                    <th>Size</th>
+                    <th>Use cases</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {datasets.map((ds) => (
+                    <tr key={ds.id}>
+                      <td>
+                        <div style={{ fontWeight: 500 }}>{ds.name}</div>
+                        <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>{ds.description}</div>
+                      </td>
+                      <td><span className="mono tag" style={{ background: "var(--bg-3)", color: "var(--ink-2)" }}>{ds.format}</span></td>
+                      <td className="muted">{ds.size}</td>
+                      <td>
+                        <div className="row" style={{ gap: 4, flexWrap: "wrap" }}>
+                          {ds.use_cases.slice(0, 3).map((uc) => (
+                            <span key={uc} className="tag" style={{ background: "var(--bg-3)", color: "var(--ink-2)" }}>{uc}</span>
+                          ))}
+                        </div>
+                      </td>
+                      <td>
+                        <a
+                          href={ds.hf_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="btn btn-sm btn-ghost"
+                          style={{ textDecoration: "none" }}
+                        >
+                          HF ↗
+                        </a>
+                      </td>
+                    </tr>
                   ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

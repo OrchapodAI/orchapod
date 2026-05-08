@@ -14,17 +14,13 @@ import type { Workflow, NodeType } from "@/lib/types";
 import { OrchaNode, type OrchaNodeData } from "@/components/canvas/OrchaNode";
 import { NodePalette } from "@/components/canvas/NodePalette";
 import { NodePanel } from "@/components/canvas/NodePanel";
-import {
-  Save, Play, ArrowLeft, Loader2, ChevronRight, AlertCircle,
-} from "lucide-react";
 import Link from "next/link";
-import clsx from "clsx";
 
 const nodeTypes = { orchapodNode: OrchaNode };
 
 const DEFAULT_EDGE = {
   animated: false,
-  style: { stroke: "#475569", strokeWidth: 2 },
+  style: { stroke: "#DFE1E6", strokeWidth: 2 },
 };
 
 export default function CanvasPage() {
@@ -149,62 +145,40 @@ export default function CanvasPage() {
 
   if (!workflow) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <Loader2 className="w-6 h-6 animate-spin text-slate-500" />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%" }}>
+        <span className="muted">Loading…</span>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Top bar */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/80 backdrop-blur shrink-0 gap-4">
-        <div className="flex items-center gap-3 min-w-0">
-          <Link href="/workflows" className="p-1.5 rounded-md text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors">
-            <ArrowLeft className="w-4 h-4" />
-          </Link>
-          <div className="min-w-0">
-            <h1 className="text-sm font-semibold text-slate-100 truncate">{workflow.name}</h1>
-            <p className="text-[11px] text-slate-500">v{workflow.version} · {nodes.length} nodes</p>
-          </div>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      {/* Topbar */}
+      <div className="op-topbar">
+        <Link href="/workflows" className="btn btn-sm btn-ghost" style={{ textDecoration: "none" }}>← Workflows</Link>
+        <div className="op-crumbs">
+          <span className="here">{workflow.name}</span>
         </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          {error && (
-            <p className="flex items-center gap-1.5 text-xs text-red-400">
-              <AlertCircle className="w-3.5 h-3.5" />
-              {error}
-            </p>
-          )}
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm text-slate-300 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 transition-colors"
-          >
-            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-            Save
-          </button>
-          <button
-            onClick={handleRun}
-            disabled={starting || nodes.length === 0}
-            className={clsx(
-              "flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-colors",
-              "bg-violet-600 hover:bg-violet-500 text-white disabled:bg-slate-800 disabled:text-slate-600"
-            )}
-          >
-            {starting
-              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              : <Play className="w-3.5 h-3.5 fill-current" />}
-            Run
-          </button>
-        </div>
+        <span className="muted mono" style={{ fontSize: 11 }}>v{workflow.version} · {nodes.length} nodes</span>
+        <div className="spacer" />
+        {error && <span className="muted" style={{ fontSize: 12, color: "var(--rose)" }}>{error}</span>}
+        <button onClick={handleSave} disabled={saving} className="btn btn-sm">
+          {saving ? "Saving…" : "Save draft"}
+        </button>
+        <button
+          onClick={handleRun}
+          disabled={starting || nodes.length === 0}
+          className="btn btn-sm btn-primary"
+        >
+          {starting ? "Starting…" : "▶ Run"}
+        </button>
       </div>
 
       {/* Canvas area */}
-      <div className="flex flex-1 min-h-0">
+      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         <NodePalette onDragStart={onDragStart} />
 
-        <div ref={dropRef} className="flex-1 min-w-0" onDrop={onDrop} onDragOver={onDragOver}>
+        <div ref={dropRef} style={{ flex: 1, minWidth: 0 }} onDrop={onDrop} onDragOver={onDragOver}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -217,14 +191,13 @@ export default function CanvasPage() {
             onInit={setRfInstance}
             fitView
             fitViewOptions={{ padding: 0.2 }}
-            className="bg-slate-950"
+            style={{ background: "var(--bg-2)" }}
             deleteKeyCode="Backspace"
           >
-            <Background color="#1e293b" gap={20} size={1} />
-            <Controls className="!bottom-4 !left-4" />
+            <Background color="oklch(0.86 0.010 280)" gap={20} size={1} />
+            <Controls />
             <MiniMap
               nodeColor={(n) => nodeColor((n.data as OrchaNodeData)?.node_type)}
-              className="!bottom-4 !right-4"
             />
           </ReactFlow>
         </div>
@@ -245,14 +218,14 @@ export default function CanvasPage() {
 
 function nodeColor(type: NodeType): string {
   const map: Record<NodeType, string> = {
-    "data-prep":     "#38bdf8",
-    "unsloth-train": "#a78bfa",
-    "distill-sft":   "#e879f9",
-    "quantize":      "#fbbf24",
-    "lm-eval":       "#34d399",
-    "vllm-serve":    "#fb7185",
+    "data-prep":     "oklch(0.65 0.13 200)",
+    "unsloth-train": "oklch(0.55 0.18 282)",
+    "distill-sft":   "oklch(0.62 0.16 320)",
+    "quantize":      "oklch(0.68 0.14 75)",
+    "lm-eval":       "oklch(0.62 0.13 162)",
+    "vllm-serve":    "oklch(0.55 0.16 25)",
   };
-  return map[type] ?? "#64748b";
+  return map[type] ?? "oklch(0.72 0.008 280)";
 }
 
 function defaultInputs(type: NodeType): Record<string, unknown> {

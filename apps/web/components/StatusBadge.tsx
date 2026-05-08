@@ -1,29 +1,29 @@
-import clsx from "clsx";
 import type { RunStatus, NodeStatus } from "@/lib/types";
 
 type Status = RunStatus | NodeStatus;
 
-const STYLES: Record<Status, string> = {
-  pending:          "bg-slate-800 text-slate-400",
-  provisioning_gpu: "bg-amber-900/40 text-amber-400 animate-pulse",
-  running:          "bg-blue-900/40 text-blue-400 animate-pulse",
-  succeeded:        "bg-emerald-900/40 text-emerald-400",
-  failed:           "bg-red-900/40 text-red-400",
-  cancelled:        "bg-slate-800 text-slate-500",
+const PILL_CLASS: Record<Status, string> = {
+  pending:          "pending",
+  provisioning_gpu: "provisioning",
+  running:          "running",
+  succeeded:        "succeeded",
+  failed:           "failed",
+  cancelled:        "cancelled",
 };
 
 const LABELS: Record<Status, string> = {
   pending:          "Pending",
-  provisioning_gpu: "Provisioning GPU",
+  provisioning_gpu: "Provisioning",
   running:          "Running",
-  succeeded:        "Succeeded",
+  succeeded:        "Done",
   failed:           "Failed",
   cancelled:        "Cancelled",
 };
 
 export function StatusBadge({ status }: { status: Status }) {
   return (
-    <span className={clsx("inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium", STYLES[status])}>
+    <span className={`pill ${PILL_CLASS[status]}`}>
+      <span className="dot" />
       {LABELS[status]}
     </span>
   );

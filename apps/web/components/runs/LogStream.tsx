@@ -11,10 +11,10 @@ export interface LogLine {
 }
 
 const LEVEL_COLOR: Record<string, string> = {
-  INFO:     "text-slate-400",
-  WARN:     "text-amber-400",
-  ERROR:    "text-red-400",
-  PROGRESS: "text-violet-400",
+  INFO:     "text-[#6B778C]",
+  WARN:     "text-[#FF8B00]",
+  ERROR:    "text-[#DE350B]",
+  PROGRESS: "text-[#6554C0]",
 };
 
 interface Props {
@@ -35,30 +35,31 @@ export function LogStream({ lines, activeNodeId, connected }: Props) {
     : lines;
 
   return (
-    <div className="flex flex-col h-full bg-slate-950 rounded-xl border border-slate-800 overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-800 shrink-0">
-        <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Logs</p>
+    <div className="flex flex-col h-full bg-white rounded border border-[#DFE1E6] overflow-hidden shadow-sm">
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#DFE1E6] bg-[#F4F5F7] shrink-0">
+        <p className="text-xs font-semibold text-[#172B4D] uppercase tracking-wide">Logs</p>
         <div className="flex items-center gap-1.5">
-          <div className={clsx("w-1.5 h-1.5 rounded-full", connected ? "bg-emerald-400 animate-pulse" : "bg-slate-600")} />
-          <span className="text-[10px] text-slate-500">{connected ? "Live" : "Disconnected"}</span>
+          <div className={clsx(
+            "w-1.5 h-1.5 rounded-full",
+            connected ? "bg-[#00875A] animate-pulse" : "bg-[#C1C7D0]"
+          )} />
+          <span className="text-[11px] text-[#6B778C]">{connected ? "Live" : "Disconnected"}</span>
         </div>
       </div>
 
-      {/* Log lines */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-0.5 font-mono text-xs">
+      <div className="flex-1 overflow-y-auto p-4 space-y-0.5 font-mono text-xs bg-[#FAFBFC]">
         {filtered.length === 0 ? (
-          <p className="text-slate-700 italic">Waiting for logs…</p>
+          <p className="text-[#97A0AF] italic">Waiting for logs…</p>
         ) : (
           filtered.map((line, i) => (
-            <div key={i} className="flex gap-3 hover:bg-slate-900/50 px-1 py-0.5 rounded log-line">
-              <span className="text-slate-700 shrink-0 w-20 truncate">
+            <div key={i} className="flex gap-3 hover:bg-[#F4F5F7] px-1 py-0.5 rounded log-line">
+              <span className="text-[#97A0AF] shrink-0 w-20 truncate">
                 {new Date(line.ts).toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })}
               </span>
-              <span className={clsx("shrink-0 w-16", LEVEL_COLOR[line.level] ?? "text-slate-500")}>
+              <span className={clsx("shrink-0 w-16", LEVEL_COLOR[line.level] ?? "text-[#6B778C]")}>
                 [{line.level}]
               </span>
-              <span className="text-slate-300 break-all">{line.message}</span>
+              <span className="text-[#172B4D] break-all">{line.message}</span>
             </div>
           ))
         )}

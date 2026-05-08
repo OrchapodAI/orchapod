@@ -9,10 +9,15 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="h-full">
-      <body className="h-full bg-slate-950 text-slate-100 antialiased flex">
+    <html lang="en" style={{ height: '100%' }}>
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+      </head>
+      <body style={{ height: '100%', display: 'grid', gridTemplateColumns: '248px 1fr', margin: 0 }}>
         <Sidebar />
-        <main className="flex-1 flex flex-col min-h-0 overflow-auto">
+        <main style={{ display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'auto' }}>
           {children}
         </main>
       </body>

@@ -1,0 +1,33 @@
+# FastAPI + server
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+python-multipart==0.0.12
+
+# Database
+sqlmodel==0.0.21
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
+
+# Redis
+redis[hiredis]==5.2.0
+
+# S3 / R2 / MinIO
+boto3==1.35.71
+
+# Auth (Clerk JWT verification)
+python-jose[cryptography]==3.3.0
+httpx==0.28.0
+
+# YAML parsing
+pyyaml==6.0.2
+
+# AI / agent layer
+anthropic==0.40.0
+
+# Validation + settings
+pydantic==2.10.3
+pydantic-settings==2.6.1
+
+# Utilities
+python-dotenv==1.0.1

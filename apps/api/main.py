@@ -23,10 +23,7 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(SQLModel.metadata.create_all)
 
     from packages.providers.vastai import register_providers
-    register_providers(
-        runpod_key=os.environ.get("RUNPOD_API_KEY", ""),
-        vastai_key=os.environ.get("VASTAI_API_KEY", ""),
-    )
+    register_providers(vastai_key=os.environ.get("VASTAI_API_KEY", ""))
 
     yield
 

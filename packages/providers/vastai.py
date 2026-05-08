@@ -208,18 +208,15 @@ from .base import GPUProvider  # noqa: E402 (re-export for consumers)
 PROVIDERS: dict[str, GPUProvider] = {}
 
 
-def register_providers(runpod_key: str = "", vastai_key: str = "") -> None:
+def register_providers(vastai_key: str = "") -> None:
     if vastai_key:
         PROVIDERS["vastai"] = VastAIProvider(api_key=vastai_key)
-    if runpod_key:
-        from .runpod import RunPodProvider
-        PROVIDERS["runpod"] = RunPodProvider(api_key=runpod_key)
 
 
 async def pick_provider(resources) -> GPUProvider:
-    """First-available from provider_pref list."""
+    """Pick Vast.ai provider, raise NoCapacity if unavailable."""
     from .base import NoCapacity
-    pref = getattr(resources, "provider_pref", None) or ["vastai", "runpod"]
+    pref = getattr(resources, "provider_pref", None) or ["vastai"]
     for name in pref:
         provider = PROVIDERS.get(name)
         if provider is None:

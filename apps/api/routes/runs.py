@@ -33,7 +33,7 @@ router = APIRouter(tags=["runs"])
 
 class ResourcesRequest(BaseModel):
     gpu:           str       = "1xH100"
-    provider_pref: list[str] = ["vastai", "runpod"]
+    provider_pref: list[str] = ["vastai"]
 
 
 class NodeRunRequest(BaseModel):

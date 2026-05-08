@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.database import create_tables
 from api.services.events import event_bus
-from api.routes import workflows, runs, models, internal, ws
+from api.routes import workflows, runs, models, internal, ws, inference
 
 
 @asynccontextmanager
@@ -53,7 +53,8 @@ app.add_middleware(
 app.include_router(workflows.router, prefix="/workflows", tags=["workflows"])
 app.include_router(runs.router,      prefix="/runs",      tags=["runs"])
 app.include_router(models.router,    prefix="/registry",  tags=["registry"])
-app.include_router(internal.router,  prefix="/internal",  tags=["internal"])
+app.include_router(internal.router,   prefix="/internal",   tags=["internal"])
+app.include_router(inference.router,  prefix="/inference",  tags=["inference"])
 
 # WebSocket
 app.include_router(ws.router, tags=["websocket"])

@@ -124,6 +124,40 @@ export interface NodeTypeMeta {
   outputs_schema: Record<string, unknown>;
 }
 
+// ── Inference ─────────────────────────────────────────────────────────────────
+
+export type InferenceMode = "serve" | "quantize-serve" | "quantize-gguf";
+
+export interface DeployRequest {
+  model: string;
+  mode: InferenceMode;
+  gpu?: string;
+  max_model_len?: number;
+  keep_alive_min?: number;
+  precision?: "q4_k_m" | "q5_k_m" | "q8_0";
+  served_model_name?: string;
+  hf_token?: string;
+}
+
+export interface DeployResponse {
+  run_id: string;
+  workflow_id: string;
+  status: string;
+  mode: InferenceMode;
+  model: string;
+}
+
+export interface InferenceEndpoint {
+  run_id: string;
+  workflow_name: string;
+  model: string;
+  endpoint_url: string | null;
+  status: string;
+  started_at: string | null;
+  keep_alive_min: number | null;
+  gpu_provider: string | null;
+}
+
 // ── WebSocket events ──────────────────────────────────────────────────────────
 
 export type WsEvent =

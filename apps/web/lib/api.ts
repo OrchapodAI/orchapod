@@ -1,5 +1,6 @@
 import type {
   Workflow, Run, NodeRun, Artifact, BaseModel, PublicDataset, NodeTypeMeta, NodeType,
+  DeployRequest, DeployResponse, InferenceEndpoint,
 } from "./types";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -68,6 +69,15 @@ export const api = {
     },
     costEstimate(id: string): Promise<{ nodes: { node_id: string; node_type: NodeType; quotes: unknown[] }[] }> {
       return req(`/runs/${id}/cost-estimate`);
+    },
+  },
+
+  inference: {
+    deploy(body: DeployRequest): Promise<DeployResponse> {
+      return req("/inference/deploy", { method: "POST", body: JSON.stringify(body) });
+    },
+    endpoints(): Promise<InferenceEndpoint[]> {
+      return req("/inference/endpoints");
     },
   },
 

@@ -137,7 +137,7 @@ export default function RunPage() {
           )}
           {endpointArtifact && (
             <a
-              href={String(endpointArtifact.metadata.url ?? "#")}
+              href={String(endpointArtifact.meta?.url ?? "#")}
               target="_blank"
               rel="noreferrer"
               className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm bg-emerald-900/40 text-emerald-300 border border-emerald-800 hover:bg-emerald-900/60 transition-colors"

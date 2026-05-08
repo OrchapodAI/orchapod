@@ -110,7 +110,7 @@ async def receive_artifact(event: ArtifactEvent, db: Session):
         kind=ArtifactKind(art_data["kind"]),
         uri=art_data["uri"],
         size_bytes=art_data.get("size_bytes"),
-        metadata=art_data.get("metadata", {}),
+        meta=art_data.get("metadata", {}),
     )
     db.add(artifact)
 

@@ -46,8 +46,11 @@ nodes:
     type: lm-eval
     needs: [train]
     inputs:
-      models: [\${{ nodes.train.outputs.merged_model }}]
-      tasks: [hellaswag, gsm8k]
+      models:
+        - \${{ nodes.train.outputs.merged_model }}
+      tasks:
+        - hellaswag
+        - gsm8k
       judge_eval_set: \${{ nodes.prep.outputs.eval_jsonl }}
 `;
 

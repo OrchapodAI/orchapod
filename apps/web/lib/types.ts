@@ -80,7 +80,7 @@ export interface Artifact {
   kind: "dataset" | "model" | "metrics" | "log" | "endpoint";
   uri: string;
   size_bytes: number | null;
-  metadata: Record<string, unknown>;
+  meta: Record<string, unknown>;
   created_at: string;
 }
 

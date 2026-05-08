@@ -82,7 +82,7 @@ class ArtifactOut(BaseModel):
     kind: ArtifactKind
     uri: str
     size_bytes: int | None
-    metadata: dict
+    meta: dict
     created_at: datetime
 
 
@@ -297,6 +297,6 @@ def _artifact_out(a: Artifact) -> ArtifactOut:
         kind=a.kind,
         uri=a.uri,
         size_bytes=a.size_bytes,
-        metadata=a.metadata,
+        metadata=a.meta,
         created_at=a.created_at,
     )

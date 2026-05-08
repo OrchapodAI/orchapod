@@ -1,13 +1,7 @@
 """
 apps/api/main.py
 
-Orchapod control-plane API.
-Entry point: uvicorn api.main:app --host 0.0.0.0 --port 8000
-
-Startup sequence:
-  1. Create DB tables (dev only — production uses Alembic migrations)
-  2. Register GPU providers from environment keys
-  3. Mount routers
+FastAPI application entry point for the Orchapod control plane.
 """
 
 from __future__ import annotations
@@ -25,11 +19,9 @@ from api.routes.runs import router as runs_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create tables on first boot (idempotent — safe to run repeatedly in dev)
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
 
-    # Initialise GPU provider registry
     from packages.providers.vastai import register_providers
     register_providers(
         runpod_key=os.environ.get("RUNPOD_API_KEY", ""),
@@ -37,6 +29,7 @@ async def lifespan(app: FastAPI):
     )
 
     yield
+
     await engine.dispose()
 
 
@@ -48,8 +41,3 @@ app = FastAPI(
 
 app.include_router(internal_router)
 app.include_router(runs_router)
-
-
-@app.get("/healthz")
-async def healthz():
-    return {"status": "ok"}

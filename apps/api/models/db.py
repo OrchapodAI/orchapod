@@ -59,9 +59,9 @@ class Workflow(SQLModel, table=True):
 
 
 class Run(SQLModel, table=True):
-    """One execution of a workflow, or a standalone single-node run."""
+    """One execution of a workflow."""
     id:           uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    workflow_id:  Optional[uuid.UUID] = Field(default=None, foreign_key="workflow.id")  # None for standalone runs
+    workflow_id:  Optional[uuid.UUID] = Field(default=None, foreign_key="workflow.id")
     user_id:      uuid.UUID
     status:       RunStatus = Field(default=RunStatus.PENDING)
     inputs:       dict = Field(default={}, sa_column=Column(JSON))  # user params at runtime
@@ -79,19 +79,19 @@ class Run(SQLModel, table=True):
 
 class NodeRun(SQLModel, table=True):
     """One node execution within a run."""
-    id:           uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    run_id:       uuid.UUID = Field(foreign_key="run.id")
-    node_id:      str                        # from YAML, e.g. "fine_tune_1"
-    node_type:    str                        # "unsloth-train", "quantize", etc.
-    status:       NodeStatus = Field(default=NodeStatus.PENDING)
-    started_at:   Optional[datetime] = None
-    finished_at:  Optional[datetime] = None
-    inputs:       dict = Field(default={}, sa_column=Column(JSON))   # resolved URIs
-    outputs:      dict = Field(default={}, sa_column=Column(JSON))   # artifact URIs
-    logs_uri:     Optional[str] = None       # R2 path to full log file
-    error:        Optional[str] = None
-    gpu_pod_id:   Optional[str] = None       # provider pod ID — needed for TTL termination
-    gpu_provider: Optional[str] = None       # "runpod" | "vastai" — which provider owns this pod
+    id:          uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    run_id:      uuid.UUID = Field(foreign_key="run.id")
+    node_id:     str                        # from YAML, e.g. "fine_tune_1"
+    node_type:   str                        # "unsloth-train", "quantize", etc.
+    status:      NodeStatus = Field(default=NodeStatus.PENDING)
+    started_at:  Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    inputs:      dict = Field(default={}, sa_column=Column(JSON))   # resolved URIs
+    outputs:     dict = Field(default={}, sa_column=Column(JSON))   # artifact URIs
+    logs_uri:    Optional[str] = None       # R2 path to full log file
+    error:       Optional[str] = None
+    gpu_pod_id:  Optional[str] = None
+    gpu_provider: Optional[str] = None
 
     # per-node state: pending → running → (succeeded | failed)
 

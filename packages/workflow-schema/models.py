@@ -50,7 +50,7 @@ class GGUFPrecision(str, Enum):
 class ResourceSpec(BaseModel):
     gpu: str = Field(default="1xH100", description="GPU spec string, e.g. '1xH100', '1xA100'")
     provider_pref: list[str] = Field(
-        default=["runpod", "vastai"],
+        default=["vastai", "runpod"],
         description="Ordered list of preferred providers"
     )
 
@@ -99,11 +99,11 @@ class DistillSFTOutputs(BaseModel):
 
 
 class QuantizeInputs(BaseModel):
-    model: str = Field(description="HF model ID (e.g. 'Qwen/Qwen3-4B-Instruct') or R2 URI")
+    model: str = Field(description="HF model ID (e.g. Qwen/Qwen3-4B-Instruct) or R2 URI")
     method: QuantizeMethod
     precision: GGUFPrecision = Field(default=GGUFPrecision.Q4_K_M, description="GGUF only")
     bits: int = Field(default=4, description="AWQ only")
-    hf_token: str | None = Field(default=None, description="HuggingFace token for gated models")
+    hf_token: str | None = Field(default=None, description="HuggingFace token for private models")
 
 class QuantizeOutputs(BaseModel):
     gguf_file: str | None = None    # set when method=gguf
@@ -122,13 +122,13 @@ class LMEvalOutputs(BaseModel):
 
 
 class VLLMServeInputs(BaseModel):
-    model: str = Field(description="HF model ID (e.g. 'Qwen/Qwen3-4B-Instruct') or R2 URI of merged/AWQ model")
-    served_model_name: str | None = Field(default=None, description="Model name exposed in the API (defaults to model basename)")
+    model: str = Field(description="HF model ID or R2 URI to AWQ model")
     max_model_len: int = Field(default=8192)
-    gpu_memory_utilization: float = Field(default=0.90, ge=0.1, le=1.0)
     keep_alive_min: int = Field(default=60)
-    hf_token: str | None = Field(default=None, description="HuggingFace token for gated models")
-    dtype: str = Field(default="bfloat16", description="bfloat16 | float16 | auto")
+    served_model_name: str | None = Field(default=None, description="Override name in /v1/models")
+    gpu_memory_utilization: float = Field(default=0.90)
+    dtype: str = Field(default="bfloat16")
+    hf_token: str | None = Field(default=None, description="HuggingFace token for private models")
 
 class VLLMServeOutputs(BaseModel):
     endpoint_url: str
@@ -209,10 +209,10 @@ NODE_REGISTRY: dict[NodeType, dict] = {
         "runtime": "gpu",
     },
     NodeType.QUANTIZE: {
-        "description": "Quantize a model to GGUF (for Ollama/llama.cpp) or AWQ (for vLLM). Accepts HF model IDs or R2 URIs — no upstream nodes required.",
+        "description": "Quantize a model to GGUF (for Ollama/llama.cpp) or AWQ (for vLLM).",
         "inputs_schema": QuantizeInputs,
         "outputs_schema": QuantizeOutputs,
-        "runtime": "gpu",  # AWQ needs GPU; GGUF calibration benefits from it too
+        "runtime": "cpu",  # GGUF is CPU; AWQ needs GPU — handled inside the container
     },
     NodeType.LM_EVAL: {
         "description": "Evaluate and compare models with lm-evaluation-harness + LLM-as-judge.",
@@ -221,7 +221,7 @@ NODE_REGISTRY: dict[NodeType, dict] = {
         "runtime": "gpu",
     },
     NodeType.VLLM_SERVE: {
-        "description": "Deploy a model as an OpenAI-compatible endpoint via vLLM. Accepts HF model IDs or R2 URIs — no upstream nodes required.",
+        "description": "Deploy a model as an OpenAI-compatible endpoint via vLLM.",
         "inputs_schema": VLLMServeInputs,
         "outputs_schema": VLLMServeOutputs,
         "runtime": "gpu",

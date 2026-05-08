@@ -5,15 +5,12 @@ User-facing routes for submitting and monitoring node runs.
 
 POST /nodes/run           — submit a single node (no workflow YAML required)
 GET  /runs/{run_id}       — poll run status + node outputs
-
-The standalone execution path mirrors apps/api/executor/run_workflow.py but
-uses standard AsyncSession calls directly, avoiding the half-implemented custom
-db.update_node_run() interface in that file.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import uuid
 from datetime import datetime
@@ -36,7 +33,7 @@ router = APIRouter(tags=["runs"])
 
 class ResourcesRequest(BaseModel):
     gpu:           str       = "1xH100"
-    provider_pref: list[str] = ["runpod", "vastai"]
+    provider_pref: list[str] = ["vastai", "runpod"]
 
 
 class NodeRunRequest(BaseModel):
@@ -88,10 +85,9 @@ async def submit_node_run(body: NodeRunRequest, db: AsyncSession = Depends(get_d
         valid = [n.value for n in NodeType]
         raise HTTPException(422, f"Unknown node_type '{body.node_type}'. Valid: {valid}")
 
-    # Create a standalone Run (no workflow_id)
     run = Run(user_id=uuid.uuid4(), status=RunStatus.PROVISIONING_GPU)
     db.add(run)
-    await db.flush()   # get run.id without committing yet
+    await db.flush()
 
     node_run = NodeRun(
         run_id=run.id,
@@ -167,7 +163,8 @@ async def _execute_standalone_node(
     resources:   ResourcesRequest,
 ) -> None:
     """
-    Provisions a GPU pod, starts the container, waits for exit, then cleans up.
+    Provisions a GPU pod, starts the container, and waits for exit (except
+    vllm-serve, which is long-running and managed by the TTL route).
     Runs entirely in the background after POST /nodes/run returns 202.
     """
     from packages.providers.base import GPUSpec, Pod
@@ -185,8 +182,8 @@ async def _execute_standalone_node(
 
         try:
             provider = await pick_provider(resource_spec)
-            gpu_type  = resource_spec.gpu.split("x")[-1]
-            gpu_spec  = GPUSpec(gpu_type=gpu_type, count=1)
+            gpu_type = resource_spec.gpu.split("x")[-1]
+            gpu_spec = GPUSpec(gpu_type=gpu_type, count=1)
 
             image = f"ghcr.io/orchapod/{node_type}:latest"
             env   = _build_env(inputs, node_run)
@@ -202,22 +199,22 @@ async def _execute_standalone_node(
             run.gpu_pod_id        = pod.pod_id
             await db.commit()
 
-            # Stream logs via /internal/log webhook (containers call that themselves)
-            # Here we just wait for the container to exit.
+            if node_type == "vllm-serve":
+                # Long-running: container calls /internal/ttl once healthy.
+                # TTL background task handles termination + status update.
+                return
+
             exit_code = await provider.wait(pod)
 
             if exit_code != 0:
                 raise RuntimeError(f"Container exited with code {exit_code}")
 
-            # vllm-serve stays alive — TTL route handles termination
-            if node_type != "vllm-serve":
-                await provider.terminate(pod)
-                node_run.status      = NodeStatus.SUCCEEDED
-                node_run.finished_at = datetime.utcnow()
-                run.status           = RunStatus.SUCCEEDED
-                run.finished_at      = datetime.utcnow()
-                await db.commit()
-            # else: node stays RUNNING until /internal/ttl terminates it
+            await provider.terminate(pod)
+            node_run.status      = NodeStatus.SUCCEEDED
+            node_run.finished_at = datetime.utcnow()
+            run.status           = RunStatus.SUCCEEDED
+            run.finished_at      = datetime.utcnow()
+            await db.commit()
 
         except Exception as exc:
             node_run.status      = NodeStatus.FAILED
@@ -226,16 +223,14 @@ async def _execute_standalone_node(
             run.status           = RunStatus.FAILED
             run.finished_at      = datetime.utcnow()
             await db.commit()
-            # Do not re-raise: this runs inside asyncio.create_task with no awaiter.
-            # Re-raising produces an unhandled exception warning and the error is
-            # already persisted to the DB — the user sees it via GET /runs/{id}.
+            # Do not re-raise: runs inside asyncio.create_task with no awaiter.
+            # Error is already persisted — visible via GET /runs/{id}.
 
 
 def _build_env(inputs: dict[str, Any], node_run: NodeRun) -> dict[str, str]:
     """Build the env dict injected into the GPU pod container."""
-    import json
     return {
-        "ORCHAPOD_NODE_INPUTS":      json.dumps(inputs),
+        "ORCHAPOD_NODE_INPUTS":      json.dumps(inputs, separators=(",", ":")),
         "ORCHAPOD_NODE_OUTPUTS_DIR": "/tmp/orchapod_outputs",
         "ORCHAPOD_RUN_ID":           str(node_run.run_id),
         "ORCHAPOD_NODE_ID":          node_run.node_id,

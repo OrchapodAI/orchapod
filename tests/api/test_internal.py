@@ -1,7 +1,5 @@
 """
 Tests for POST /internal/artifact, /internal/ttl, /internal/log
-
-These are the routes that GPU pod containers call back into once running.
 """
 
 import uuid
@@ -33,7 +31,6 @@ async def test_register_artifact_creates_record_and_updates_outputs(client, db, 
 
     assert resp.status_code == 201
 
-    # Artifact row created
     result = await db.exec(select(Artifact).where(Artifact.node_run_id == node_run.id))
     artifact = result.first()
     assert artifact is not None
@@ -41,7 +38,6 @@ async def test_register_artifact_creates_record_and_updates_outputs(client, db, 
     assert artifact.uri  == "r2://orchapod-artifacts/runs/abc/node/gguf_file"
     assert artifact.metadata["precision"] == "q4_k_m"
 
-    # NodeRun.outputs updated so downstream nodes can reference it
     await db.refresh(node_run)
     assert node_run.outputs["gguf_file"] == "r2://orchapod-artifacts/runs/abc/node/gguf_file"
 
@@ -75,7 +71,7 @@ async def test_register_artifact_unknown_kind_returns_422(client, seeded_node_ru
 async def test_register_ttl_stores_endpoint_url_in_outputs(client, db, seeded_node_run):
     run, node_run = seeded_node_run
 
-    with patch("asyncio.create_task"):  # don't actually sleep + terminate
+    with patch("asyncio.create_task"):
         resp = await client.post("/internal/ttl", json={
             "run_id":         str(run.id),
             "node_id":        "node",

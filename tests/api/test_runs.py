@@ -3,7 +3,7 @@ Tests for POST /nodes/run and GET /runs/{run_id}
 """
 
 import uuid
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch
 
 import pytest
 
@@ -13,7 +13,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 async def test_submit_valid_node_type_returns_202(client):
-    with patch("asyncio.create_task"):  # don't actually provision a pod
+    with patch("asyncio.create_task"):
         resp = await client.post("/nodes/run", json={
             "node_type": "vllm-serve",
             "inputs": {"model": "Qwen/Qwen3-4B-Instruct", "keep_alive_min": 60},
@@ -75,7 +75,6 @@ async def test_get_run_returns_status_and_nodes(client, seeded_node_run):
 async def test_get_run_includes_outputs(client, db, seeded_node_run):
     run, node_run = seeded_node_run
 
-    # Simulate the endpoint URL being registered by /internal/ttl
     node_run.outputs = {"endpoint_url": "https://pod-abc-8000.proxy.runpod.net/v1"}
     await db.commit()
 

@@ -61,7 +61,7 @@ class Workflow(SQLModel, table=True):
 class Run(SQLModel, table=True):
     """One execution of a workflow."""
     id:           uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    workflow_id:  uuid.UUID = Field(foreign_key="workflow.id")
+    workflow_id:  Optional[uuid.UUID] = Field(default=None, foreign_key="workflow.id")
     user_id:      uuid.UUID
     status:       RunStatus = Field(default=RunStatus.PENDING)
     inputs:       dict = Field(default={}, sa_column=Column(JSON))  # user params at runtime
@@ -90,6 +90,8 @@ class NodeRun(SQLModel, table=True):
     outputs:     dict = Field(default={}, sa_column=Column(JSON))   # artifact URIs
     logs_uri:    Optional[str] = None       # R2 path to full log file
     error:       Optional[str] = None
+    gpu_pod_id:  Optional[str] = None
+    gpu_provider: Optional[str] = None
 
     # per-node state: pending → running → (succeeded | failed)
 

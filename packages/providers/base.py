@@ -53,11 +53,13 @@ class GPUProvider(Protocol):
         gpu_spec: GPUSpec,
         image: str,
         env: dict[str, str],
+        ports: list[int] = [],
     ) -> Pod:
         """
         Provision a GPU pod, pull the container image, start it.
         Returns when the container is running (not when it completes).
         Raises: ProvisionError if no capacity or image pull fails.
+        ports: TCP ports to expose publicly (e.g. [8000] for vllm-serve).
         """
         ...
 

@@ -88,6 +88,7 @@ class VastAIProvider:
         gpu_spec: GPUSpec,
         image: str,
         env: dict[str, str],
+        ports: list[int] = [],
     ) -> Pod:
         offers = await asyncio.to_thread(self._search_offers, gpu_spec, limit=5)
         if not offers:
@@ -95,7 +96,8 @@ class VastAIProvider:
                 f"No Vast.ai offers available for {gpu_spec.gpu_type} x{gpu_spec.count}"
             )
 
-        env_str = _env_to_str(env)
+        env_str   = _env_to_str(env)
+        ports_str = " ".join(str(p) for p in ports) if ports else ""
 
         for offer in offers:
             try:
@@ -106,6 +108,7 @@ class VastAIProvider:
                     env=env_str,
                     disk=100,
                     onstart="",
+                    ports=ports_str,
                 )
                 instance_id = result.get("new_contract")
                 if instance_id is None:

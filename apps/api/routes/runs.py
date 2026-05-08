@@ -187,8 +187,10 @@ async def _execute_standalone_node(
 
             image = f"ghcr.io/orchapod/{node_type}:latest"
             env   = _build_env(inputs, node_run)
+            # vllm-serve needs port 8000 exposed so VAST_TCP_PORT_8000 is set
+            expose_ports = [8000] if node_type == "vllm-serve" else []
 
-            pod = await provider.provision(gpu_spec=gpu_spec, image=image, env=env)
+            pod = await provider.provision(gpu_spec=gpu_spec, image=image, env=env, ports=expose_ports)
 
             node_run.gpu_pod_id   = pod.pod_id
             node_run.gpu_provider = provider.name

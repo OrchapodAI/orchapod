@@ -1,7 +1,10 @@
 """
 apps/api/main.py
 
-FastAPI application entry point for the Orchapod control plane.
+FastAPI control-plane entry point for Orchapod.ai.
+Handles: workflow CRUD, run lifecycle, live log streaming, internal container webhooks.
+
+Start: uvicorn api.main:app --reload
 """
 
 from __future__ import annotations
@@ -10,33 +13,52 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from sqlmodel import SQLModel
+from fastapi.middleware.cors import CORSMiddleware
 
-from api.database import engine
-from api.routes.internal import router as internal_router
-from api.routes.models import router as models_router
-from api.routes.runs import router as runs_router
+from api.database import create_tables
+from api.services.events import event_bus
+from api.routes import workflows, runs, models, internal, ws
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
+    # Startup
+    await create_tables()
+    await event_bus.connect()
 
     from packages.providers.vastai import register_providers
     register_providers(vastai_key=os.environ.get("VASTAI_API_KEY", ""))
 
     yield
-
-    await engine.dispose()
+    # Shutdown
+    await event_bus.disconnect()
 
 
 app = FastAPI(
-    title="Orchapod Control Plane",
+    title="Orchapod API",
+    description="Control plane for the Orchapod.ai LLM fine-tuning platform.",
     version="0.1.0",
     lifespan=lifespan,
 )
 
-app.include_router(internal_router)
-app.include_router(models_router)
-app.include_router(runs_router)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # tighten in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# REST routes
+app.include_router(workflows.router, prefix="/workflows", tags=["workflows"])
+app.include_router(runs.router,      prefix="/runs",      tags=["runs"])
+app.include_router(models.router,    prefix="/registry",  tags=["registry"])
+app.include_router(internal.router,  prefix="/internal",  tags=["internal"])
+
+# WebSocket
+app.include_router(ws.router, tags=["websocket"])
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}

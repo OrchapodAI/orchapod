@@ -1,0 +1,260 @@
+﻿Issue Type,Issue key,Issue id,Summary,Assignee,Assignee Id,Reporter,Reporter Id,Priority,Status,Resolution,Created,Updated,Due date,Description
+Task,KAN-80,10079,Batch inference endpoint,,,Harikrishnan Girikumar,712020:24e32962-896e-4610-91e2-5daa6c9f6070,Medium,To Do,,07/May/26 8:13 PM,07/May/26 8:13 PM,,"h2. Metadata
+
+* *Owner:* Backend + ML
+* *Estimate:* 4d
+* *Phase:* V1
+* *Priority:* P2
+
+h2. Description
+
+Batch inference endpoint — bulk scoring jobs at lower cost. Accept a JSONL of prompts, return JSONL of completions asynchronously. ~50% cheaper than real-time. Useful for synthetic data gen and offline eval."
+Task,KAN-79,10078,Webhook on completion for async use cases,,,Harikrishnan Girikumar,712020:24e32962-896e-4610-91e2-5daa6c9f6070,Medium,To Do,,07/May/26 8:13 PM,07/May/26 8:13 PM,,"h2. Metadata
+
+* *Owner:* Backend
+* *Estimate:* 2d
+* *Phase:* V1
+* *Priority:* P2
+
+h2. Description
+
+Webhook on completion for async use cases. POST to user URL with run_id, status, output URIs when a workflow finishes. HMAC-signed for verification."
+Task,KAN-78,10077,Token-level rate limiting per API key,,,Harikrishnan Girikumar,712020:24e32962-896e-4610-91e2-5daa6c9f6070,Medium,To Do,,07/May/26 8:13 PM,07/May/26 8:13 PM,,"h2. Metadata
+
+* *Owner:* Backend
+* *Estimate:* 2d
+* *Phase:* V1
+* *Priority:* P2
+
+h2. Description
+
+Token-level rate limiting per API key. Sliding window or token bucket. Tier-aware defaults (free / pro / team / enterprise). Returns 429 with retry-after."
+Task,KAN-77,10076,Inference observability / Langfuse integration,,,Harikrishnan Girikumar,712020:24e32962-896e-4610-91e2-5daa6c9f6070,Medium,To Do,,07/May/26 8:13 PM,07/May/26 8:13 PM,,"h2. Metadata
+
+* *Owner:* Backend
+* *Estimate:* 3d
+* *Phase:* V1
+* *Priority:* P2
+
+h2. Description
+
+Inference observability — Langfuse self-hosted integration. Per-request traces, token usage, latency breakdown, error tracking. Replaces having to ship per-team observability stacks."
+Task,KAN-76,10075,Speculative decoding for known model pairs,,,Harikrishnan Girikumar,712020:24e32962-896e-4610-91e2-5daa6c9f6070,Low,To Do,,07/May/26 8:13 PM,07/May/26 8:13 PM,,"h2. Metadata
+
+* *Owner:* ML
+* *Estimate:* 5d
+* *Phase:* V2
+* *Priority:* P2
+
+h2. Description
+
+Speculative decoding for known model pairs — 2–3× throughput. Use the user's distilled student as the speculator for the teacher. Natural extension of the distill-sft node."
+Task,KAN-75,10074,Inference cost dashboard,,,Harikrishnan Girikumar,712020:24e32962-896e-4610-91e2-5daa6c9f6070,Medium,To Do,,07/May/26 8:12 PM,07/May/26 8:12 PM,,"h2. Metadata
+
+* *Owner:* Designer + Backend
+* *Estimate:* 4d
+* *Phase:* V1
+* *Priority:* P2
+
+h2. Description
+
+Inference cost dashboard — per-model, per-day, per-user spend breakdown. Stacked line chart, top-N expensive endpoints, alerts on spend spikes."
+Task,KAN-74,10073,Production traffic capture / proxy mode,,,Harikrishnan Girikumar,712020:24e32962-896e-4610-91e2-5daa6c9f6070,High,To Do,,07/May/26 8:12 PM,07/May/26 8:12 PM,,"h2. Metadata
+
+* *Owner:* Backend
+* *Estimate:* 6d
+* *Phase:* V1
+* *Priority:* P1
+
+h2. Description
+
+Production traffic capture / proxy mode (OpenPipe-style). One config line in user's app routes inference through us; we capture inputs/outputs for next training round. *Closes the data flywheel* — high commercial impact."
+Task,KAN-73,10072,Custom domain + API key management UI,,,Harikrishnan Girikumar,712020:24e32962-896e-4610-91e2-5daa6c9f6070,Medium,To Do,,07/May/26 8:12 PM,07/May/26 8:12 PM,,"h2. Metadata
+
+* *Owner:* Designer + Backend
+* *Estimate:* 4d
+* *Phase:* V1
+* *Priority:* P2
+
+h2. Description
+
+Custom domain + API key management UI. Users add their domain (CNAME setup), manage multiple API keys per project, set per-key rate limits and scopes."
+Task,KAN-72,10071,Persistent always-on serving tier (with billing),,,Harikrishnan Girikumar,712020:24e32962-896e-4610-91e2-5daa6c9f6070,High,To Do,,07/May/26 8:12 PM,07/May/26 8:12 PM,,"h2. Metadata
+
+* *Owner:* Backend
+* *Estimate:* 5d
+* *Phase:* V1
+* *Priority:* P1
+
+h2. Description
+
+Persistent always-on serving tier (with billing). Separate from training-derived endpoints. Users promote a model to ""production""; it stays warm with metered token billing. *Revenue-generating V1 capability.*"
+Task,KAN-71,10070,Autoscaling inference (replicas based on QPS),,,Harikrishnan Girikumar,712020:24e32962-896e-4610-91e2-5daa6c9f6070,Medium,To Do,,07/May/26 8:12 PM,07/May/26 8:12 PM,,"h2. Metadata
+
+* *Owner:* Backend
+* *Estimate:* 6d
+* *Phase:* V1
+* *Priority:* P2
+
+h2. Description
+
+Autoscaling inference — replicas scale with QPS. Cold-start mitigation via warm pool. Per-tier scaling policies (free tier: 0–1, pro: 1–3, team: 1–10)."
+Task,KAN-70,10069,Llama.cpp HTTP server endpoint variant,,,Harikrishnan Girikumar,712020:24e32962-896e-4610-91e2-5daa6c9f6070,Medium,To Do,,07/May/26 8:12 PM,07/May/26 8:12 PM,,"h2. Metadata
+
+* *Owner:* ML
+* *Estimate:* 2d
+* *Phase:* V1
+* *Priority:* P2
+
+h2. Description
+
+Llama.cpp HTTP server endpoint variant — for CPU/Mac deployments. OpenAI-compatible facade. Tiny resource footprint."
+Task,KAN-69,10068,SGLang endpoint variant,,,Harikrishnan Girikumar,712020:24e32962-896e-4610-91e2-5daa6c9f6070,Medium,To Do,,07/May/26 8:12 PM,07/May/26 8:12 PM,,"h2. Metadata
+
+* *Owner:* ML
+* *Estimate:* 3d
+* *Phase:* V1
+* *Priority:* P2
+
+h2. Description
+
+SGLang endpoint variant — best-in-class for prefix-cached agent/RAG workloads. Higher throughput than vLLM when many requests share long prompts."
+Task,KAN-68,10067,Ollama / GGUF endpoint variant,,,Harikrishnan Girikumar,712020:24e32962-896e-4610-91e2-5daa6c9f6070,Medium,To Do,,07/May/26 8:11 PM,07/May/26 8:11 PM,,"h2. Metadata
+
+* *Owner:* ML
+* *Estimate:* 3d
+* *Phase:* V1
+* *Priority:* P2
+
+h2. Description
+
+Ollama / GGUF endpoint variant — alternative serving path for users who deploy locally or want CPU-friendly inference. OpenAI-compatible facade over Ollama."
+Task,KAN-67,10066,Multi-LoRA dynamic adapter routing (LoRAX-style),,,Harikrishnan Girikumar,712020:24e32962-896e-4610-91e2-5daa6c9f6070,High,To Do,,07/May/26 8:11 PM,07/May/26 8:11 PM,,"h2. Metadata
+
+* *Owner:* ML + Backend
+* *Estimate:* 8d
+* *Phase:* V1
+* *Priority:* P1
+
+h2. Description
+
+*High commercial impact.* LoRAX-style dynamic adapter routing in vLLM — host 50 fine-tunes on 1 GPU, route by Authorization header / model name. Drives the ""fine-tuned inference at base-model rates"" pricing line. *Highest-leverage V1 card.*"
+Task,KAN-30,10029,Endpoint expiry warnings + extend button,,,Harikrishnan Girikumar,712020:24e32962-896e-4610-91e2-5daa6c9f6070,High,To Do,,07/May/26 7:41 PM,07/May/26 7:41 PM,,"h2. Metadata
+
+* *Owner:* Backend + Designer
+* *Estimate:* 2d
+* *Phase:* MVP-W9-10
+* *Priority:* P1
+
+h2. Description
+
+Endpoint expires per {{keep_alive_min}}. Show countdown in UI. Email + in-app warning at T-10min. ""Extend by 1 hour"" button (incurs additional cost, shown).
+
+h2. Acceptance Criteria
+
+* Countdown updates live
+* Email warning fires at T-10min
+* Extend button triggers re-up + cost preview
+* Extension reflected in run cost total"
+Task,KAN-29,10028,"""Try it"" chat box in run viewer",,,Harikrishnan Girikumar,712020:24e32962-896e-4610-91e2-5daa6c9f6070,Highest,To Do,,07/May/26 7:41 PM,07/May/26 7:41 PM,,"h2. Metadata
+
+* *Owner:* Designer
+* *Estimate:* 3d
+* *Phase:* MVP-W7-8
+* *Priority:* P0
+
+h2. Description
+
+Chat UI in the run viewer's {{vllm-serve}} node side-panel that hits the live endpoint. Streams tokens. Shows latency, tokens/sec, total cost so far.
+
+h2. Acceptance Criteria
+
+* Streaming token display
+* Conversation history within session
+* System prompt configurable
+* Live latency + throughput stats
+* Doesn't crash on endpoint timeout — clear error message"
+Task,KAN-28,10027,Public endpoint URL stability (Cloudflare Tunnel),,,Harikrishnan Girikumar,712020:24e32962-896e-4610-91e2-5daa6c9f6070,Highest,To Do,,07/May/26 7:41 PM,07/May/26 7:41 PM,,"h2. Metadata
+
+* *Owner:* Backend
+* *Estimate:* 3d
+* *Phase:* MVP-W7-8
+* *Priority:* P0
+
+h2. Description
+
+GPU provider URLs are ephemeral and ugly. Wrap each {{vllm-serve}} with a Cloudflare Tunnel for a stable {{https://{run_id}.endpoints.orchapod.dev}} URL with auto-TLS.
+
+h2. Acceptance Criteria
+
+* Tunnel created per run, destroyed on TTL expiry
+* Subdomain pattern documented and stable
+* Latency overhead <50ms vs raw provider URL
+* Works on both RunPod and Vast.ai"
+Task,KAN-27,10026,vllm-serve node,,,Harikrishnan Girikumar,712020:24e32962-896e-4610-91e2-5daa6c9f6070,Highest,To Do,,07/May/26 7:41 PM,07/May/26 7:41 PM,,"h2. Metadata
+
+* *Owner:* Backend + ML
+* *Estimate:* 4d
+* *Phase:* MVP-W7-8
+* *Priority:* P0
+
+h2. Description
+
+From MVP plan §7.6. Launches vLLM with OpenAI-compatible server, exposes port via RunPod/Vast public URL, generates a bearer token, returns endpoint info.
+
+h2. Acceptance Criteria
+
+* [ ] Loads HF, AWQ, and merged formats correctly
+* [ ] OpenAI-compatible {{/v1/chat/completions}} works with the openai Python client
+* [ ] Bearer auth required; token rotates per run
+* [ ] keep_alive_min honored — pod auto-terminates
+* [ ] First-token latency <1s for warm 4B-class model"
+Task,KAN-26,10025,Hugging Face model download node,,,Harikrishnan Girikumar,712020:24e32962-896e-4610-91e2-5daa6c9f6070,Highest,To Do,,07/May/26 7:41 PM,07/May/26 7:41 PM,,"h2. Metadata
+
+* *Owner:* ML
+* *Estimate:* 2d
+* *Phase:* MVP-W1-2
+* *Priority:* P0
+
+h2. Description
+
+Node accepts an HF model ID, downloads to R2 via the GPU pod (using HF's resume-on-failure), registers in model registry. Supports private with token.
+
+h2. Acceptance Criteria
+
+* Downloads in <10min for 7B-class models on H100 with good network
+* Resume on partial failure
+* Verifies SHA256 of downloaded files
+* Token from user secrets"
+Task,KAN-25,10024,Model registry schema,,,Harikrishnan Girikumar,712020:24e32962-896e-4610-91e2-5daa6c9f6070,Highest,To Do,,07/May/26 7:40 PM,07/May/26 7:40 PM,,"h2. Metadata
+
+* *Owner:* Backend
+* *Estimate:* 2d
+* *Phase:* MVP-W3-4
+* *Priority:* P0
+
+h2. Description
+
+Canonical ""model"" record: id, name, base_model, format (HF/AWQ/GGUF), size_bytes, lineage (which workflow run produced it), tags. Stored in PG, weights in R2.
+
+h2. Acceptance Criteria
+
+* Pydantic + SQLModel
+* Lineage links back to producing run + node
+* Searchable by tag, base_model, format
+* Migration scripts ready"
+Epic,KAN-4,10003,Inference Engine,,,Harikrishnan Girikumar,712020:24e32962-896e-4610-91e2-5daa6c9f6070,Medium,To Do,,07/May/26 7:35 PM,07/May/26 7:35 PM,,"h2. Goal
+
+Any model produced by a workflow — fine-tuned, distilled, quantized — can be served through a stable OpenAI-compatible API endpoint with one click, with auto-shutdown to control costs.
+
+h2. MVP scope
+
+vLLM serving on the same provisioned GPU, OpenAI-compatible endpoint, auto-shutdown after configured TTL, ""Try it"" chat box in run viewer. Multi-LoRA dynamic adapter routing (LoRAX-style) is V1.
+
+h2. V1+ scope
+
+Multi-LoRA dynamic adapter routing (host 50 fine-tunes on 1 GPU), Ollama/SGLang/llama.cpp endpoint variants, autoscaling, persistent always-on serving tier with billing, custom domain + API key UI, production traffic capture (OpenPipe-style), inference cost dashboard, speculative decoding, Langfuse observability, batch inference.
+
+h2. Owner
+
+Backend lead with ML support on the vLLM container, Designer on the ""Try it"" chat surface."

@@ -107,6 +107,18 @@ python scripts/seed-demo-workflow.py
 
 ---
 
+## Branch naming
+
+Use `<area>/<short-description>` for branch names.
+
+Examples:
+
+- `node/data_inference` for node-related work
+- `api/run-status` for API changes
+- `web/canvas-toolbar` for frontend changes
+
+---
+
 ## Tech stack
 
 | Layer | Choice | Why |

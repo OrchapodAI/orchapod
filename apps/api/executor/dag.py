@@ -53,7 +53,7 @@ def compile_dag(workflow_yaml: str, runtime_inputs: dict) -> DAG:
     Parse a workflow YAML string into a DAG ready for execution.
     Validates node types, dependency references, and required inputs.
     """
-    from packages.workflow_schema.models import NODE_REGISTRY, NodeType
+    from packages.workflow_schema.models import NODE_REGISTRY, NodeType  # noqa: PLC0415
 
     spec = yaml.safe_load(workflow_yaml)
     dag = DAG()

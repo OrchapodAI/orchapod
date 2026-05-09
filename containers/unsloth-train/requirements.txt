@@ -1,0 +1,11 @@
+# containers/unsloth-train/requirements.txt
+# Pinned 2025-05-09 — test this set together before bumping any individual package.
+# unsloth[colab-new] skips reinstalling torch/CUDA already present in the base image.
+unsloth[colab-new]==2025.3.19
+trl==0.15.2
+transformers==4.48.3
+datasets==3.3.2
+accelerate==1.3.0
+bitsandbytes==0.45.0
+peft==0.14.0
+boto3==1.37.0

@@ -2,11 +2,9 @@
 apps/api/executor/run_workflow.py
 
 Asyncio workflow executor — the heart of the control plane.
-Runs workflow DAGs topologically, node by node.
-MVP: sequential execution (no same-level parallelism — keeps GPU costs predictable).
-V1: parallelize nodes that have no interdependency.
+Executes workflow DAGs topologically, node by node.
 
-Key invariants (from architecture doc):
+Key invariants:
   - The control plane NEVER trains. All ML work runs in GPU pods.
   - Every artifact lives in R2, addressed by runs/{run_id}/{node_id}/{name}.
   - Nodes never read from each other directly — only via R2 URIs.
@@ -14,15 +12,22 @@ Key invariants (from architecture doc):
 """
 
 from __future__ import annotations
+
 import asyncio
 import json
+import os
 import re
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable, Awaitable
 
-from ..models.db import Run, NodeRun, RunStatus, NodeStatus
-from .dag import compile_dag, DAGNode
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
+
+from api.models.db import Run, NodeRun, Artifact, RunStatus, NodeStatus
+from api.executor.dag import compile_dag, DAGNode
+
+Broadcast = Callable[[uuid.UUID, dict], Awaitable[None]]
 
 
 class NodeFailed(Exception):
@@ -30,38 +35,56 @@ class NodeFailed(Exception):
 
 
 # ---------------------------------------------------------------------------
-# Top-level entry point (called from FastAPI route POST /runs/{id}/start)
+# Top-level entry point
 # ---------------------------------------------------------------------------
 
-async def run_workflow(run_id: uuid.UUID, db, broadcast) -> None:
+async def run_workflow(run_id: uuid.UUID, db: AsyncSession, broadcast: Broadcast) -> None:
     """
-    Execute a workflow run.
-    db       — async database session
-    broadcast — async fn(run_id, event) for WebSocket state pushes
+    Execute a workflow run end-to-end.
+    Called as a background task from POST /runs/{id}/start.
     """
+    from api.models.db import Workflow
     run = await db.get(Run, run_id)
-    workflow = await db.get_workflow(run.workflow_id)
+    workflow = await db.get(Workflow, run.workflow_id)
 
     dag = compile_dag(workflow.yaml, run.inputs)
 
-    await _update_run_status(db, run, RunStatus.RUNNING)
+    await _set_run_status(db, run, RunStatus.RUNNING)
     await broadcast(run_id, {"type": "run_status", "status": "running"})
 
     for dag_node in dag.topological_order():
         node_run = await _create_node_run(db, run, dag_node)
-        await broadcast(run_id, {"type": "node_status", "node_id": dag_node.id, "status": "running"})
+        await broadcast(run_id, {
+            "type": "node_status",
+            "node_id": dag_node.id,
+            "status": "running",
+        })
 
         try:
-            await execute_node(node_run, db, broadcast)
+            outputs = await _execute_node(node_run, dag_node, run, db, broadcast)
+            await _mark_node_succeeded(db, node_run, outputs)
         except NodeFailed as e:
             await _mark_node_failed(db, node_run, str(e))
-            await _mark_run_failed(db, run, str(e))
-            await broadcast(run_id, {"type": "run_status", "status": "failed", "error": str(e)})
+            await _set_run_failed(db, run, str(e))
+            await broadcast(run_id, {
+                "type": "run_status",
+                "status": "failed",
+                "error": str(e),
+            })
             return
+        except asyncio.CancelledError:
+            await _mark_node_failed(db, node_run, "Run was cancelled")
+            await _set_run_failed(db, run, "Cancelled")
+            raise
 
-        await broadcast(run_id, {"type": "node_status", "node_id": dag_node.id, "status": "succeeded"})
+        await broadcast(run_id, {
+            "type": "node_status",
+            "node_id": dag_node.id,
+            "status": "succeeded",
+            "outputs": node_run.outputs,
+        })
 
-    await _mark_run_succeeded(db, run)
+    await _set_run_succeeded(db, run)
     await broadcast(run_id, {"type": "run_status", "status": "succeeded"})
 
 
@@ -69,141 +92,213 @@ async def run_workflow(run_id: uuid.UUID, db, broadcast) -> None:
 # Single node execution
 # ---------------------------------------------------------------------------
 
-async def execute_node(node_run: NodeRun, db, broadcast) -> None:
-    from packages.providers.vastai import pick_provider, PROVIDERS
-    from packages.providers.base import GPUSpec
+async def _execute_node(
+    node_run: NodeRun,
+    dag_node: DAGNode,
+    run: Run,
+    db: AsyncSession,
+    broadcast: Broadcast,
+) -> dict:
+    """
+    Provision a GPU pod, run the container, stream logs, wait for exit.
+    Returns the outputs dict collected from /internal/artifact webhooks.
+    """
+    from api.services.provider_selector import pick_provider
+    from packages.workflow_schema.models import ResourceSpec
 
-    node_def = node_run._node_def  # attached by _create_node_run
+    res_dict = dag_node.resources if isinstance(dag_node.resources, dict) else {}
+    resources = ResourceSpec(**res_dict) if res_dict else ResourceSpec()
 
-    # 1. Resolve inputs — replace ${{ nodes.X.outputs.Y }} with real R2 URIs
-    resolved = _resolve_inputs(node_def.inputs, node_run.run_id, db)
+    # Resolve ${{ ... }} template refs using outputs from already-completed nodes
+    resolved = await _resolve_inputs(dag_node.inputs, run, db)
 
-    # 2. Pick cheapest available provider
-    provider = await pick_provider(node_def.resources)
-    gpu_spec = GPUSpec(gpu_type="H100")
+    # Pick cheapest available GPU provider
+    try:
+        provider, gpu_spec = await pick_provider(resources)
+    except Exception as e:
+        raise NodeFailed(f"No GPU available: {e}")
 
-    # 3. Build container env
     env = _build_env(resolved, node_run)
+    image = f"ghcr.io/orchapod/{dag_node.type}:latest"
 
-    # 4. Provision pod + start container
-    image = f"ghcr.io/orchapod/{node_def.type}:latest"
-    pod = await provider.provision(gpu_spec=gpu_spec, image=image, env=env)
-    await db.update_node_run(node_run.id, {"gpu_pod_id": pod.pod_id, "started_at": datetime.utcnow()})
+    # Provision pod
+    try:
+        from packages.providers.base import ProvisionError
+        pod = await provider.provision(gpu_spec=gpu_spec, image=image, env=env)
+    except Exception as e:
+        raise NodeFailed(f"Provision failed: {e}")
 
-    # 5. Stream logs → control plane webhook → SSE → frontend
-    async def stream():
+    # Record which provider/pod we used
+    node_run.started_at = datetime.utcnow()
+    db.add(node_run)
+    run.gpu_provider = provider.name
+    run.gpu_pod_id = pod.pod_id
+    db.add(run)
+    await db.flush()
+
+    # Stream logs until container exits
+    async def _stream():
         async for line in provider.stream_logs(pod):
             await broadcast(node_run.run_id, {
                 "type": "log",
                 "node_id": node_run.node_id,
                 "line": line,
             })
-    stream_task = asyncio.create_task(stream())
 
-    # 6. Wait for container exit
-    exit_code = await provider.wait(pod)
-    stream_task.cancel()
+    stream_task = asyncio.create_task(_stream())
+
+    try:
+        exit_code = await provider.wait(pod)
+    finally:
+        stream_task.cancel()
+        try:
+            await stream_task
+        except asyncio.CancelledError:
+            pass
 
     if exit_code != 0:
         raise NodeFailed(f"Container exited with code {exit_code}")
 
-    # 7. Terminate pod (except vllm-serve which stays alive)
-    if node_def.type != "vllm-serve":
-        await provider.terminate(pod)
+    # Terminate pod (vllm-serve stays alive)
+    if dag_node.type != "vllm-serve":
+        try:
+            await provider.terminate(pod)
+        except Exception:
+            pass  # best-effort cleanup
 
-    await db.update_node_run(node_run.id, {"status": NodeStatus.SUCCEEDED, "finished_at": datetime.utcnow()})
+    # Re-read node_run to get outputs populated by /internal/artifact webhooks
+    await db.refresh(node_run)
+    return node_run.outputs
 
 
 # ---------------------------------------------------------------------------
-# Input resolution — replace ${{ ... }} template refs with actual R2 URIs
+# Input resolution
 # ---------------------------------------------------------------------------
 
-def _resolve_inputs(inputs: dict, run_id: uuid.UUID, db) -> dict:
+async def _resolve_inputs(inputs: dict, run: Run, db: AsyncSession) -> dict:
     """
-    Walk the inputs dict and replace ${{ nodes.X.outputs.Y }} and ${{ inputs.Z }}
-    with real values from the database.
+    Replace ${{ nodes.X.outputs.Y }} and ${{ inputs.Z }} with real values.
     """
     resolved = {}
     for key, value in inputs.items():
         if isinstance(value, str) and "${{" in value:
-            resolved[key] = _resolve_ref(value, run_id, db)
+            resolved[key] = await _resolve_ref(value, run, db)
         else:
             resolved[key] = value
     return resolved
 
 
-def _resolve_ref(template: str, run_id: uuid.UUID, db) -> Any:
+async def _resolve_ref(template: str, run: Run, db: AsyncSession) -> Any:
     match = re.search(r"\$\{\{\s*(.+?)\s*\}\}", template)
     if not match:
         return template
     ref = match.group(1).strip()
-    # e.g. "nodes.prep.outputs.train_jsonl" or "inputs.dataset_uri"
     parts = ref.split(".")
-    if parts[0] == "inputs":
-        # TODO: look up from Run.inputs
-        return f"__unresolved_input_{parts[1]}__"
-    elif parts[0] == "nodes" and parts[2] == "outputs":
-        # TODO: look up NodeRun outputs from db
-        node_id, artifact = parts[1], parts[3]
-        return f"__unresolved_{node_id}_{artifact}__"
-    return template
+
+    if parts[0] == "inputs" and len(parts) >= 2:
+        return run.inputs.get(parts[1], template)
+
+    if parts[0] == "nodes" and len(parts) >= 4 and parts[2] == "outputs":
+        node_id, artifact_name = parts[1], parts[3]
+        result = await db.execute(
+            select(NodeRun).where(
+                NodeRun.run_id == run.id,
+                NodeRun.node_id == node_id,
+            )
+        )
+        node_run = result.scalar_one_or_none()
+        if node_run and artifact_name in (node_run.outputs or {}):
+            return node_run.outputs[artifact_name]
+
+    return template  # unresolved ref — pass through as-is
 
 
 def _build_env(resolved_inputs: dict, node_run: NodeRun) -> dict[str, str]:
-    import os
-    return {
+    env = {
         "ORCHAPOD_NODE_INPUTS":      json.dumps(resolved_inputs),
         "ORCHAPOD_NODE_OUTPUTS_DIR": "/tmp/orchapod_outputs",
         "ORCHAPOD_RUN_ID":           str(node_run.run_id),
         "ORCHAPOD_NODE_ID":          node_run.node_id,
-        "ORCHAPOD_R2_ENDPOINT":      os.environ["ORCHAPOD_R2_ENDPOINT"],
-        "ORCHAPOD_R2_ACCESS_KEY":    os.environ["ORCHAPOD_R2_ACCESS_KEY"],
-        "ORCHAPOD_R2_SECRET_KEY":    os.environ["ORCHAPOD_R2_SECRET_KEY"],
+        "ORCHAPOD_R2_ENDPOINT":      os.environ.get("ORCHAPOD_R2_ENDPOINT", ""),
+        "ORCHAPOD_R2_ACCESS_KEY":    os.environ.get("ORCHAPOD_R2_ACCESS_KEY", ""),
+        "ORCHAPOD_R2_SECRET_KEY":    os.environ.get("ORCHAPOD_R2_SECRET_KEY", ""),
         "ORCHAPOD_R2_BUCKET":        os.environ.get("ORCHAPOD_R2_BUCKET", "orchapod-artifacts"),
-        "ORCHAPOD_CONTROL_URL":      os.environ["ORCHAPOD_CONTROL_URL"],
-        # Pass through any API keys the node needs
+        "ORCHAPOD_CONTROL_URL":      os.environ.get("ORCHAPOD_CONTROL_URL", ""),
         "ANTHROPIC_API_KEY":         os.environ.get("ANTHROPIC_API_KEY", ""),
         "HF_TOKEN":                  os.environ.get("HF_TOKEN", ""),
     }
+    # Inject resume checkpoint URI if one exists for this run+node
+    resume_uri = _find_resume_checkpoint(node_run)
+    if resume_uri:
+        env["ORCHAPOD_RESUME_CHECKPOINT_URI"] = resume_uri
+    return env
+
+
+def _find_resume_checkpoint(node_run: NodeRun) -> str | None:
+    """
+    Check if there's a checkpoint artifact from a previous attempt of this node.
+    Returns the URI of the latest checkpoint, or None.
+    The node's run.py uses this via checkpoint.latest_checkpoint_uri().
+    """
+    # Checkpoints are stored in node_run.outputs keyed by 'checkpoint_step_NNNNNN'
+    outputs = node_run.outputs or {}
+    checkpoints = {k: v for k, v in outputs.items() if k.startswith("checkpoint_step_")}
+    if not checkpoints:
+        return None
+    latest_key = sorted(checkpoints.keys())[-1]
+    return checkpoints[latest_key]
 
 
 # ---------------------------------------------------------------------------
-# DB helpers (stubs — implement against real SQLModel session)
+# DB helpers
 # ---------------------------------------------------------------------------
 
-async def _create_node_run(db, run: Run, dag_node: DAGNode) -> NodeRun:
+async def _create_node_run(db: AsyncSession, run: Run, dag_node: DAGNode) -> NodeRun:
     node_run = NodeRun(
         run_id=run.id,
         node_id=dag_node.id,
         node_type=dag_node.type,
         inputs=dag_node.inputs,
     )
-    node_run._node_def = dag_node   # attach for execute_node
-    await db.add(node_run)
+    db.add(node_run)
+    await db.flush()
+    await db.refresh(node_run)
     return node_run
 
 
-async def _update_run_status(db, run: Run, status: RunStatus) -> None:
+async def _set_run_status(db: AsyncSession, run: Run, status: RunStatus) -> None:
     run.status = status
     if status == RunStatus.RUNNING:
         run.started_at = datetime.utcnow()
-    await db.commit()
+    db.add(run)
+    await db.flush()
 
 
-async def _mark_run_failed(db, run: Run, error: str) -> None:
-    run.status = RunStatus.FAILED
-    run.finished_at = datetime.utcnow()
-    await db.commit()
-
-
-async def _mark_run_succeeded(db, run: Run) -> None:
+async def _set_run_succeeded(db: AsyncSession, run: Run) -> None:
     run.status = RunStatus.SUCCEEDED
     run.finished_at = datetime.utcnow()
-    await db.commit()
+    db.add(run)
+    await db.flush()
 
 
-async def _mark_node_failed(db, node_run: NodeRun, error: str) -> None:
-    node_run.status = NodeStatus.FAILED
-    node_run.error = error
+async def _set_run_failed(db: AsyncSession, run: Run, error: str) -> None:
+    run.status = RunStatus.FAILED
+    run.finished_at = datetime.utcnow()
+    db.add(run)
+    await db.flush()
+
+
+async def _mark_node_succeeded(db: AsyncSession, node_run: NodeRun, outputs: dict) -> None:
+    node_run.status = NodeStatus.SUCCEEDED
     node_run.finished_at = datetime.utcnow()
-    await db.commit()
+    node_run.outputs = outputs
+    db.add(node_run)
+    await db.flush()
+
+
+async def _mark_node_failed(db: AsyncSession, node_run: NodeRun, error: str) -> None:
+    node_run.status = NodeStatus.FAILED
+    node_run.finished_at = datetime.utcnow()
+    node_run.error = error
+    db.add(node_run)
+    await db.flush()

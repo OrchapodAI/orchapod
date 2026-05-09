@@ -198,3 +198,19 @@ async def list_node_types():
 @router.get("/datasets")
 async def list_datasets():
     return {"datasets": PUBLIC_DATASETS}
+
+
+@router.get("/methods")
+async def list_training_methods():
+    from packages.workflow_schema.methods import TRAINING_METHOD_REGISTRY
+    return {"methods": [m.model_dump() for m in TRAINING_METHOD_REGISTRY.values()]}
+
+
+@router.get("/methods/{method_id}")
+async def get_training_method(method_id: str):
+    from packages.workflow_schema.methods import TRAINING_METHOD_REGISTRY
+    from fastapi import HTTPException
+    m = TRAINING_METHOD_REGISTRY.get(method_id)
+    if not m:
+        raise HTTPException(status_code=404, detail=f"Method '{method_id}' not found")
+    return m.model_dump()

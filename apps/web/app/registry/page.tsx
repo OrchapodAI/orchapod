@@ -2,18 +2,20 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import type { BaseModel, PublicDataset } from "@/lib/types";
+import type { BaseModel, PublicDataset, TrainingMethod } from "@/lib/types";
 
-type Tab = "models" | "datasets";
+type Tab = "Models" | "Datasets" | "Methods";
 
 export default function RegistryPage() {
-  const [tab, setTab] = useState<Tab>("models");
+  const [tab, setTab] = useState<Tab>("Models");
   const [models, setModels] = useState<BaseModel[]>([]);
   const [datasets, setDatasets] = useState<PublicDataset[]>([]);
+  const [methods, setMethods] = useState<TrainingMethod[]>([]);
 
   useEffect(() => {
     api.registry.models().then((r) => setModels(r.models));
     api.registry.datasets().then((r) => setDatasets(r.datasets));
+    api.registry.methods().then((r) => setMethods(r.methods));
   }, []);
 
   return (
@@ -37,7 +39,7 @@ export default function RegistryPage() {
 
         {/* Underline tabs */}
         <div className="row" style={{ borderBottom: "1px solid var(--line)", padding: "0 24px", gap: 4, fontSize: 13, marginTop: 16 }}>
-          {(["models", "datasets"] as Tab[]).map((t) => (
+          {(["Models", "Datasets", "Methods"] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -48,7 +50,6 @@ export default function RegistryPage() {
                 color: tab === t ? "var(--brand-ink)" : "var(--ink-3)",
                 fontWeight: tab === t ? 500 : 400,
                 cursor: "pointer", fontFamily: "var(--font-ui)", fontSize: 13,
-                textTransform: "capitalize",
               }}
             >
               {t}
@@ -57,7 +58,7 @@ export default function RegistryPage() {
         </div>
 
         <div style={{ flex: 1, padding: 24, overflow: "auto" }}>
-          {tab === "models" && (
+          {tab === "Models" && (
             <div className="card" style={{ overflow: "hidden" }}>
               <table className="tbl">
                 <thead>
@@ -73,7 +74,7 @@ export default function RegistryPage() {
                 </thead>
                 <tbody>
                   {models.map((m) => (
-                    <tr key={m.id}>
+                    <tr key={m.id} className="clickable" onClick={() => window.open(m.hf_url, "_blank", "noreferrer")}>
                       <td>
                         <div style={{ fontWeight: 500 }}>{m.name}</div>
                         {m.requires_hf_token && (
@@ -97,6 +98,7 @@ export default function RegistryPage() {
                           target="_blank"
                           rel="noreferrer"
                           className="btn btn-sm btn-ghost"
+                          onClick={e => e.stopPropagation()}
                           style={{ textDecoration: "none" }}
                         >
                           HF ↗
@@ -109,7 +111,48 @@ export default function RegistryPage() {
             </div>
           )}
 
-          {tab === "datasets" && (
+          {tab === "Methods" && (
+            <div className="card" style={{ overflow: "hidden" }}>
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th style={{ width: "28%" }}>Method</th>
+                    <th>Framework</th>
+                    <th>Runtime</th>
+                    <th>Supported models</th>
+                    <th>Container</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {methods.map((m) => (
+                    <tr key={m.method_id}>
+                      <td>
+                        <div style={{ fontWeight: 500 }}>{m.display_name}</div>
+                        <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>{m.description}</div>
+                      </td>
+                      <td>
+                        <span className="tag mono" style={{ background: "var(--bg-3)", color: "var(--ink-2)" }}>{m.framework}</span>
+                      </td>
+                      <td>
+                        <span className="tag" style={{
+                          background: m.runtime === "gpu" ? "oklch(0.95 0.04 282)" : "var(--bg-3)",
+                          color: m.runtime === "gpu" ? "var(--brand-ink)" : "var(--ink-2)",
+                        }}>
+                          {m.runtime}
+                        </span>
+                      </td>
+                      <td className="muted" style={{ fontSize: 12 }}>
+                        {m.supported_models[0] === "*" ? "Any model" : `${m.supported_models.length} models`}
+                      </td>
+                      <td className="mono muted" style={{ fontSize: 11 }}>{m.container}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {tab === "Datasets" && (
             <div className="card" style={{ overflow: "hidden" }}>
               <table className="tbl">
                 <thead>
@@ -123,7 +166,7 @@ export default function RegistryPage() {
                 </thead>
                 <tbody>
                   {datasets.map((ds) => (
-                    <tr key={ds.id}>
+                    <tr key={ds.id} className="clickable" onClick={() => window.open(ds.hf_url, "_blank", "noreferrer")}>
                       <td>
                         <div style={{ fontWeight: 500 }}>{ds.name}</div>
                         <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>{ds.description}</div>
@@ -143,6 +186,7 @@ export default function RegistryPage() {
                           target="_blank"
                           rel="noreferrer"
                           className="btn btn-sm btn-ghost"
+                          onClick={e => e.stopPropagation()}
                           style={{ textDecoration: "none" }}
                         >
                           HF ↗

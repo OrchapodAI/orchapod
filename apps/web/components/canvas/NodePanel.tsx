@@ -42,6 +42,7 @@ export function NodePanel({ node, onClose, onUpdate }: Props) {
         <button
           onClick={onClose}
           className="p-1.5 rounded text-[#6B778C] hover:text-[#172B4D] hover:bg-[#DFE1E6] transition-colors"
+          style={{ cursor: "pointer" }}
         >
           <X className="w-4 h-4" />
         </button>

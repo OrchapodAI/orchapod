@@ -268,7 +268,8 @@ h1, h2, h3, h4, p { margin: 0; font-weight: 500; letter-spacing: -0.01em; }
   padding: 12px 14px; border-bottom: 1px solid var(--line);
   color: var(--ink-1); vertical-align: middle;
 }
-.tbl tr:hover td { background: var(--bg-2); cursor: pointer; }
+.tbl tr:hover td { background: var(--bg-2); }
+.tbl tr.clickable { cursor: pointer; }
 .tbl tr:last-child td { border-bottom: none; }
 
 /* ── Helpers ──────────────────────────────────────────────────────────────── */

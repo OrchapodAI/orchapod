@@ -226,6 +226,8 @@ def _build_env(resolved_inputs: dict, node_run: NodeRun) -> dict[str, str]:
         "ORCHAPOD_CONTROL_URL":      os.environ.get("ORCHAPOD_CONTROL_URL", ""),
         "ANTHROPIC_API_KEY":         os.environ.get("ANTHROPIC_API_KEY", ""),
         "HF_TOKEN":                  os.environ.get("HF_TOKEN", ""),
+        # Cloudflare Tunnel — forwarded to vllm-serve pods (KAN-28)
+        "CLOUDFLARE_TUNNEL_TOKEN":   os.environ.get("CLOUDFLARE_TUNNEL_TOKEN", ""),
     }
     # Inject resume checkpoint URI if one exists for this run+node
     resume_uri = _find_resume_checkpoint(node_run)

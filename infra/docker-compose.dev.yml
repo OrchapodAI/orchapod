@@ -66,9 +66,10 @@ services:
       ORCHAPOD_R2_SECRET_KEY: orchapod_dev
       ORCHAPOD_R2_BUCKET: orchapod-artifacts
       ORCHAPOD_CONTROL_URL: http://api:8000
-      RUNPOD_API_KEY: ${RUNPOD_API_KEY}
       VASTAI_API_KEY: ${VASTAI_API_KEY}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      # Cloudflare Tunnel token (optional — see .env.example for setup)
+      CLOUDFLARE_TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy

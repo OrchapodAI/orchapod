@@ -12,7 +12,7 @@ import { LossChart, type ProgressPoint } from "@/components/runs/LossChart";
 import { NodeTimeline } from "@/components/runs/NodeTimeline";
 import { ArtifactList } from "@/components/runs/ArtifactList";
 
-type Tab = "logs" | "chart" | "artifacts";
+type Tab = "logs" | "chart" | "artifacts" | "endpoint";
 
 export default function RunPage() {
   const { id } = useParams<{ id: string }>();
@@ -24,6 +24,7 @@ export default function RunPage() {
   const [tab, setTab] = useState<Tab>("logs");
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
 
   const { events, connected } = useRunStream(id);
 
@@ -85,7 +86,25 @@ export default function RunPage() {
     }
   }
 
-  const endpointArtifact = artifacts.find((a) => a.kind === "endpoint");
+  const endpointArtifact = artifacts.find((a) => a.kind === "endpoint" && a.meta?.url);
+  const apiKeyArtifact   = artifacts.find((a) => a.kind === "endpoint" && a.meta?.api_key);
+  const endpointUrl      = endpointArtifact ? String(endpointArtifact.meta?.url ?? "") : null;
+  const endpointApiKey   = apiKeyArtifact   ? String(apiKeyArtifact.meta?.api_key ?? "") : null;
+  const endpointModel    = endpointArtifact ? String(endpointArtifact.meta?.model ?? "") : null;
+
+  // Auto-switch to endpoint tab when endpoint is ready
+  useEffect(() => {
+    if (endpointUrl && tab !== "endpoint") setTab("endpoint");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [endpointUrl]);
+
+  function copyToClipboard(text: string) {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
   const canCancel = run && ["provisioning_gpu", "running"].includes(run.status);
 
   if (!run) {
@@ -183,6 +202,22 @@ export default function RunPage() {
                 )}
               </button>
             ))}
+            {/* Endpoint tab — only shown when an endpoint is ready */}
+            {endpointUrl && (
+              <button
+                onClick={() => setTab("endpoint")}
+                style={{
+                  padding: "10px 8px", border: "none", background: "transparent",
+                  borderBottom: tab === "endpoint" ? "2px solid var(--mint)" : "2px solid transparent",
+                  color: tab === "endpoint" ? "var(--mint-ink)" : "var(--ink-3)",
+                  fontWeight: tab === "endpoint" ? 500 : 400, cursor: "pointer",
+                  fontFamily: "var(--font-ui)", fontSize: 13,
+                  display: "flex", alignItems: "center", gap: 6,
+                }}
+              >
+                ⚡ Endpoint
+              </button>
+            )}
             <div className="spacer" />
             <span className="muted" style={{ fontSize: 11.5 }}>
               {connected ? "● live" : "○ disconnected"}
@@ -207,6 +242,95 @@ export default function RunPage() {
             {tab === "artifacts" && (
               <div className="card" style={{ padding: 16 }}>
                 <ArtifactList artifacts={artifacts} />
+              </div>
+            )}
+            {tab === "endpoint" && endpointUrl && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 680 }}>
+                {/* URL card */}
+                <div className="card" style={{ padding: 16 }}>
+                  <div className="muted mono" style={{ fontSize: 10.5, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 10 }}>
+                    OpenAI-Compatible Endpoint
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 6, padding: "8px 12px" }}>
+                    <span className="mono" style={{ flex: 1, fontSize: 12.5, wordBreak: "break-all", color: "var(--ink-1)" }}>
+                      {endpointUrl}
+                    </span>
+                    <button
+                      onClick={() => copyToClipboard(endpointUrl)}
+                      className="btn btn-sm"
+                      style={{ flexShrink: 0 }}
+                    >
+                      {copied ? "Copied!" : "Copy"}
+                    </button>
+                    <a
+                      href={endpointUrl.replace(/\/v1$/, "")}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn btn-sm"
+                      style={{ textDecoration: "none", flexShrink: 0, color: "var(--mint-ink)", background: "var(--mint-soft)", borderColor: "var(--mint)" }}
+                    >
+                      Open ↗
+                    </a>
+                  </div>
+                  {endpointApiKey && (
+                    <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8 }}>
+                      <span className="muted" style={{ fontSize: 12 }}>API key:</span>
+                      <span className="mono" style={{ fontSize: 12, color: "var(--ink-2)" }}>
+                        {endpointApiKey.slice(0, 20)}•••
+                      </span>
+                      <button
+                        onClick={() => copyToClipboard(endpointApiKey)}
+                        className="btn btn-sm"
+                      >
+                        Copy key
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* OpenAI snippet */}
+                <div className="card" style={{ padding: 16 }}>
+                  <div className="muted mono" style={{ fontSize: 10.5, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 10 }}>
+                    Usage (Python · OpenAI SDK)
+                  </div>
+                  <pre style={{
+                    background: "oklch(0.13 0.02 260)", color: "oklch(0.90 0.02 260)",
+                    borderRadius: 6, padding: "14px 16px", fontSize: 12.5, lineHeight: 1.7,
+                    overflowX: "auto", margin: 0,
+                  }}>{`from openai import OpenAI
+
+client = OpenAI(
+    base_url="${endpointUrl}",
+    api_key="${endpointApiKey ?? "YOUR_API_KEY"}",
+)
+
+response = client.chat.completions.create(
+    model="${endpointModel ?? "model"}",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+print(response.choices[0].message.content)`}
+                  </pre>
+                  <button
+                    onClick={() => copyToClipboard(
+`from openai import OpenAI
+
+client = OpenAI(
+    base_url="${endpointUrl}",
+    api_key="${endpointApiKey ?? "YOUR_API_KEY"}",
+)
+
+response = client.chat.completions.create(
+    model="${endpointModel ?? "model"}",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+print(response.choices[0].message.content)`
+                    )}
+                    className="btn btn-sm"
+                    style={{ marginTop: 10 }}
+                  >
+                    Copy snippet
+                  </button>
+                </div>
               </div>
             )}
           </div>

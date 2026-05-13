@@ -21,7 +21,7 @@ jobs:
           cache: pip
 
       - name: Install test deps
-        run: pip install pytest pytest-asyncio runpod httpx pyyaml pydantic
+        run: pip install pytest pytest-asyncio httpx pyyaml pydantic boto3 aiosqlite sqlmodel
 
       - name: Run tests
         run: python -m pytest tests/ -v --tb=short

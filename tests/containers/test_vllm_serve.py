@@ -14,41 +14,43 @@ v = load_container("vllm-serve")
 
 
 # ---------------------------------------------------------------------------
-# detect_public_url
+# detect_raw_url  (renamed from detect_public_url in KAN-28)
+# Note: detect_raw_url returns a base URL without /v1 suffix.
+#       main() appends /v1 to produce openai_base_url.
 # ---------------------------------------------------------------------------
 
-def test_detect_public_url_uses_explicit_override(monkeypatch):
-    monkeypatch.setenv("ORCHAPOD_PUBLIC_URL", "https://custom.orchapod.dev/v1")
-    assert v.detect_public_url() == "https://custom.orchapod.dev/v1"
+def test_detect_raw_url_uses_explicit_override(monkeypatch):
+    monkeypatch.setenv("ORCHAPOD_PUBLIC_URL", "https://custom.orchapod.dev")
+    assert v.detect_raw_url() == "https://custom.orchapod.dev"
 
 
-def test_detect_public_url_runpod(monkeypatch):
+def test_detect_raw_url_runpod(monkeypatch):
     monkeypatch.delenv("ORCHAPOD_PUBLIC_URL", raising=False)
     monkeypatch.setenv("RUNPOD_POD_ID", "abc123")
-    assert v.detect_public_url() == "https://abc123-8000.proxy.runpod.net/v1"
+    assert v.detect_raw_url() == "https://abc123-8000.proxy.runpod.net"
 
 
-def test_detect_public_url_vastai(monkeypatch):
+def test_detect_raw_url_vastai(monkeypatch):
     monkeypatch.delenv("ORCHAPOD_PUBLIC_URL", raising=False)
     monkeypatch.delenv("RUNPOD_POD_ID", raising=False)
     monkeypatch.setenv("PUBLIC_IPADDR", "1.2.3.4")
     monkeypatch.setenv("VAST_TCP_PORT_8000", "40001")
-    assert v.detect_public_url() == "http://1.2.3.4:40001/v1"
+    assert v.detect_raw_url() == "http://1.2.3.4:40001"
 
 
-def test_detect_public_url_vastai_default_port(monkeypatch):
+def test_detect_raw_url_vastai_default_port(monkeypatch):
     monkeypatch.delenv("ORCHAPOD_PUBLIC_URL", raising=False)
     monkeypatch.delenv("RUNPOD_POD_ID", raising=False)
     monkeypatch.setenv("PUBLIC_IPADDR", "1.2.3.4")
     monkeypatch.delenv("VAST_TCP_PORT_8000", raising=False)
-    assert v.detect_public_url() == "http://1.2.3.4:8000/v1"
+    assert v.detect_raw_url() == "http://1.2.3.4:8000"
 
 
-def test_detect_public_url_localhost_fallback(monkeypatch):
+def test_detect_raw_url_localhost_fallback(monkeypatch):
     monkeypatch.delenv("ORCHAPOD_PUBLIC_URL", raising=False)
     monkeypatch.delenv("RUNPOD_POD_ID", raising=False)
     monkeypatch.delenv("PUBLIC_IPADDR", raising=False)
-    assert v.detect_public_url() == "http://localhost:8000/v1"
+    assert v.detect_raw_url() == "http://localhost:8000"
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +98,9 @@ def test_main_writes_two_outputs_and_registers_ttl(mock_orchapod_io, monkeypatch
     }
 
     proc = _make_mock_proc()
-    with patch("subprocess.Popen", return_value=proc), \
+    # Patch start_cloudflare_tunnel to skip real cloudflared (not available in CI)
+    with patch.object(v, "start_cloudflare_tunnel", return_value=(None, None)), \
+         patch("subprocess.Popen", return_value=proc), \
          patch("urllib.request.urlopen") as mock_urlopen:
         v.main()
 
@@ -123,11 +127,13 @@ def test_main_injects_hf_token_into_subprocess_env(mock_orchapod_io, monkeypatch
 
     proc = _make_mock_proc()
     captured_env = {}
-    def fake_popen(cmd, env):
-        captured_env.update(env)
+    def fake_popen(cmd, env=None, **kwargs):
+        if env is not None:
+            captured_env.update(env)
         return proc
 
-    with patch("subprocess.Popen", side_effect=fake_popen), \
+    with patch.object(v, "start_cloudflare_tunnel", return_value=(None, None)), \
+         patch("subprocess.Popen", side_effect=fake_popen), \
          patch("urllib.request.urlopen"):
         v.main()
 

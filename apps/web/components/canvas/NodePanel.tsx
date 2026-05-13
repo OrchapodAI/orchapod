@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { X, ExternalLink } from "lucide-react";
 import type { Node } from "@xyflow/react";
 import type { OrchaNodeData } from "./OrchaNode";
@@ -22,8 +23,46 @@ const FIELD_LABELS: Record<string, string> = {
 };
 
 export function NodePanel({ node, onClose, onUpdate }: Props) {
-  const { data } = node;
-  const inputs = data.inputs ?? {};
+  const data: OrchaNodeData = node.data as OrchaNodeData;
+  const inputs: Record<string, unknown> = (data.inputs as Record<string, unknown>) ?? {};
+  const inputEntries: [string, unknown][] = Object.entries(inputs);
+  const resourceEntries: [string, unknown][] = Object.entries(
+    (data.resources as Record<string, unknown>) ?? {}
+  );
+
+  const inputsSection: ReactNode = inputEntries.length > 0 ? (
+    <div>
+      <p className="text-xs font-semibold text-[#6B778C] uppercase tracking-wide mb-3">Inputs</p>
+      <div className="space-y-3">
+        {inputEntries.map(([key, val]) => (
+          <div key={key}>
+            <label className="block text-xs font-medium text-[#172B4D] mb-1.5">
+              {FIELD_LABELS[key] ?? key}
+            </label>
+            <input
+              value={String(val ?? "")}
+              onChange={(e) => handleChange(key, e.target.value)}
+              className="w-full bg-white border border-[#DFE1E6] rounded px-3 py-2 text-xs text-[#172B4D] focus:outline-none focus:border-[#0052CC] focus:ring-2 focus:ring-[#0052CC]/20 transition-colors"
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  ) : null;
+
+  const resourcesSection: ReactNode = resourceEntries.length > 0 ? (
+    <div>
+      <p className="text-xs font-semibold text-[#6B778C] uppercase tracking-wide mb-3">Resources</p>
+      <div className="bg-[#F4F5F7] rounded border border-[#DFE1E6] p-3 space-y-1.5">
+        {resourceEntries.map(([k, v]) => (
+          <div key={k} className="flex justify-between text-xs">
+            <span className="text-[#6B778C]">{k}</span>
+            <span className="text-[#172B4D] font-mono">{String(v)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  ) : null;
 
   function handleChange(key: string, value: string) {
     onUpdate(node.id, { inputs: { ...inputs, [key]: value } });
@@ -60,44 +99,14 @@ export function NodePanel({ node, onClose, onUpdate }: Props) {
         </div>
 
         {/* Inputs */}
-        {Object.keys(inputs).length > 0 && (
-          <div>
-            <p className="text-xs font-semibold text-[#6B778C] uppercase tracking-wide mb-3">Inputs</p>
-            <div className="space-y-3">
-              {Object.entries(inputs).map(([key, val]) => (
-                <div key={key}>
-                  <label className="block text-xs font-medium text-[#172B4D] mb-1.5">
-                    {FIELD_LABELS[key] ?? key}
-                  </label>
-                  <input
-                    value={String(val ?? "")}
-                    onChange={(e) => handleChange(key, e.target.value)}
-                    className="w-full bg-white border border-[#DFE1E6] rounded px-3 py-2 text-xs text-[#172B4D] focus:outline-none focus:border-[#0052CC] focus:ring-2 focus:ring-[#0052CC]/20 transition-colors"
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        {inputsSection}
 
         {/* Resources */}
-        {data.resources && Object.keys(data.resources).length > 0 && (
-          <div>
-            <p className="text-xs font-semibold text-[#6B778C] uppercase tracking-wide mb-3">Resources</p>
-            <div className="bg-[#F4F5F7] rounded border border-[#DFE1E6] p-3 space-y-1.5">
-              {Object.entries(data.resources).map(([k, v]) => (
-                <div key={k} className="flex justify-between text-xs">
-                  <span className="text-[#6B778C]">{k}</span>
-                  <span className="text-[#172B4D] font-mono">{String(v)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        {resourcesSection}
 
         {(data.node_type === "unsloth-train" || data.node_type === "distill-sft") &&
-          inputs.model &&
-          !String(inputs.model).includes("${{") && (
+          typeof inputs.model === "string" && inputs.model &&
+          !inputs.model.includes("${{") ? (
           <a
             href={`https://huggingface.co/${inputs.model}`}
             target="_blank"
@@ -107,7 +116,7 @@ export function NodePanel({ node, onClose, onUpdate }: Props) {
             <ExternalLink className="w-3.5 h-3.5" />
             View on Hugging Face
           </a>
-        )}
+        ) : null}
       </div>
     </div>
   );

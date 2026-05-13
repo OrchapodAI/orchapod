@@ -1,6 +1,6 @@
 "use client";
 
-import { Handle, Position, type NodeProps } from "@xyflow/react";
+import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import clsx from "clsx";
 import type { NodeType } from "@/lib/types";
 import { Database, Zap, GitMerge, Package, BarChart2, Globe } from "lucide-react";
@@ -27,16 +27,17 @@ const NODE_META: Record<NodeType, {
   "vllm-serve":    { label: "Serve",     icon: Globe,     accent: "#DE350B", iconBg: "#FFEBE6" },
 };
 
-export function OrchaNode({ data, selected }: NodeProps<OrchaNodeData>) {
+export function OrchaNode({ data, selected }: NodeProps<Node<OrchaNodeData>>) {
   const meta = NODE_META[data.node_type] ?? NODE_META["data-prep"];
   const Icon = meta.icon;
   const status = data.status;
 
-  const statusRing = {
+  const STATUS_RING: Record<string, string> = {
     running:   "ring-2 ring-[#0052CC] ring-offset-1",
     succeeded: "ring-2 ring-[#00875A] ring-offset-1",
     failed:    "ring-2 ring-[#DE350B] ring-offset-1",
-  }[status ?? ""] ?? "";
+  };
+  const statusRing = status ? (STATUS_RING[status] ?? "") : "";
 
   return (
     <div

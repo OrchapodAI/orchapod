@@ -64,25 +64,26 @@ def test_quantize_gguf_raises_if_quantize_bin_missing(tmp_path):
 
 
 def test_quantize_gguf_calls_correct_subprocesses(tmp_path):
-    fake_llama = tmp_path / "llama.cpp"
+    fake_llama   = tmp_path / "llama.cpp"
+    fake_ws      = tmp_path / "workspace"
+    fake_ws.mkdir()
     (fake_llama / "build" / "bin").mkdir(parents=True)
     (fake_llama / "convert_hf_to_gguf.py").touch()
     quantize_bin = fake_llama / "build" / "bin" / "llama-quantize"
     quantize_bin.touch()
 
-    # Make the gguf_quant file exist so stat() works
-    gguf_quant = Path("/workspace/model_q4_k_m.gguf")
-
     calls = []
     def fake_run(cmd, check):
         calls.append(cmd)
         if "--outfile" in cmd:
+            # Touch the fp16 intermediate so the next step can reference it
             Path(cmd[cmd.index("--outfile") + 1]).touch()
         else:
-            gguf_quant.parent.mkdir(parents=True, exist_ok=True)
-            gguf_quant.touch()
+            # Touch the final quantized file so stat() succeeds
+            (fake_ws / "model_q4_k_m.gguf").touch()
 
     with patch.object(q, "LLAMA_CPP_DIR", fake_llama), \
+         patch.object(q, "WORKSPACE_DIR",  fake_ws), \
          patch("subprocess.run", side_effect=fake_run):
         q.quantize_gguf(tmp_path / "model", "q4_k_m")
 

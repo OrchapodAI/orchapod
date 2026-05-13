@@ -1,5 +1,9 @@
 """
-Tests for POST /nodes/run and GET /runs/{run_id}
+Tests for the run lifecycle API:
+  POST /inference/deploy   — one-click model deployment (creates workflow + run)
+  POST /runs               — create a run from an existing workflow
+  GET  /runs/{run_id}      — get run status
+  GET  /runs/{run_id}/nodes — get node runs for a run
 """
 
 import uuid
@@ -9,78 +13,90 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# POST /nodes/run
+# POST /inference/deploy  (one-click node execution)
 # ---------------------------------------------------------------------------
 
-async def test_submit_valid_node_type_returns_202(client):
+async def test_deploy_valid_model_returns_202(client):
     with patch("asyncio.create_task"):
-        resp = await client.post("/nodes/run", json={
-            "node_type": "vllm-serve",
-            "inputs": {"model": "Qwen/Qwen3-4B-Instruct", "keep_alive_min": 60},
+        resp = await client.post("/inference/deploy", json={
+            "model": "Qwen/Qwen3-4B-Instruct",
+            "mode":  "serve",
         })
 
     assert resp.status_code == 202
     body = resp.json()
     assert body["status"] == "provisioning_gpu"
     assert "run_id" in body
-    assert "node_run_id" in body
-    assert body["status_url"].startswith("/runs/")
+    assert "workflow_id" in body
+    assert body["model"] == "Qwen/Qwen3-4B-Instruct"
 
 
-async def test_submit_invalid_node_type_returns_422(client):
-    resp = await client.post("/nodes/run", json={
-        "node_type": "does-not-exist",
-        "inputs": {},
+async def test_deploy_invalid_mode_returns_422(client):
+    resp = await client.post("/inference/deploy", json={
+        "model": "Qwen/Qwen3-4B-Instruct",
+        "mode":  "does-not-exist",
     })
 
     assert resp.status_code == 422
-    assert "does-not-exist" in resp.json()["detail"]
 
 
-async def test_submit_creates_run_in_db(client, db):
+async def test_deploy_creates_workflow_and_run_in_db(client, db):
     from sqlmodel import select
-    from api.models.db import Run
+    from api.models.db import Run, Workflow
 
     with patch("asyncio.create_task"):
-        resp = await client.post("/nodes/run", json={
-            "node_type": "quantize",
-            "inputs": {"model": "Qwen/Qwen3-4B-Instruct", "method": "gguf"},
+        resp = await client.post("/inference/deploy", json={
+            "model": "Qwen/Qwen3-4B-Instruct",
+            "mode":  "quantize-serve",
         })
 
-    run_id = resp.json()["run_id"]
-    run = await db.get(Run, uuid.UUID(run_id))
+    assert resp.status_code == 202
+    body = resp.json()
 
+    run = await db.get(Run, uuid.UUID(body["run_id"]))
     assert run is not None
-    assert run.workflow_id is None  # standalone run has no workflow
+
+    workflow = await db.get(Workflow, uuid.UUID(body["workflow_id"]))
+    assert workflow is not None
+    assert "vllm-serve" in workflow.yaml
 
 
 # ---------------------------------------------------------------------------
 # GET /runs/{run_id}
 # ---------------------------------------------------------------------------
 
-async def test_get_run_returns_status_and_nodes(client, seeded_node_run):
+async def test_get_run_returns_status(client, seeded_node_run):
     run, node_run = seeded_node_run
 
     resp = await client.get(f"/runs/{run.id}")
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["run_id"] == str(run.id)
+    assert body["id"] == str(run.id)
     assert body["status"] == "running"
-    assert len(body["nodes"]) == 1
-    assert body["nodes"][0]["node_type"] == "vllm-serve"
-    assert body["nodes"][0]["status"] == "running"
 
 
-async def test_get_run_includes_outputs(client, db, seeded_node_run):
+async def test_get_run_nodes_returns_node_list(client, seeded_node_run):
+    run, node_run = seeded_node_run
+
+    resp = await client.get(f"/runs/{run.id}/nodes")
+
+    assert resp.status_code == 200
+    nodes = resp.json()
+    assert len(nodes) == 1
+    assert nodes[0]["node_type"] == "vllm-serve"
+    assert nodes[0]["status"] == "running"
+
+
+async def test_get_run_nodes_includes_outputs(client, db, seeded_node_run):
     run, node_run = seeded_node_run
 
     node_run.outputs = {"endpoint_url": "https://pod-abc-8000.proxy.runpod.net/v1"}
     await db.commit()
 
-    resp = await client.get(f"/runs/{run.id}")
+    resp = await client.get(f"/runs/{run.id}/nodes")
 
-    outputs = resp.json()["nodes"][0]["outputs"]
+    outputs = resp.json()[0]["outputs"]
     assert outputs["endpoint_url"] == "https://pod-abc-8000.proxy.runpod.net/v1"
 
 

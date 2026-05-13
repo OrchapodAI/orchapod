@@ -51,7 +51,7 @@ class RunCreate(BaseModel):
 
 class RunOut(BaseModel):
     id: uuid.UUID
-    workflow_id: uuid.UUID
+    workflow_id: uuid.UUID | None
     user_id: uuid.UUID
     status: RunStatus
     inputs: dict

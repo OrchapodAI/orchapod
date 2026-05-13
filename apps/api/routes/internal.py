@@ -86,13 +86,14 @@ class RegisterTTLRequest(BaseModel):
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@router.post("/log", dependencies=[Depends(_verify_secret)])
+@router.post("/log", status_code=204, dependencies=[Depends(_verify_secret)])
 async def receive_log(event: LogEvent):
     """
     Receive a log line from a container and forward it to the WebSocket subscribers.
     Does NOT write to DB — logs are streamed live and persisted by the provider
     (full log is uploaded to R2 at the end of the node run).
     """
+    from fastapi import Response
     await event_bus.publish(event.run_id, {
         "type": "log",
         "node_id": event.node_id,
@@ -100,10 +101,10 @@ async def receive_log(event: LogEvent):
         "level": event.level,
         "message": event.message,
     })
-    return {"ok": True}
+    return Response(status_code=204)
 
 
-@router.post("/artifact", dependencies=[Depends(_verify_secret)])
+@router.post("/artifact", status_code=201, dependencies=[Depends(_verify_secret)])
 async def receive_artifact(event: ArtifactEvent, db: Session):
     """
     Called by io.write_output() in the container SDK after uploading to R2.
@@ -156,7 +157,7 @@ async def receive_artifact(event: ArtifactEvent, db: Session):
         "uri": art_data["uri"],
         "kind": art_data["kind"],
     })
-    return {"ok": True}
+    return {"ok": True, "artifact_id": str(artifact.id)}
 
 
 def _auto_register_model(
@@ -229,6 +230,7 @@ async def register_ttl(body: RegisterTTLRequest, db: Session):
     outputs = dict(node_run.outputs or {})
     outputs["endpoint_url"] = body.endpoint_url
     node_run.outputs = outputs
+    db.add(node_run)
 
     artifact = Artifact(
         node_run_id=node_run.id,
@@ -238,6 +240,7 @@ async def register_ttl(body: RegisterTTLRequest, db: Session):
         meta={"keep_alive_min": body.keep_alive_min},
     )
     db.add(artifact)
+    await db.flush()
 
     await event_bus.publish(uuid.UUID(body.run_id), {
         "type": "artifact",

@@ -26,12 +26,13 @@ from pathlib import Path
 
 from orchapod import io, log
 
-LLAMA_CPP_DIR = Path(os.environ.get("LLAMA_CPP_DIR", "/opt/llama.cpp"))
+LLAMA_CPP_DIR  = Path(os.environ.get("LLAMA_CPP_DIR", "/opt/llama.cpp"))
+WORKSPACE_DIR  = Path(os.environ.get("WORKSPACE_DIR", "/workspace"))
 
 
 def resolve_model(model_input: str, hf_token: str | None) -> Path:
     """Download model from R2 or HuggingFace hub to /workspace/model."""
-    dest = Path("/workspace/model")
+    dest = WORKSPACE_DIR / "model"
     if model_input.startswith("r2://"):
         log.info(f"Downloading model from R2: {model_input}")
         return io.download_input(model_input, dest)
@@ -65,7 +66,7 @@ def quantize_gguf(model_path: Path, precision: str) -> Path:
         )
 
     log.info(f"Converting to GGUF f16 using {convert_script}")
-    gguf_fp16 = Path("/workspace/model_fp16.gguf")
+    gguf_fp16 = WORKSPACE_DIR / "model_fp16.gguf"
     subprocess.run(
         ["python", str(convert_script), str(model_path),
          "--outfile", str(gguf_fp16), "--outtype", "f16"],
@@ -73,7 +74,7 @@ def quantize_gguf(model_path: Path, precision: str) -> Path:
     )
 
     log.info(f"Quantizing to {precision.upper()}")
-    gguf_quant = Path(f"/workspace/model_{precision}.gguf")
+    gguf_quant = WORKSPACE_DIR / f"model_{precision}.gguf"
     subprocess.run(
         [str(quantize_bin), str(gguf_fp16), str(gguf_quant), precision.upper()],
         check=True,

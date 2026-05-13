@@ -17,7 +17,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.database import create_tables
 from api.services.events import event_bus
-from api.routes import workflows, runs, models, internal, ws, inference
+from api.routes import workflows, runs, models, internal, ws, inference, model_registry
+from packages.providers.vastai import register_providers
 
 
 @asynccontextmanager
@@ -26,7 +27,6 @@ async def lifespan(app: FastAPI):
     await create_tables()
     await event_bus.connect()
 
-    from packages.providers.vastai import register_providers
     register_providers(vastai_key=os.environ.get("VASTAI_API_KEY", ""))
 
     yield
@@ -50,11 +50,12 @@ app.add_middleware(
 )
 
 # REST routes
-app.include_router(workflows.router, prefix="/workflows", tags=["workflows"])
-app.include_router(runs.router,      prefix="/runs",      tags=["runs"])
-app.include_router(models.router,    prefix="/registry",  tags=["registry"])
-app.include_router(internal.router,   prefix="/internal",   tags=["internal"])
-app.include_router(inference.router,  prefix="/inference",  tags=["inference"])
+app.include_router(workflows.router,       prefix="/workflows", tags=["workflows"])
+app.include_router(runs.router,            prefix="/runs",      tags=["runs"])
+app.include_router(models.router,          prefix="/registry",  tags=["registry"])
+app.include_router(model_registry.router,  prefix="/models",    tags=["models"])
+app.include_router(internal.router,        prefix="/internal",  tags=["internal"])
+app.include_router(inference.router,       prefix="/inference", tags=["inference"])
 
 # WebSocket
 app.include_router(ws.router, tags=["websocket"])

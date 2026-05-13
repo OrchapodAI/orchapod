@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import {
   ReactFlow, Background, Controls, MiniMap, addEdge,
   useNodesState, useEdgesState,
-  type Node, type Edge, type Connection, type ReactFlowInstance,
+  type Node, type Edge, type Connection, type ReactFlowInstance, type NodeTypes,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
@@ -16,7 +16,7 @@ import { NodePalette } from "@/components/canvas/NodePalette";
 import { NodePanel } from "@/components/canvas/NodePanel";
 import Link from "next/link";
 
-const nodeTypes = { orchapodNode: OrchaNode };
+const nodeTypes: NodeTypes = { orchapodNode: OrchaNode as NodeTypes[string] };
 
 const DEFAULT_EDGE = {
   animated: false,
@@ -30,7 +30,7 @@ export default function CanvasPage() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<OrchaNodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedNode, setSelectedNode] = useState<Node<OrchaNodeData> | null>(null);
-  const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
+  const [rfInstance, setRfInstance] = useState<ReactFlowInstance<Node<OrchaNodeData>, Edge> | null>(null);
   const [saving, setSaving] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState("");
@@ -179,7 +179,7 @@ export default function CanvasPage() {
         <NodePalette onDragStart={onDragStart} />
 
         <div ref={dropRef} style={{ flex: 1, minWidth: 0 }} onDrop={onDrop} onDragOver={onDragOver}>
-          <ReactFlow
+          <ReactFlow<Node<OrchaNodeData>, Edge>
             nodes={nodes}
             edges={edges}
             nodeTypes={nodeTypes}

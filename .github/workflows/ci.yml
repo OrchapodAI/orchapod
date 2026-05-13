@@ -21,7 +21,7 @@ jobs:
           cache: pip
 
       - name: Install test deps
-        run: pip install pytest pytest-asyncio httpx pyyaml pydantic boto3 aiosqlite sqlmodel
+        run: pip install pytest pytest-asyncio httpx pyyaml pydantic boto3 aiosqlite sqlmodel fastapi redis huggingface_hub
 
       - name: Run tests
         run: python -m pytest tests/ -v --tb=short

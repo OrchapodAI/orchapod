@@ -32,6 +32,7 @@ export default function CanvasPage() {
   const [selectedNode, setSelectedNode] = useState<Node<OrchaNodeData> | null>(null);
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState("");
   const dropRef = useRef<HTMLDivElement>(null);
@@ -121,6 +122,8 @@ export default function CanvasPage() {
     try {
       const yaml = buildYamlFromGraph(nodes, edges, workflow.yaml);
       await api.workflows.update(id, { yaml });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed");
     } finally {
@@ -139,6 +142,7 @@ export default function CanvasPage() {
       router.push(`/runs/${run.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start run");
+    } finally {
       setStarting(false);
     }
   }
@@ -163,7 +167,7 @@ export default function CanvasPage() {
         <div className="spacer" />
         {error && <span className="muted" style={{ fontSize: 12, color: "var(--rose)" }}>{error}</span>}
         <button onClick={handleSave} disabled={saving} className="btn btn-sm">
-          {saving ? "Saving…" : "Save draft"}
+          {saving ? "Saving…" : saved ? "Saved ✓" : "Save draft"}
         </button>
         <button
           onClick={handleRun}

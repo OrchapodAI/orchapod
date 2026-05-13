@@ -35,6 +35,16 @@ def save_checkpoint(step: int, model_dir: Path) -> str:
     return uri
 
 
+def download_checkpoint(checkpoint_uri: str, local_dir: str | Path) -> Path:
+    """
+    Download a checkpoint directory from R2 to a local path.
+    Used at startup when ORCHAPOD_RESUME_CHECKPOINT_URI is set.
+    Returns the local path so run.py can pass it to trainer.train().
+    """
+    log.info(f"Downloading checkpoint from R2: {checkpoint_uri}")
+    return io.download_directory(checkpoint_uri, local_dir)
+
+
 def latest_checkpoint_uri() -> str | None:
     """
     Check if a previous checkpoint exists for this run (for resume-from-checkpoint).

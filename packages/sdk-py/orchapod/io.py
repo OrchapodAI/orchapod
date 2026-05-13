@@ -89,7 +89,7 @@ def write_output(
 
 def download_input(uri: str, local_dir: Path | str | None = None) -> Path:
     """
-    Download an artifact from R2 to a local path.
+    Download a single artifact from R2 to a local path.
     Used when a node receives a model or dataset URI as input.
     """
     local_dir = Path(local_dir or tempfile.mkdtemp())
@@ -99,6 +99,18 @@ def download_input(uri: str, local_dir: Path | str | None = None) -> Path:
     r2_key = uri.replace("r2://orchapod-artifacts/", "")
     _download_from_r2(r2_key=r2_key, dest=dest)
     return dest
+
+
+def download_directory(uri_prefix: str, local_dir: Path | str) -> Path:
+    """
+    Download all R2 objects under a key prefix into a local directory.
+    Used for checkpoint resume — the checkpoint is a directory, not a single file.
+    """
+    local_dir = Path(local_dir)
+    local_dir.mkdir(parents=True, exist_ok=True)
+    r2_prefix = uri_prefix.replace("r2://orchapod-artifacts/", "").rstrip("/")
+    _download_dir_from_r2(r2_prefix=r2_prefix, local_dir=local_dir)
+    return local_dir
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +143,21 @@ def _download_from_r2(r2_key: str, dest: Path) -> None:
     client = _get_r2_client()
     bucket = os.environ.get("ORCHAPOD_R2_BUCKET", "orchapod-artifacts")
     client.download_file(bucket, r2_key, str(dest))
+
+
+def _download_dir_from_r2(r2_prefix: str, local_dir: Path) -> None:
+    client = _get_r2_client()
+    bucket = os.environ.get("ORCHAPOD_R2_BUCKET", "orchapod-artifacts")
+    paginator = client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=r2_prefix + "/"):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            rel = key[len(r2_prefix):].lstrip("/")
+            if not rel:
+                continue
+            dest = local_dir / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            client.download_file(bucket, key, str(dest))
 
 
 def _notify_control_plane(name: str, uri: str, kind: str, metadata: dict) -> None:

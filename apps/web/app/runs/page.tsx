@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import type { Run, Workflow } from "@/lib/types";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -58,16 +59,33 @@ function RunVolumeChart({ runs }: { runs: Run[] }) {
 }
 
 export default function RunsPage() {
+  const router = useRouter();
   const [runs, setRuns] = useState<Run[]>([]);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  function load() {
+    setLoading(true);
     Promise.all([api.runs.list(), api.workflows.list()])
       .then(([rs, wfs]) => { setRuns(rs); setWorkflows(wfs); })
       .finally(() => setLoading(false));
-  }, []);
+  }
+
+  useEffect(() => { load(); }, []);
+
+  function exportCsv() {
+    const wfMap = Object.fromEntries(workflows.map(w => [w.id, w]));
+    const header = "id,workflow,status,started_at,finished_at,cost_usd,gpu_provider";
+    const rows = runs.map(r =>
+      [r.id, wfMap[r.workflow_id]?.name ?? r.workflow_id, r.status,
+       r.started_at ?? "", r.finished_at ?? "", r.cost_usd ?? "", r.gpu_provider ?? ""].join(",")
+    );
+    const blob = new Blob([[header, ...rows].join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = "runs.csv"; a.click();
+    URL.revokeObjectURL(url);
+  }
 
   const wfMap = Object.fromEntries(workflows.map(w => [w.id, w]));
 
@@ -87,8 +105,8 @@ export default function RunsPage() {
           <span className="here">Runs</span>
         </div>
         <div className="spacer" />
-        <button className="btn btn-sm btn-ghost">↻ Refresh</button>
-        <button className="btn btn-sm btn-ghost">Export CSV</button>
+        <button className="btn btn-sm btn-ghost" onClick={load}>↻ Refresh</button>
+        <button className="btn btn-sm btn-ghost" onClick={exportCsv}>Export CSV</button>
       </div>
 
       {/* Body */}
@@ -121,10 +139,10 @@ export default function RunsPage() {
               }}
             />
           </div>
-          <button className="btn btn-sm btn-ghost">All workflows</button>
-          <button className="btn btn-sm btn-ghost">Status: all</button>
-          <button className="btn btn-sm btn-ghost">Owner: anyone</button>
-          <button className="btn btn-sm btn-ghost">Last 7 days</button>
+          <button disabled className="btn btn-sm btn-ghost" style={{ opacity: 0.45, cursor: "not-allowed" }}>All workflows</button>
+          <button disabled className="btn btn-sm btn-ghost" style={{ opacity: 0.45, cursor: "not-allowed" }}>Status: all</button>
+          <button disabled className="btn btn-sm btn-ghost" style={{ opacity: 0.45, cursor: "not-allowed" }}>Owner: anyone</button>
+          <button disabled className="btn btn-sm btn-ghost" style={{ opacity: 0.45, cursor: "not-allowed" }}>Last 7 days</button>
           <div className="spacer" />
           <span className="muted" style={{ fontSize: 12 }}>
             {filtered.length === runs.length ? `${runs.length} runs` : `${filtered.length} of ${runs.length}`}
@@ -164,7 +182,7 @@ export default function RunsPage() {
                 {filtered.map((run) => {
                   const wf = wfMap[run.workflow_id];
                   return (
-                    <tr key={run.id}>
+                    <tr key={run.id} className="clickable" onClick={() => router.push(`/runs/${run.id}`)}>
                       <td>
                         <Link href={`/runs/${run.id}`} style={{ textDecoration: "none" }}>
                           <div className="mono" style={{ fontWeight: 500, fontSize: 12.5, color: "var(--ink-1)" }}>

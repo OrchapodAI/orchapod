@@ -124,6 +124,17 @@ export interface NodeTypeMeta {
   outputs_schema: Record<string, unknown>;
 }
 
+export interface TrainingMethod {
+  method_id: string;
+  display_name: string;
+  framework: string;
+  container: string;
+  description: string;
+  runtime: "cpu" | "gpu";
+  default_hyperparams: Record<string, unknown>;
+  supported_models: string[];
+}
+
 // ── Inference ─────────────────────────────────────────────────────────────────
 
 export type InferenceMode = "serve" | "quantize-serve" | "quantize-gguf";

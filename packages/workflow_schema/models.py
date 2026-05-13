@@ -74,12 +74,13 @@ class DataPrepOutputs(BaseModel):
 class UnslothTrainInputs(BaseModel):
     model: str = Field(default="Qwen/Qwen3-4B-Instruct", description="HuggingFace model ID")
     train_data: str = Field(description="R2 URI to train JSONL")
-    eval_data: str = Field(description="R2 URI to eval JSONL")
+    eval_data: str = Field(default="", description="R2 URI to eval JSONL (empty = skip eval)")
     lora_r: int = Field(default=16)
     lora_alpha: int = Field(default=32)
     max_steps: int = Field(default=500)
     learning_rate: float = Field(default=2e-4)
     target_modules: str = Field(default="all-linear")
+    checkpoint_steps: int = Field(default=100, description="Upload checkpoint to R2 every N steps")
 
 class UnslothTrainOutputs(BaseModel):
     lora_adapter: str       # PEFT format

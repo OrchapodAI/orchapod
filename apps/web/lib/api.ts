@@ -1,5 +1,5 @@
 import type {
-  Workflow, Run, NodeRun, Artifact, BaseModel, PublicDataset, NodeTypeMeta, NodeType,
+  Workflow, Run, NodeRun, Artifact, BaseModel, PublicDataset, NodeTypeMeta, NodeType, TrainingMethod,
   DeployRequest, DeployResponse, InferenceEndpoint,
 } from "./types";
 
@@ -90,6 +90,9 @@ export const api = {
     },
     nodeTypes(): Promise<{ node_types: Record<NodeType, NodeTypeMeta> }> {
       return req("/registry/node-types");
+    },
+    methods(): Promise<{ methods: TrainingMethod[] }> {
+      return req("/registry/methods");
     },
   },
 };

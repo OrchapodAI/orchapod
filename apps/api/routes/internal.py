@@ -18,8 +18,12 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
+
+# node_run_id (str) → running asyncio.Task for TTL termination.
+# Stored so the extend endpoint can cancel + reschedule it.
+_ttl_tasks: dict[str, asyncio.Task] = {}
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
@@ -227,8 +231,12 @@ async def register_ttl(body: RegisterTTLRequest, db: Session):
     if node_run is None:
         raise HTTPException(404, f"NodeRun not found: run_id={body.run_id}, node_id={body.node_id}")
 
+    now        = datetime.now(timezone.utc)
+    expires_at = now + timedelta(minutes=body.keep_alive_min)
+
     outputs = dict(node_run.outputs or {})
     outputs["endpoint_url"] = body.endpoint_url
+    outputs["expires_at"]   = expires_at.isoformat()
     node_run.outputs = outputs
     db.add(node_run)
 
@@ -237,44 +245,69 @@ async def register_ttl(body: RegisterTTLRequest, db: Session):
         name="endpoint_url",
         kind=ArtifactKind.ENDPOINT,
         uri=body.endpoint_url,
-        meta={"keep_alive_min": body.keep_alive_min},
+        meta={
+            "keep_alive_min": body.keep_alive_min,
+            "registered_at":  now.isoformat(),
+            "expires_at":     expires_at.isoformat(),
+        },
     )
     db.add(artifact)
     await db.flush()
 
     await event_bus.publish(uuid.UUID(body.run_id), {
-        "type": "artifact",
-        "node_id": body.node_id,
-        "name": "endpoint_url",
-        "uri": body.endpoint_url,
-        "kind": "endpoint",
+        "type":       "artifact",
+        "node_id":    body.node_id,
+        "name":       "endpoint_url",
+        "uri":        body.endpoint_url,
+        "kind":       "endpoint",
+        "expires_at": expires_at.isoformat(),
     })
 
-    asyncio.create_task(
+    node_run_id_str = str(node_run.id)
+    task = asyncio.create_task(
         _terminate_after_ttl(
             run_id=body.run_id,
-            node_run_id=str(node_run.id),
+            node_run_id=node_run_id_str,
             gpu_provider=getattr(node_run, "gpu_provider", None),
             gpu_pod_id=getattr(node_run, "gpu_pod_id", None),
             keep_alive_min=body.keep_alive_min,
         )
     )
+    _ttl_tasks[node_run_id_str] = task
 
-    return {"status": "ttl_registered", "keep_alive_min": body.keep_alive_min}
+    return {"status": "ttl_registered", "keep_alive_min": body.keep_alive_min, "expires_at": expires_at.isoformat()}
 
 
 async def _terminate_after_ttl(
-    run_id:       str,
-    node_run_id:  str,
-    gpu_provider: str | None,
-    gpu_pod_id:   str | None,
+    run_id:         str,
+    node_run_id:    str,
+    gpu_provider:   str | None,
+    gpu_pod_id:     str | None,
     keep_alive_min: int,
 ) -> None:
-    """Sleep, then terminate the pod and mark the run SUCCEEDED."""
+    """Sleep, fire a T-10min warning, then terminate the pod."""
     from packages.providers.vastai import PROVIDERS
     from packages.providers.base import Pod
 
-    await asyncio.sleep(keep_alive_min * 60)
+    warn_after  = max(0, (keep_alive_min - 10) * 60)
+    final_after = 10 * 60
+
+    # Sleep until T-10min, then broadcast warning
+    if warn_after > 0:
+        await asyncio.sleep(warn_after)
+        try:
+            await event_bus.publish(uuid.UUID(run_id), {
+                "type":              "endpoint_expiry",
+                "node_run_id":       node_run_id,
+                "minutes_remaining": 10,
+            })
+        except Exception:
+            pass
+        await asyncio.sleep(final_after)
+    else:
+        await asyncio.sleep(keep_alive_min * 60)
+
+    _ttl_tasks.pop(node_run_id, None)
 
     if gpu_provider and gpu_pod_id:
         provider = PROVIDERS.get(gpu_provider)

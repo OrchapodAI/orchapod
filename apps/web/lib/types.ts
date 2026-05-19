@@ -169,6 +169,15 @@ export interface InferenceEndpoint {
   gpu_provider: string | null;
 }
 
+// ── Extend endpoint (KAN-30) ──────────────────────────────────────────────────
+
+export interface ExtendResponse {
+  run_id:            string;
+  expires_at:        string;   // ISO-8601
+  extend_min:        number;
+  cost_estimate_usd: number;
+}
+
 // ── WebSocket events ──────────────────────────────────────────────────────────
 
 export type WsEvent =
@@ -176,4 +185,5 @@ export type WsEvent =
   | { type: "node_status"; node_id: string; status: NodeStatus; outputs?: Record<string, string> }
   | { type: "log"; node_id: string; ts: string; level: string; message: string }
   | { type: "progress"; node_id: string; step: number; total?: number; loss?: number }
-  | { type: "artifact"; node_id: string; name: string; uri: string; kind: string };
+  | { type: "artifact"; node_id: string; name: string; uri: string; kind: string; expires_at?: string }
+  | { type: "endpoint_expiry"; node_run_id: string; expires_at?: string; minutes_remaining: number };

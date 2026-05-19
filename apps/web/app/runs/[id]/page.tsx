@@ -11,27 +11,37 @@ import { LogStream, type LogLine } from "@/components/runs/LogStream";
 import { LossChart, type ProgressPoint } from "@/components/runs/LossChart";
 import { NodeTimeline } from "@/components/runs/NodeTimeline";
 import { ArtifactList } from "@/components/runs/ArtifactList";
+import { TryItChat } from "@/components/runs/TryItChat";
+import { EndpointCountdown } from "@/components/runs/EndpointCountdown";
 
 type Tab = "logs" | "chart" | "artifacts" | "endpoint";
 
 export default function RunPage() {
   const { id } = useParams<{ id: string }>();
 
-  const [run, setRun] = useState<Run | null>(null);
-  const [nodeRuns, setNodeRuns] = useState<NodeRun[]>([]);
-  const [artifacts, setArtifacts] = useState<Artifact[]>([]);
+  const [run,          setRun]          = useState<Run | null>(null);
+  const [nodeRuns,     setNodeRuns]     = useState<NodeRun[]>([]);
+  const [artifacts,    setArtifacts]    = useState<Artifact[]>([]);
   const [activeNodeId, setActiveNodeId] = useState<string | undefined>();
-  const [tab, setTab] = useState<Tab>("logs");
-  const [cancelling, setCancelling] = useState(false);
-  const [error, setError] = useState("");
-  const [copied, setCopied] = useState(false);
+  const [tab,          setTab]          = useState<Tab>("logs");
+  const [cancelling,   setCancelling]   = useState(false);
+  const [error,        setError]        = useState("");
+  const [copied,       setCopied]       = useState(false);
+
+  // Tracks the live expiry time — updated by WS endpoint_expiry events and Extend button
+  const [expiresAt, setExpiresAt] = useState<string | null>(null);
 
   const { events, connected } = useRunStream(id);
 
   useEffect(() => {
     api.runs.get(id).then(setRun);
     api.runs.nodes(id).then(setNodeRuns);
-    api.runs.artifacts(id).then(setArtifacts);
+    api.runs.artifacts(id).then((arts) => {
+      setArtifacts(arts);
+      // Seed initial expiresAt from the endpoint artifact meta
+      const ep = arts.find((a) => a.kind === "endpoint");
+      if (ep?.meta?.expires_at) setExpiresAt(String(ep.meta.expires_at));
+    });
   }, [id]);
 
   useEffect(() => {
@@ -48,7 +58,17 @@ export default function RunPage() {
         if (event.status === "running") setActiveNodeId(event.node_id);
       }
       if (event.type === "artifact") {
-        api.runs.artifacts(id).then(setArtifacts);
+        // Refresh artifact list; also update expiresAt if the new artifact has it
+        api.runs.artifacts(id).then((arts) => {
+          setArtifacts(arts);
+          const ep = arts.find((a) => a.kind === "endpoint");
+          if (ep?.meta?.expires_at) setExpiresAt(String(ep.meta.expires_at));
+        });
+        // Endpoint is ready — jump to endpoint tab
+        if (event.kind === "endpoint") setTab("endpoint");
+      }
+      if (event.type === "endpoint_expiry" && event.expires_at) {
+        setExpiresAt(event.expires_at);
       }
     }
   }, [events, id]);
@@ -57,8 +77,8 @@ export default function RunPage() {
     return events
       .filter((e) => e.type === "log")
       .map((e) => ({
-        ts: (e as { ts: string }).ts,
-        level: (e as { level: string }).level,
+        ts:      (e as { ts: string }).ts,
+        level:   (e as { level: string }).level,
         node_id: (e as { node_id: string }).node_id,
         message: (e as { message: string }).message,
       }));
@@ -68,8 +88,8 @@ export default function RunPage() {
     return events
       .filter((e) => e.type === "progress" && (e as { loss?: number }).loss != null)
       .map((e) => ({
-        step: (e as { step: number }).step,
-        loss: (e as { loss: number }).loss,
+        step:    (e as { step: number }).step,
+        loss:    (e as { loss: number }).loss,
         node_id: (e as { node_id: string }).node_id,
       }));
   }, [events]);
@@ -86,17 +106,21 @@ export default function RunPage() {
     }
   }
 
-  const endpointArtifact = artifacts.find((a) => a.kind === "endpoint" && a.meta?.url);
-  const apiKeyArtifact   = artifacts.find((a) => a.kind === "endpoint" && a.meta?.api_key);
-  const endpointUrl      = endpointArtifact ? String(endpointArtifact.meta?.url ?? "") : null;
-  const endpointApiKey   = apiKeyArtifact   ? String(apiKeyArtifact.meta?.api_key ?? "") : null;
-  const endpointModel    = endpointArtifact ? String(endpointArtifact.meta?.model ?? "") : null;
+  // --- Endpoint data --------------------------------------------------------
+  // The endpoint URL lives in artifact.uri (not meta.url — that was a bug).
+  // Model comes from the vllm-serve node's inputs.
+  const endpointArtifact = artifacts.find((a) => a.kind === "endpoint");
+  const endpointUrl      = endpointArtifact?.uri ?? null;
+  const endpointApiKey   = endpointArtifact?.meta?.api_key
+    ? String(endpointArtifact.meta.api_key)
+    : null;
 
-  // Auto-switch to endpoint tab when endpoint is ready
-  useEffect(() => {
-    if (endpointUrl && tab !== "endpoint") setTab("endpoint");
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [endpointUrl]);
+  const vllmNode    = nodeRuns.find((n) => n.node_type === "vllm-serve");
+  const endpointModel = vllmNode
+    ? String((vllmNode.inputs as Record<string, unknown>)?.model ?? "model")
+    : "model";
+
+  const canCancel = run && ["provisioning_gpu", "running"].includes(run.status);
 
   function copyToClipboard(text: string) {
     navigator.clipboard.writeText(text).then(() => {
@@ -104,8 +128,6 @@ export default function RunPage() {
       setTimeout(() => setCopied(false), 2000);
     });
   }
-
-  const canCancel = run && ["provisioning_gpu", "running"].includes(run.status);
 
   if (!run) {
     return (
@@ -117,7 +139,7 @@ export default function RunPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      {/* Header / topbar */}
+      {/* Header */}
       <div className="op-topbar" style={{ gap: 12 }}>
         <Link href="/runs" className="btn btn-sm btn-ghost" style={{ textDecoration: "none" }}>← Runs</Link>
         <div style={{ minWidth: 0 }}>
@@ -133,9 +155,9 @@ export default function RunPage() {
         </div>
         <div className="spacer" />
         {error && <span className="muted" style={{ fontSize: 12, color: "var(--rose)" }}>{error}</span>}
-        {endpointArtifact && (
+        {endpointUrl && (
           <a
-            href={String(endpointArtifact.meta?.url ?? "#")}
+            href={endpointUrl.replace(/\/v1\/?$/, "")}
             target="_blank"
             rel="noreferrer"
             className="btn btn-sm"
@@ -154,16 +176,14 @@ export default function RunPage() {
             {cancelling ? "Cancelling…" : "Cancel"}
           </button>
         )}
-        <Link
-          href={`/canvas/${run.workflow_id}`}
-          className="btn btn-sm"
-          style={{ textDecoration: "none" }}
-        >
-          View workflow
-        </Link>
+        {run.workflow_id && (
+          <Link href={`/canvas/${run.workflow_id}`} className="btn btn-sm" style={{ textDecoration: "none" }}>
+            View workflow
+          </Link>
+        )}
       </div>
 
-      {/* Body: sidebar + main */}
+      {/* Body */}
       <div style={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden" }}>
         {/* Left: node timeline */}
         <div style={{ width: 220, flexShrink: 0, borderRight: "1px solid var(--line)", background: "var(--surface)", display: "flex", flexDirection: "column" }}>
@@ -179,7 +199,7 @@ export default function RunPage() {
           </div>
         </div>
 
-        {/* Main content */}
+        {/* Main */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden" }}>
           {/* Tabs */}
           <div className="row" style={{ padding: "0 16px", borderBottom: "1px solid var(--line)", gap: 4, fontSize: 13, background: "var(--surface)", flexShrink: 0 }}>
@@ -202,7 +222,6 @@ export default function RunPage() {
                 )}
               </button>
             ))}
-            {/* Endpoint tab — only shown when an endpoint is ready */}
             {endpointUrl && (
               <button
                 onClick={() => setTab("endpoint")}
@@ -226,9 +245,11 @@ export default function RunPage() {
 
           {/* Tab panels */}
           <div style={{ flex: 1, overflow: "hidden", padding: 16, background: "var(--bg-2)" }}>
+
             {tab === "logs" && (
               <LogStream lines={logLines} activeNodeId={activeNodeId} connected={connected} />
             )}
+
             {tab === "chart" && (
               <div className="card" style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
                 <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--line)", background: "var(--bg-2)", flexShrink: 0 }}>
@@ -239,15 +260,27 @@ export default function RunPage() {
                 </div>
               </div>
             )}
+
             {tab === "artifacts" && (
               <div className="card" style={{ padding: 16 }}>
                 <ArtifactList artifacts={artifacts} />
               </div>
             )}
+
             {tab === "endpoint" && endpointUrl && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 680 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 16, height: "100%", overflow: "auto" }}>
+
+                {/* Countdown + extend (KAN-30) */}
+                {expiresAt && (
+                  <EndpointCountdown
+                    runId={id}
+                    expiresAt={expiresAt}
+                    onExtended={setExpiresAt}
+                  />
+                )}
+
                 {/* URL card */}
-                <div className="card" style={{ padding: 16 }}>
+                <div className="card" style={{ padding: 16, flexShrink: 0 }}>
                   <div className="muted mono" style={{ fontSize: 10.5, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 10 }}>
                     OpenAI-Compatible Endpoint
                   </div>
@@ -255,17 +288,12 @@ export default function RunPage() {
                     <span className="mono" style={{ flex: 1, fontSize: 12.5, wordBreak: "break-all", color: "var(--ink-1)" }}>
                       {endpointUrl}
                     </span>
-                    <button
-                      onClick={() => copyToClipboard(endpointUrl)}
-                      className="btn btn-sm"
-                      style={{ flexShrink: 0 }}
-                    >
+                    <button onClick={() => copyToClipboard(endpointUrl)} className="btn btn-sm" style={{ flexShrink: 0 }}>
                       {copied ? "Copied!" : "Copy"}
                     </button>
                     <a
-                      href={endpointUrl.replace(/\/v1$/, "")}
-                      target="_blank"
-                      rel="noreferrer"
+                      href={endpointUrl.replace(/\/v1\/?$/, "")}
+                      target="_blank" rel="noreferrer"
                       className="btn btn-sm"
                       style={{ textDecoration: "none", flexShrink: 0, color: "var(--mint-ink)", background: "var(--mint-soft)", borderColor: "var(--mint)" }}
                     >
@@ -278,18 +306,24 @@ export default function RunPage() {
                       <span className="mono" style={{ fontSize: 12, color: "var(--ink-2)" }}>
                         {endpointApiKey.slice(0, 20)}•••
                       </span>
-                      <button
-                        onClick={() => copyToClipboard(endpointApiKey)}
-                        className="btn btn-sm"
-                      >
+                      <button onClick={() => copyToClipboard(endpointApiKey)} className="btn btn-sm">
                         Copy key
                       </button>
                     </div>
                   )}
                 </div>
 
+                {/* Try it chat (KAN-29) */}
+                <div style={{ flex: 1, minHeight: 420 }}>
+                  <TryItChat
+                    endpointUrl={endpointUrl}
+                    apiKey={endpointApiKey}
+                    model={endpointModel}
+                  />
+                </div>
+
                 {/* OpenAI snippet */}
-                <div className="card" style={{ padding: 16 }}>
+                <div className="card" style={{ padding: 16, flexShrink: 0 }}>
                   <div className="muted mono" style={{ fontSize: 10.5, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 10 }}>
                     Usage (Python · OpenAI SDK)
                   </div>
@@ -305,7 +339,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="${endpointModel ?? "model"}",
+    model="${endpointModel}",
     messages=[{"role": "user", "content": "Hello!"}],
 )
 print(response.choices[0].message.content)`}
@@ -320,7 +354,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="${endpointModel ?? "model"}",
+    model="${endpointModel}",
     messages=[{"role": "user", "content": "Hello!"}],
 )
 print(response.choices[0].message.content)`
@@ -331,8 +365,10 @@ print(response.choices[0].message.content)`
                     Copy snippet
                   </button>
                 </div>
+
               </div>
             )}
+
           </div>
         </div>
       </div>

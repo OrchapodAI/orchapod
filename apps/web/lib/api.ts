@@ -1,6 +1,6 @@
 import type {
   Workflow, Run, NodeRun, Artifact, BaseModel, PublicDataset, NodeTypeMeta, NodeType, TrainingMethod,
-  DeployRequest, DeployResponse, InferenceEndpoint,
+  DeployRequest, DeployResponse, InferenceEndpoint, ExtendResponse,
 } from "./types";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -78,6 +78,20 @@ export const api = {
     },
     endpoints(): Promise<InferenceEndpoint[]> {
       return req("/inference/endpoints");
+    },
+    /** Extend a live endpoint by extend_min (default 60). */
+    extend(runId: string, extendMin = 60): Promise<ExtendResponse> {
+      return req(`/inference/extend/${runId}`, {
+        method: "POST",
+        body:   JSON.stringify({ extend_min: extendMin }),
+      });
+    },
+    /** Dry-run: returns cost estimate without changing anything. */
+    extendPreview(runId: string, extendMin = 60): Promise<ExtendResponse> {
+      return req(`/inference/extend/${runId}?preview=1`, {
+        method: "POST",
+        body:   JSON.stringify({ extend_min: extendMin }),
+      });
     },
   },
 

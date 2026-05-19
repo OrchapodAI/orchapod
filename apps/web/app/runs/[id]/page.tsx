@@ -322,6 +322,7 @@ export default function RunPage() {
                     endpointUrl={endpointUrl}
                     apiKey={endpointApiKey}
                     model={endpointModel}
+                    costUsd={run.cost_usd ?? null}
                   />
                 </div>
 

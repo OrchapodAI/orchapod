@@ -31,11 +31,13 @@ interface Props {
   endpointUrl: string;
   apiKey:      string | null;
   model:       string;
+  /** Accumulated run cost in USD — kept live by the run viewer via run_cost WS events. */
+  costUsd:     number | null;
 }
 
 const DEFAULT_SYSTEM = "You are a helpful assistant.";
 
-export function TryItChat({ endpointUrl, apiKey, model }: Props) {
+export function TryItChat({ endpointUrl, apiKey, model, costUsd }: Props) {
   const [messages,    setMessages]    = useState<Message[]>([]);
   const [input,       setInput]       = useState("");
   const [streaming,   setStreaming]   = useState(false);
@@ -201,13 +203,21 @@ export function TryItChat({ endpointUrl, apiKey, model }: Props) {
         </span>
 
         {/* Stats */}
-        {stats.latencyMs != null && (
-          <span className="muted" style={{ fontSize: 11.5 }}>
-            TTFT {stats.latencyMs}ms
-            {stats.tokensPerSec != null && ` · ${stats.tokensPerSec} tok/s`}
-            {` · ${stats.totalTokens} tokens`}
-          </span>
-        )}
+        <span className="muted" style={{ fontSize: 11.5, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          {stats.latencyMs != null && (
+            <>
+              <span>TTFT {stats.latencyMs}ms</span>
+              {stats.tokensPerSec != null && <span>· {stats.tokensPerSec} tok/s</span>}
+              <span>· {stats.totalTokens} tokens</span>
+            </>
+          )}
+          {costUsd != null && (
+            <span style={{ color: "var(--ink-2)", fontWeight: 500 }}>
+              {stats.latencyMs != null && "· "}
+              ${costUsd.toFixed(4)} total
+            </span>
+          )}
+        </span>
 
         <button
           onClick={() => setShowSystem((v) => !v)}

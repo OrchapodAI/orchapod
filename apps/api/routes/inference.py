@@ -286,12 +286,29 @@ async def extend_endpoint(run_id: uuid.UUID, body: ExtendRequest, db: Session, p
     )
     _ttl_tasks[node_run_id_str] = new_task
 
-    # Notify WebSocket subscribers
+    # Accumulate extension cost into Run.cost_usd
+    run_record = await db.get(Run, run_id)
+    if run_record is not None:
+        from decimal import Decimal
+        current = run_record.cost_usd or Decimal("0")
+        run_record.cost_usd = current + Decimal(str(cost))
+        db.add(run_record)
+        await db.flush()
+        new_cost = float(run_record.cost_usd)
+    else:
+        new_cost = cost
+
+    # Notify WebSocket subscribers — endpoint_expiry updates the countdown,
+    # run_status carries the new cost so the run header refreshes.
     await event_bus.publish(run_id, {
         "type":              "endpoint_expiry",
         "node_run_id":       node_run_id_str,
         "expires_at":        expires_at.isoformat(),
         "minutes_remaining": body.extend_min,
+    })
+    await event_bus.publish(run_id, {
+        "type":     "run_cost",
+        "cost_usd": new_cost,
     })
 
     return ExtendResponse(

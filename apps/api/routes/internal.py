@@ -292,7 +292,7 @@ async def _terminate_after_ttl(
     warn_after  = max(0, (keep_alive_min - 10) * 60)
     final_after = 10 * 60
 
-    # Sleep until T-10min, then broadcast warning
+    # Sleep until T-10min, then broadcast in-app warning + send email
     if warn_after > 0:
         await asyncio.sleep(warn_after)
         try:
@@ -303,6 +303,25 @@ async def _terminate_after_ttl(
             })
         except Exception:
             pass
+
+        # Fetch model + endpoint URL from DB for the email
+        try:
+            from api.services.email import send_endpoint_expiry_warning
+            async with AsyncSessionLocal() as _db:
+                _node_run = await _db.get(NodeRun, uuid.UUID(node_run_id))
+                if _node_run:
+                    _model        = str((_node_run.inputs or {}).get("model", "unknown"))
+                    _endpoint_url = str((_node_run.outputs or {}).get("endpoint_url", ""))
+                    await send_endpoint_expiry_warning(
+                        run_id=run_id,
+                        model=_model,
+                        endpoint_url=_endpoint_url,
+                        minutes_remaining=10,
+                    )
+        except Exception as _exc:
+            import logging
+            logging.getLogger(__name__).warning("Expiry email failed: %s", _exc)
+
         await asyncio.sleep(final_after)
     else:
         await asyncio.sleep(keep_alive_min * 60)

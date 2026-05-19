@@ -182,6 +182,7 @@ export interface ExtendResponse {
 
 export type WsEvent =
   | { type: "run_status"; status: RunStatus; error?: string }
+  | { type: "run_cost"; cost_usd: number }
   | { type: "node_status"; node_id: string; status: NodeStatus; outputs?: Record<string, string> }
   | { type: "log"; node_id: string; ts: string; level: string; message: string }
   | { type: "progress"; node_id: string; step: number; total?: number; loss?: number }

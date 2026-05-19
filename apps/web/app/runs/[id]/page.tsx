@@ -49,6 +49,9 @@ export default function RunPage() {
       if (event.type === "run_status") {
         setRun((prev) => prev ? { ...prev, status: event.status } : prev);
       }
+      if (event.type === "run_cost") {
+        setRun((prev) => prev ? { ...prev, cost_usd: event.cost_usd } : prev);
+      }
       if (event.type === "node_status") {
         setNodeRuns((prev) =>
           prev.map((n) =>

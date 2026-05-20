@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 
 class NodeType(str, Enum):
+    HF_DOWNLOAD   = "hf-download"
     DATA_PREP     = "data-prep"
     UNSLOTH_TRAIN = "unsloth-train"
     DISTILL_SFT   = "distill-sft"
@@ -98,6 +99,16 @@ class DistillSFTOutputs(BaseModel):
     student_model: str
     synthetic_dataset: str
     distill_metrics_json: str
+
+
+class HFDownloadInputs(BaseModel):
+    model_id:        str            = Field(description="HuggingFace model ID, e.g. 'Qwen/Qwen3-4B-Instruct'")
+    hf_token:        str | None     = Field(default=None, description="HuggingFace token for private/gated models")
+    revision:        str | None     = Field(default=None, description="Branch, tag, or commit SHA (default: main)")
+    ignore_patterns: list[str] | None = Field(default=None, description="Glob patterns to skip (default: non-PyTorch formats)")
+
+class HFDownloadOutputs(BaseModel):
+    hf_model: str   # R2 URI to the downloaded HF model directory
 
 
 class QuantizeInputs(BaseModel):
@@ -192,6 +203,13 @@ class WorkflowSchema(BaseModel):
 # ---------------------------------------------------------------------------
 
 NODE_REGISTRY: dict[NodeType, dict] = {
+    NodeType.HF_DOWNLOAD: {
+        "description": "Download a HuggingFace model to R2 with SHA256 verification. "
+                       "Download once, reuse across workflows.",
+        "inputs_schema":  HFDownloadInputs,
+        "outputs_schema": HFDownloadOutputs,
+        "runtime": "cpu",
+    },
     NodeType.DATA_PREP: {
         "description": "Load, validate, split, and reformat a dataset to ChatML.",
         "inputs_schema": DataPrepInputs,

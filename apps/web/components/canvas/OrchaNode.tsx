@@ -3,7 +3,7 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import clsx from "clsx";
 import type { NodeType } from "@/lib/types";
-import { Database, Zap, GitMerge, Package, BarChart2, Globe } from "lucide-react";
+import { Database, Zap, GitMerge, Package, BarChart2, Globe, Download } from "lucide-react";
 
 export interface OrchaNodeData extends Record<string, unknown> {
   node_type: NodeType;
@@ -19,12 +19,13 @@ const NODE_META: Record<NodeType, {
   accent: string;   // left border + icon color
   iconBg: string;
 }> = {
-  "data-prep":     { label: "Data Prep", icon: Database,  accent: "#0065FF", iconBg: "#DEEBFF" },
-  "unsloth-train": { label: "Train",     icon: Zap,       accent: "#6554C0", iconBg: "#EAE6FF" },
-  "distill-sft":   { label: "Distill",   icon: GitMerge,  accent: "#00B8D9", iconBg: "#E6FCFF" },
-  "quantize":      { label: "Quantize",  icon: Package,   accent: "#FF8B00", iconBg: "#FFFAE6" },
-  "lm-eval":       { label: "Evaluate",  icon: BarChart2, accent: "#00875A", iconBg: "#E3FCEF" },
-  "vllm-serve":    { label: "Serve",     icon: Globe,     accent: "#DE350B", iconBg: "#FFEBE6" },
+  "hf-download":   { label: "HF Download", icon: Download,  accent: "#FF991F", iconBg: "#FFFAE6" },
+  "data-prep":     { label: "Data Prep",   icon: Database,  accent: "#0065FF", iconBg: "#DEEBFF" },
+  "unsloth-train": { label: "Train",       icon: Zap,       accent: "#6554C0", iconBg: "#EAE6FF" },
+  "distill-sft":   { label: "Distill",     icon: GitMerge,  accent: "#00B8D9", iconBg: "#E6FCFF" },
+  "quantize":      { label: "Quantize",    icon: Package,   accent: "#FF8B00", iconBg: "#FFFAE6" },
+  "lm-eval":       { label: "Evaluate",    icon: BarChart2, accent: "#00875A", iconBg: "#E3FCEF" },
+  "vllm-serve":    { label: "Serve",       icon: Globe,     accent: "#DE350B", iconBg: "#FFEBE6" },
 };
 
 export function OrchaNode({ data, selected }: NodeProps<Node<OrchaNodeData>>) {

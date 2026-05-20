@@ -87,6 +87,7 @@ export interface Artifact {
 // ── Registry ─────────────────────────────────────────────────────────────────
 
 export type NodeType =
+  | "hf-download"
   | "data-prep"
   | "unsloth-train"
   | "distill-sft"
@@ -167,6 +168,36 @@ export interface InferenceEndpoint {
   started_at: string | null;
   keep_alive_min: number | null;
   gpu_provider: string | null;
+}
+
+// ── Registered models (model_registry) ───────────────────────────────────────
+
+export interface RegisteredModel {
+  id:          string;
+  name:        string;
+  base_model:  string;
+  format:      "hf" | "awq" | "gguf";
+  uri:         string;
+  tags:        string[];
+  description: string | null;
+  created_at:  string;
+}
+
+// ── Global artifact list ──────────────────────────────────────────────────────
+
+export interface ArtifactListItem {
+  id:            string;
+  run_id:        string;
+  node_run_id:   string;
+  workflow_id:   string | null;
+  workflow_name: string | null;
+  node_id:       string;
+  name:          string;
+  kind:          "dataset" | "model" | "metrics" | "log" | "endpoint";
+  uri:           string;
+  size_bytes:    number | null;
+  meta:          Record<string, unknown>;
+  created_at:    string;
 }
 
 // ── Extend endpoint (KAN-30) ──────────────────────────────────────────────────

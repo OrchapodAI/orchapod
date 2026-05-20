@@ -1,6 +1,6 @@
 "use client";
 
-import { Database, Zap, GitMerge, Package, BarChart2, Globe } from "lucide-react";
+import { Database, Zap, GitMerge, Package, BarChart2, Globe, Download } from "lucide-react";
 import type { NodeType } from "@/lib/types";
 
 interface PaletteItem {
@@ -14,7 +14,8 @@ interface PaletteItem {
 }
 
 const PALETTE_ITEMS: PaletteItem[] = [
-  { type: "data-prep",     label: "Data Prep", description: "Load, validate & reformat dataset",         icon: Database,  accent: "#0065FF", iconBg: "#DEEBFF", runtime: "cpu" },
+  { type: "hf-download",   label: "HF Download", description: "Download HF model to R2 (once, reuse)", icon: Download,  accent: "#FF991F", iconBg: "#FFFAE6", runtime: "cpu" },
+  { type: "data-prep",     label: "Data Prep",   description: "Load, validate & reformat dataset",      icon: Database,  accent: "#0065FF", iconBg: "#DEEBFF", runtime: "cpu" },
   { type: "unsloth-train", label: "Train",     description: "LoRA SFT via Unsloth (2–5× faster)",        icon: Zap,       accent: "#6554C0", iconBg: "#EAE6FF", runtime: "gpu" },
   { type: "distill-sft",   label: "Distill",   description: "Teacher → student knowledge distillation",  icon: GitMerge,  accent: "#00B8D9", iconBg: "#E6FCFF", runtime: "gpu" },
   { type: "quantize",      label: "Quantize",  description: "GGUF (Ollama) or AWQ (vLLM)",               icon: Package,   accent: "#FF8B00", iconBg: "#FFFAE6", runtime: "cpu" },

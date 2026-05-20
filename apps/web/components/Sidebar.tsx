@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Home, GitBranch, Play, Database, Package, Server,
-  DollarSign, Settings, Layers, Cpu
+  DollarSign, Settings, Layers, Cpu, Box
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -16,9 +16,10 @@ const NAV_BUILD: NavItem[] = [
   { href: "/runs",      navKey: "runs",     label: "Runs",         count: "348", Icon: Play },
 ];
 const NAV_REGISTRY: NavItem[] = [
-  { href: "/registry",  navKey: "models",   label: "Models",       count: "47",  Icon: Package },
+  { href: "/registry",  navKey: "registry", label: "Base Models",  count: "47",  Icon: Package },
+  { href: "/models",    navKey: "mymodels", label: "My Models",    count: null,  Icon: Box     },
   { href: "/datasets",  navKey: "datasets", label: "Datasets",     count: "23",  Icon: Database },
-  { href: "/artifacts", navKey: "art",      label: "Artifacts",    count: null,  Icon: Layers },
+  { href: "/artifacts", navKey: "art",      label: "Artifacts",    count: null,  Icon: Layers  },
 ];
 const NAV_OPERATE: NavItem[] = [
   { href: "/inference", navKey: "infer",    label: "Inference",    count: null,  Icon: Cpu },

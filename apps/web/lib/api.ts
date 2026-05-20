@@ -1,6 +1,6 @@
 import type {
   Workflow, Run, NodeRun, Artifact, BaseModel, PublicDataset, NodeTypeMeta, NodeType, TrainingMethod,
-  DeployRequest, DeployResponse, InferenceEndpoint, ExtendResponse,
+  DeployRequest, DeployResponse, InferenceEndpoint, ExtendResponse, RegisteredModel, ArtifactListItem,
 } from "./types";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -92,6 +92,33 @@ export const api = {
         method: "POST",
         body:   JSON.stringify({ extend_min: extendMin }),
       });
+    },
+  },
+
+  /** Trained/quantized models auto-registered from runs. */
+  models: {
+    list(params?: { format?: string; base_model?: string; tag?: string }): Promise<RegisteredModel[]> {
+      const qs = params
+        ? "?" + new URLSearchParams(Object.entries(params).filter(([, v]) => v != null) as [string, string][]).toString()
+        : "";
+      return req(`/models${qs}`);
+    },
+    get(id: string): Promise<RegisteredModel> {
+      return req(`/models/${id}`);
+    },
+  },
+
+  /** Global artifact browser. */
+  artifacts: {
+    list(params?: { kind?: string; limit?: number }): Promise<ArtifactListItem[]> {
+      const qs = params
+        ? "?" + new URLSearchParams(
+            Object.entries(params)
+              .filter(([, v]) => v != null)
+              .map(([k, v]) => [k, String(v)])
+          ).toString()
+        : "";
+      return req(`/artifacts${qs}`);
     },
   },
 

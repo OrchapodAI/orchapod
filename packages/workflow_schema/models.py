@@ -19,13 +19,22 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 
 class NodeType(str, Enum):
-    HF_DOWNLOAD   = "hf-download"
-    DATA_PREP     = "data-prep"
-    UNSLOTH_TRAIN = "unsloth-train"
-    DISTILL_SFT   = "distill-sft"
-    QUANTIZE      = "quantize"
-    LM_EVAL       = "lm-eval"
-    VLLM_SERVE    = "vllm-serve"
+    # Data ingestion
+    HF_DOWNLOAD          = "hf-download"
+    HF_IMPORT            = "hf-import"
+    FILE_UPLOAD          = "file-upload"
+    S3_IMPORT            = "s3-import"
+    # Data processing
+    DATA_PREP            = "data-prep"
+    AUTO_LABEL_CLEANLAB  = "auto-label-cleanlab"
+    SYNTH_DISTILABEL     = "synth-distilabel"
+    # Training
+    UNSLOTH_TRAIN        = "unsloth-train"
+    DISTILL_SFT          = "distill-sft"
+    # Post-training
+    QUANTIZE             = "quantize"
+    LM_EVAL              = "lm-eval"
+    VLLM_SERVE           = "vllm-serve"
 
 
 class DataFormat(str, Enum):
@@ -70,6 +79,78 @@ class DataPrepOutputs(BaseModel):
     train_jsonl: str
     eval_jsonl: str
     stats_json: str
+
+
+class HFImportInputs(BaseModel):
+    """KAN-7 — Import a HuggingFace Hub dataset, detect format, validate rows."""
+    dataset_id: str = Field(description="HuggingFace dataset ID, e.g. 'databricks/databricks-dolly-15k'")
+    split: str = Field(default="train", description="Dataset split to import")
+    format: Literal["auto", "chatml", "alpaca", "sharegpt", "dpo"] = Field(default="auto")
+    max_rows: int | None = Field(default=None, ge=1, description="Cap on rows to import")
+
+class HFImportOutputs(BaseModel):
+    dataset: str  # R2 URI to canonical JSONL
+
+
+class FileUploadInputs(BaseModel):
+    """KAN-6 — Reference to a user-uploaded CSV/JSONL/Parquet file."""
+    upload_id: str = Field(description="Upload ID returned by POST /uploads")
+    format: Literal["auto", "chatml", "alpaca", "sharegpt", "dpo"] = Field(default="auto")
+
+class FileUploadOutputs(BaseModel):
+    dataset: str  # R2 URI to canonical JSONL
+
+
+class S3ImportInputs(BaseModel):
+    """KAN-9 — Read from an S3-compatible bucket."""
+    bucket: str = Field(description="S3 bucket name")
+    prefix: str = Field(default="", description="Key prefix filter")
+    endpoint_url: str | None = Field(default=None, description="Custom endpoint for R2/MinIO")
+    access_key_id: str | None = Field(default=None)
+    secret_access_key: str | None = Field(default=None)
+    format: Literal["auto", "chatml", "alpaca", "sharegpt", "dpo"] = Field(default="auto")
+    max_rows: int | None = Field(default=None)
+
+class S3ImportOutputs(BaseModel):
+    dataset: str  # R2 URI to canonical JSONL
+
+
+class AutoLabelCleanlabInputs(BaseModel):
+    """KAN-11 — Auto-label dataset rows using Cleanlab TLM trustworthiness scores."""
+    dataset: str = Field(description="R2 URI to input dataset JSONL")
+    quality_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    cleanlab_api_key: str | None = Field(default=None, description="Cleanlab API key (stub mode if unset)")
+
+class AutoLabelCleanlabOutputs(BaseModel):
+    dataset: str   # filtered high-quality rows
+    labels_json: str  # per-row quality scores
+
+
+class SynthDistilabelInputs(BaseModel):
+    """KAN-10 — Generate synthetic ChatML rows via a teacher LLM.
+
+    Default teacher is NVIDIA Nemotron Super via Nebius Token Factory.
+    Falls back to OpenAI or Anthropic if NEBIUS_API_KEY is not set.
+    """
+    pipeline_template: Literal["self-instruct", "evol-instruct", "magpie"] = Field(
+        default="self-instruct",
+    )
+    teacher_kind: Literal["nebius", "openai", "anthropic"] = Field(
+        default="nebius",
+        description="Teacher LLM provider — 'nebius' uses Nemotron Super via Token Factory",
+    )
+    teacher_model: str = Field(
+        default="nvidia/Llama-3.3-Nemotron-Super-49B-v1",
+        description="Model ID. Nemotron Super 49B is the default teacher.",
+    )
+    n_samples: int = Field(default=1000, ge=10)
+    seed_prompts: str | None = Field(default=None, description="R2 URI to seed prompts JSONL")
+    temperature: float = Field(default=0.8, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=512, ge=64)
+
+class SynthDistilabelOutputs(BaseModel):
+    dataset: str          # R2 URI to generated ChatML JSONL
+    cost_summary_json: str
 
 
 class UnslothTrainInputs(BaseModel):
@@ -210,11 +291,41 @@ NODE_REGISTRY: dict[NodeType, dict] = {
         "outputs_schema": HFDownloadOutputs,
         "runtime": "cpu",
     },
+    NodeType.HF_IMPORT: {
+        "description": "Import a HuggingFace Hub dataset, auto-detect format, validate rows.",
+        "inputs_schema": HFImportInputs,
+        "outputs_schema": HFImportOutputs,
+        "runtime": "cpu",
+    },
+    NodeType.FILE_UPLOAD: {
+        "description": "Upload a CSV/JSONL/Parquet file from your computer.",
+        "inputs_schema": FileUploadInputs,
+        "outputs_schema": FileUploadOutputs,
+        "runtime": "cpu",
+    },
+    NodeType.S3_IMPORT: {
+        "description": "Read CSV/JSONL/Parquet files from an S3-compatible bucket (AWS, R2, MinIO).",
+        "inputs_schema": S3ImportInputs,
+        "outputs_schema": S3ImportOutputs,
+        "runtime": "cpu",
+    },
     NodeType.DATA_PREP: {
         "description": "Load, validate, split, and reformat a dataset to ChatML.",
         "inputs_schema": DataPrepInputs,
         "outputs_schema": DataPrepOutputs,
-        "runtime": "cpu",  # runs on control plane, no GPU pod needed
+        "runtime": "cpu",
+    },
+    NodeType.AUTO_LABEL_CLEANLAB: {
+        "description": "Auto-label rows with Cleanlab TLM quality scores; threshold-filter low-quality rows.",
+        "inputs_schema": AutoLabelCleanlabInputs,
+        "outputs_schema": AutoLabelCleanlabOutputs,
+        "runtime": "cpu",
+    },
+    NodeType.SYNTH_DISTILABEL: {
+        "description": "Generate synthetic training data via a teacher LLM (default: Nemotron Super via Nebius Token Factory).",
+        "inputs_schema": SynthDistilabelInputs,
+        "outputs_schema": SynthDistilabelOutputs,
+        "runtime": "cpu",
     },
     NodeType.UNSLOTH_TRAIN: {
         "description": "Fine-tune a model with LoRA SFT via Unsloth (2-5x faster, 80% less VRAM).",

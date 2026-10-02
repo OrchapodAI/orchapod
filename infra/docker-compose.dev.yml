@@ -1,8 +1,13 @@
-# Local development environment
-# Runs all control-plane dependencies on a single machine.
-# GPU pods still run on RunPod/Vast.ai — this is just the orchestration layer.
+# Local development environment — Nebius x NVIDIA Hackathon edition
+# Runs Postgres, Redis, and MinIO locally. GPU pods run on Nebius AI Cloud.
+# CPU nodes (hf-import, data-prep, synth-distilabel, etc.) run via LocalDockerProvider.
 #
 # Usage: docker compose -f infra/docker-compose.dev.yml up -d
+#
+# Required .env keys for hackathon demo:
+#   NEBIUS_API_KEY       — Token Factory (Nemotron inference, teacher LLM, judge)
+#   NEBIUS_IAM_TOKEN     — AI Cloud compute (GPU jobs for training/serving)
+#   NEBIUS_FOLDER_ID     — Nebius project folder ID
 
 version: "3.9"
 
@@ -66,8 +71,19 @@ services:
       ORCHAPOD_R2_SECRET_KEY: orchapod_dev
       ORCHAPOD_R2_BUCKET: orchapod-artifacts
       ORCHAPOD_CONTROL_URL: http://api:8000
-      VASTAI_API_KEY: ${VASTAI_API_KEY}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      # Nebius AI Cloud — GPU compute (primary for hackathon)
+      NEBIUS_IAM_TOKEN: ${NEBIUS_IAM_TOKEN:-}
+      NEBIUS_FOLDER_ID: ${NEBIUS_FOLDER_ID:-}
+      NEBIUS_SUBNET_ID: ${NEBIUS_SUBNET_ID:-}
+      # Nebius Token Factory — Nemotron inference (teacher LLM + judge)
+      NEBIUS_API_KEY: ${NEBIUS_API_KEY:-}
+      JUDGE_MODEL: ${JUDGE_MODEL:-nvidia/Llama-3.1-Nemotron-Ultra-253B-v1}
+      # Fallback GPU provider
+      VASTAI_API_KEY: ${VASTAI_API_KEY:-}
+      # Fallback judge / optional features
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # HuggingFace token for private/gated models
+      HF_TOKEN: ${HF_TOKEN:-}
       # Cloudflare Tunnel token (optional — see .env.example for setup)
       CLOUDFLARE_TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
     depends_on:

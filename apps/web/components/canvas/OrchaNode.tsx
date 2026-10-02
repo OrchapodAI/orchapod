@@ -3,7 +3,7 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import clsx from "clsx";
 import type { NodeType } from "@/lib/types";
-import { Database, Zap, GitMerge, Package, BarChart2, Globe, Download } from "lucide-react";
+import { Database, Zap, GitMerge, Package, BarChart2, Globe, Download, Upload, Cloud, Sparkles, Tag, HardDrive } from "lucide-react";
 
 export interface OrchaNodeData extends Record<string, unknown> {
   node_type: NodeType;
@@ -19,13 +19,22 @@ const NODE_META: Record<NodeType, {
   accent: string;   // left border + icon color
   iconBg: string;
 }> = {
-  "hf-download":   { label: "HF Download", icon: Download,  accent: "#FF991F", iconBg: "#FFFAE6" },
-  "data-prep":     { label: "Data Prep",   icon: Database,  accent: "#0065FF", iconBg: "#DEEBFF" },
-  "unsloth-train": { label: "Train",       icon: Zap,       accent: "#6554C0", iconBg: "#EAE6FF" },
-  "distill-sft":   { label: "Distill",     icon: GitMerge,  accent: "#00B8D9", iconBg: "#E6FCFF" },
-  "quantize":      { label: "Quantize",    icon: Package,   accent: "#FF8B00", iconBg: "#FFFAE6" },
-  "lm-eval":       { label: "Evaluate",    icon: BarChart2, accent: "#00875A", iconBg: "#E3FCEF" },
-  "vllm-serve":    { label: "Serve",       icon: Globe,     accent: "#DE350B", iconBg: "#FFEBE6" },
+  // Data ingestion
+  "hf-download":          { label: "HF Download",    icon: Download,  accent: "#FF991F", iconBg: "#FFFAE6" },
+  "hf-import":            { label: "HF Import",      icon: HardDrive, accent: "#FF991F", iconBg: "#FFFAE6" },
+  "file-upload":          { label: "File Upload",    icon: Upload,    accent: "#0065FF", iconBg: "#DEEBFF" },
+  "s3-import":            { label: "S3 Import",      icon: Cloud,     accent: "#00B8D9", iconBg: "#E6FCFF" },
+  // Data processing
+  "data-prep":            { label: "Data Prep",      icon: Database,  accent: "#0065FF", iconBg: "#DEEBFF" },
+  "auto-label-cleanlab":  { label: "Auto-Label",     icon: Tag,       accent: "#6554C0", iconBg: "#EAE6FF" },
+  "synth-distilabel":     { label: "Synth Data",     icon: Sparkles,  accent: "#00875A", iconBg: "#E3FCEF" },
+  // Training
+  "unsloth-train":        { label: "Train",          icon: Zap,       accent: "#6554C0", iconBg: "#EAE6FF" },
+  "distill-sft":          { label: "Distill",        icon: GitMerge,  accent: "#00B8D9", iconBg: "#E6FCFF" },
+  // Post-training
+  "quantize":             { label: "Quantize",       icon: Package,   accent: "#FF8B00", iconBg: "#FFFAE6" },
+  "lm-eval":              { label: "Evaluate",       icon: BarChart2, accent: "#00875A", iconBg: "#E3FCEF" },
+  "vllm-serve":           { label: "Serve",          icon: Globe,     accent: "#DE350B", iconBg: "#FFEBE6" },
 };
 
 export function OrchaNode({ data, selected }: NodeProps<Node<OrchaNodeData>>) {

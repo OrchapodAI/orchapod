@@ -14,6 +14,7 @@ import os
 
 from packages.providers.base import GPUProvider, GPUSpec, NoCapacity
 from packages.providers.vastai import VastAIProvider
+from packages.providers.local_docker import LocalDockerProvider
 
 try:
     from packages.providers.nebius import NebiusProvider
@@ -115,3 +116,17 @@ async def get_cost_estimate(resources) -> list[dict]:
             quotes.append({"provider": name, "error": str(e)})
 
     return sorted(quotes, key=lambda q: q.get("price_per_hour", 9999))
+
+
+_local_docker: LocalDockerProvider | None = None
+
+
+async def pick_local_docker(resources) -> tuple[GPUProvider, GPUSpec]:
+    """Return the LocalDockerProvider for CPU-runtime nodes.
+    CPU nodes never need a GPU spec — we pass a dummy one so the protocol is satisfied.
+    """
+    global _local_docker
+    if _local_docker is None:
+        _local_docker = LocalDockerProvider()
+    dummy_spec = GPUSpec(gpu_type="cpu", count=0)
+    return _local_docker, dummy_spec

@@ -21,20 +21,28 @@ dataset prep → LoRA fine-tune → distillation → quantization → evaluation
 | Component | Nebius / NVIDIA technology |
 |-----------|---------------------------|
 | GPU compute (training, serving) | **Nebius AI Cloud** — H100 SXM instances, eu-north1 |
-| Base models to fine-tune | **NVIDIA Nemotron** — Mini 4B, Super 49B, 70B via HuggingFace |
-| LLM-as-judge (lm-eval) | **NVIDIA Nemotron Ultra 253B** via **Nebius Token Factory** |
-| Model inference during eval | vLLM on Nebius H100, compared with Nemotron judge scores |
-| Direct model serving | Deploy Nemotron models via Nebius Token Factory (instant, no GPU needed) |
+| Synthetic training data teacher | **Nemotron Super 49B** via **Nebius Token Factory** |
+| Base model to fine-tune | **Nemotron Mini 4B** from HuggingFace |
+| LLM-as-judge (lm-eval) | **Nemotron Ultra 253B** via **Nebius Token Factory** |
+| Data quality scoring | Cleanlab TLM (CPU, runs locally) |
+| CPU nodes (import, prep, synth) | LocalDockerProvider — no GPU API key needed |
+| One-command local stack | docker-compose.dev.yml (Postgres + Redis + MinIO + API + Web) |
 
 **The full demo pipeline:**
 ```
-HF Download (Nemotron Mini 4B)
-  → Data Prep (Dolly 15K → ChatML)
-    → Unsloth Train (LoRA SFT on Nebius H100)
-      → Quantize (GGUF Q4_K_M for Ollama)
-      → LM-Eval (benchmarks + Nemotron Ultra judge via Token Factory)
-      → vLLM Serve (OpenAI endpoint on Nebius)
+HF Import (databricks/dolly-15k from HuggingFace)
+  → Synth Data (Nemotron Super 49B as teacher — generates 1K synthetic rows via Token Factory)
+    → Data Prep (format, dedup, split)
+      → HF Download (Nemotron Mini 4B model)
+        → Unsloth Train (LoRA SFT on Nebius H100)
+          → LM-Eval (benchmarks + Nemotron Ultra judge via Token Factory)
+          → vLLM Serve (OpenAI endpoint on Nebius)
 ```
+
+**Nemotron is used at every intelligence layer:**
+- **Nemotron Super 49B** → synthetic training data generation (teacher)
+- **Nemotron Mini 4B** → the model being fine-tuned (student)
+- **Nemotron Ultra 253B** → evaluation judge (Token Factory, no GPU needed)
 
 ---
 
@@ -77,34 +85,35 @@ NEBIUS_FOLDER_ID=your_folder_id
 DATABASE_URL=postgresql+asyncpg://postgres:orchapod@localhost:5432/orchapod
 ```
 
-### 3. Start infrastructure
+### 3. Start infrastructure (one command)
 
 ```bash
-# Postgres + Redis
-docker run -d --name orchapod-pg \
-  -e POSTGRES_PASSWORD=orchapod -e POSTGRES_DB=orchapod \
-  -p 5432:5432 postgres:16
-
-docker run -d --name orchapod-redis -p 6379:6379 redis:7
+# Starts Postgres, Redis, MinIO, API, and the Next.js frontend
+docker compose -f infra/docker-compose.dev.yml up -d
 ```
 
-### 4. Start the API
+This runs everything. MinIO serves as a local R2 stand-in (S3-compatible). CPU nodes (HF Import, Synth Data, Data Prep) run via LocalDockerProvider — no GPU API key needed.
+
+**OR** start services manually:
 
 ```bash
-pip install -r apps/api/requirements.txt
+# Postgres + Redis + MinIO
+docker run -d --name orchapod-pg -e POSTGRES_PASSWORD=orchapod -e POSTGRES_DB=orchapod -p 5432:5432 postgres:16
+docker run -d --name orchapod-redis -p 6379:6379 redis:7
+docker run -d --name orchapod-minio -e MINIO_ROOT_USER=orchapod -e MINIO_ROOT_PASSWORD=orchapod_dev -p 9000:9000 minio/minio server /data
+```
 
-cd apps/api
-alembic upgrade head
+```bash
+# API
+pip install -r apps/api/requirements.txt
+cd apps/api && alembic upgrade head
 uvicorn api.main:app --reload
 # → http://localhost:8000  (Swagger: http://localhost:8000/docs)
 ```
 
-### 5. Start the frontend
-
 ```bash
-cd apps/web
-pnpm install
-pnpm dev
+# Frontend
+cd apps/web && pnpm install && pnpm dev
 # → http://localhost:3000
 ```
 
@@ -112,11 +121,13 @@ pnpm dev
 
 Open `http://localhost:3000/workflows`, click **+ New Workflow**, then drag these nodes onto the canvas:
 
-1. **HF Download** — `model_id: nvidia/Nemotron-Mini-4B-Instruct`
-2. **Data Prep** — `dataset: databricks/databricks-dolly-15k`
-3. **Train** — base model from step 1, train data from step 2
-4. **LM-Eval** — judge model: `nvidia/Llama-3.1-Nemotron-Ultra-253B-v1`
-5. **vLLM Serve** — model from step 3
+1. **HF Import** — `dataset_id: databricks/databricks-dolly-15k`
+2. **Synth Data** — `teacher_kind: nebius`, `teacher_model: nvidia/Llama-3.3-Nemotron-Super-49B-v1`, `n_samples: 1000`  *(uses Nemotron Super as teacher via Token Factory)*
+3. **Data Prep** — `dataset` = output of step 2, `format: chatml`
+4. **HF Download** — `model_id: nvidia/Nemotron-Mini-4B-Instruct`
+5. **Train** — base model from step 4, train data from step 3
+6. **LM-Eval** — judge model: `nvidia/Llama-3.1-Nemotron-Ultra-253B-v1`
+7. **vLLM Serve** — model from step 5
 
 Click **▶ Run** → approve the Nebius cost estimate → watch live logs → open the "Try it" chat tab.
 

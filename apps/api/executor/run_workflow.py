@@ -103,8 +103,8 @@ async def _execute_node(
     Provision a GPU pod, run the container, stream logs, wait for exit.
     Returns the outputs dict collected from /internal/artifact webhooks.
     """
-    from api.services.provider_selector import pick_provider
-    from packages.workflow_schema.models import ResourceSpec
+    from api.services.provider_selector import pick_provider, pick_local_docker
+    from packages.workflow_schema.models import ResourceSpec, NodeType, NODE_REGISTRY
 
     res_dict = dag_node.resources if isinstance(dag_node.resources, dict) else {}
     resources = ResourceSpec(**res_dict) if res_dict else ResourceSpec()
@@ -112,11 +112,19 @@ async def _execute_node(
     # Resolve ${{ ... }} template refs using outputs from already-completed nodes
     resolved = await _resolve_inputs(dag_node.inputs, run, db)
 
-    # Pick cheapest available GPU provider
+    # Determine runtime: CPU nodes run via LocalDockerProvider, GPU nodes via cloud
     try:
-        provider, gpu_spec = await pick_provider(resources)
+        node_runtime = NODE_REGISTRY[NodeType(dag_node.type)].get("runtime", "gpu")
+    except (ValueError, KeyError):
+        node_runtime = "gpu"
+
+    try:
+        if node_runtime == "cpu":
+            provider, gpu_spec = await pick_local_docker(resources)
+        else:
+            provider, gpu_spec = await pick_provider(resources)
     except Exception as e:
-        raise NodeFailed(f"No GPU available: {e}")
+        raise NodeFailed(f"No {node_runtime} provider available: {e}")
 
     env = _build_env(resolved, node_run)
     image = f"ghcr.io/orchapod/{dag_node.type}:latest"

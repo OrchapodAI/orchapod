@@ -1,6 +1,6 @@
 "use client";
 
-import { Database, Zap, GitMerge, Package, BarChart2, Globe, Download } from "lucide-react";
+import { Database, Zap, GitMerge, Package, BarChart2, Globe, Download, Upload, Cloud, Sparkles, Tag, HardDrive } from "lucide-react";
 import type { NodeType } from "@/lib/types";
 
 interface PaletteItem {
@@ -14,13 +14,22 @@ interface PaletteItem {
 }
 
 const PALETTE_ITEMS: PaletteItem[] = [
-  { type: "hf-download",   label: "HF Download", description: "Download HF model to R2 (once, reuse)", icon: Download,  accent: "#FF991F", iconBg: "#FFFAE6", runtime: "cpu" },
-  { type: "data-prep",     label: "Data Prep",   description: "Load, validate & reformat dataset",      icon: Database,  accent: "#0065FF", iconBg: "#DEEBFF", runtime: "cpu" },
-  { type: "unsloth-train", label: "Train",     description: "LoRA SFT via Unsloth (2–5× faster)",        icon: Zap,       accent: "#6554C0", iconBg: "#EAE6FF", runtime: "gpu" },
-  { type: "distill-sft",   label: "Distill",   description: "Teacher → student knowledge distillation",  icon: GitMerge,  accent: "#00B8D9", iconBg: "#E6FCFF", runtime: "gpu" },
-  { type: "quantize",      label: "Quantize",  description: "GGUF (Ollama) or AWQ (vLLM)",               icon: Package,   accent: "#FF8B00", iconBg: "#FFFAE6", runtime: "cpu" },
-  { type: "lm-eval",       label: "Evaluate",  description: "Benchmarks + LLM-as-judge",                 icon: BarChart2, accent: "#00875A", iconBg: "#E3FCEF", runtime: "gpu" },
-  { type: "vllm-serve",    label: "Serve",     description: "OpenAI-compatible endpoint via vLLM",       icon: Globe,     accent: "#DE350B", iconBg: "#FFEBE6", runtime: "gpu" },
+  // ── Data ingestion ──────────────────────────────────────────────────────────
+  { type: "hf-download",         label: "HF Download",  description: "Download HF model to R2 (once, reuse)",              icon: Download,  accent: "#FF991F", iconBg: "#FFFAE6", runtime: "cpu" },
+  { type: "hf-import",           label: "HF Import",    description: "Import HuggingFace dataset, auto-detect format",     icon: HardDrive, accent: "#FF991F", iconBg: "#FFFAE6", runtime: "cpu" },
+  { type: "file-upload",         label: "File Upload",  description: "Upload CSV / JSONL / Parquet from your computer",    icon: Upload,    accent: "#0065FF", iconBg: "#DEEBFF", runtime: "cpu" },
+  { type: "s3-import",           label: "S3 Import",    description: "Read from S3-compatible bucket (AWS / R2 / MinIO)",  icon: Cloud,     accent: "#00B8D9", iconBg: "#E6FCFF", runtime: "cpu" },
+  // ── Data processing ─────────────────────────────────────────────────────────
+  { type: "data-prep",           label: "Data Prep",    description: "Validate, reformat, dedup & split dataset",          icon: Database,  accent: "#0065FF", iconBg: "#DEEBFF", runtime: "cpu" },
+  { type: "synth-distilabel",    label: "Synth Data",   description: "Generate data with Nemotron teacher (Token Factory)", icon: Sparkles,  accent: "#00875A", iconBg: "#E3FCEF", runtime: "cpu" },
+  { type: "auto-label-cleanlab", label: "Auto-Label",   description: "Cleanlab TLM quality scores + threshold filter",     icon: Tag,       accent: "#6554C0", iconBg: "#EAE6FF", runtime: "cpu" },
+  // ── Training ────────────────────────────────────────────────────────────────
+  { type: "unsloth-train",       label: "Train",        description: "LoRA SFT via Unsloth (2–5× faster, 80% less VRAM)", icon: Zap,       accent: "#6554C0", iconBg: "#EAE6FF", runtime: "gpu" },
+  { type: "distill-sft",         label: "Distill",      description: "Teacher → student knowledge distillation",           icon: GitMerge,  accent: "#00B8D9", iconBg: "#E6FCFF", runtime: "gpu" },
+  // ── Post-training ────────────────────────────────────────────────────────────
+  { type: "quantize",            label: "Quantize",     description: "GGUF (Ollama) or AWQ (vLLM)",                        icon: Package,   accent: "#FF8B00", iconBg: "#FFFAE6", runtime: "cpu" },
+  { type: "lm-eval",             label: "Evaluate",     description: "Benchmarks + Nemotron Ultra judge",                  icon: BarChart2, accent: "#00875A", iconBg: "#E3FCEF", runtime: "gpu" },
+  { type: "vllm-serve",          label: "Serve",        description: "OpenAI-compatible endpoint via vLLM on Nebius",      icon: Globe,     accent: "#DE350B", iconBg: "#FFEBE6", runtime: "gpu" },
 ];
 
 interface Props {

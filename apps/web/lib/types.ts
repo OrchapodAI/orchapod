@@ -88,7 +88,12 @@ export interface Artifact {
 
 export type NodeType =
   | "hf-download"
+  | "hf-import"
+  | "file-upload"
+  | "s3-import"
   | "data-prep"
+  | "auto-label-cleanlab"
+  | "synth-distilabel"
   | "unsloth-train"
   | "distill-sft"
   | "quantize"

@@ -13,8 +13,17 @@ from __future__ import annotations
 import os
 
 from packages.providers.base import GPUProvider, GPUSpec, NoCapacity
-from packages.providers.runpod import RunPodProvider
 from packages.providers.vastai import VastAIProvider
+
+try:
+    from packages.providers.nebius import NebiusProvider
+except ImportError:
+    NebiusProvider = None  # type: ignore
+
+try:
+    from packages.providers.runpod import RunPodProvider
+except ImportError:
+    RunPodProvider = None  # type: ignore
 
 
 def _parse_gpu_spec(resource_str: str) -> GPUSpec:
@@ -34,10 +43,12 @@ def build_providers() -> dict[str, GPUProvider]:
     Any provider whose key is missing is silently omitted.
     """
     providers: dict[str, GPUProvider] = {}
-    if os.environ.get("RUNPOD_API_KEY"):
-        providers["runpod"] = RunPodProvider()
+    if os.environ.get("NEBIUS_IAM_TOKEN") and NebiusProvider:
+        providers["nebius"] = NebiusProvider()
     if os.environ.get("VASTAI_API_KEY"):
         providers["vastai"] = VastAIProvider()
+    if os.environ.get("RUNPOD_API_KEY") and RunPodProvider:
+        providers["runpod"] = RunPodProvider()
     return providers
 
 

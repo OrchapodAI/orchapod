@@ -197,7 +197,7 @@ export default function InferencePage() {
                   <input
                     value={model}
                     onChange={e => setModel(e.target.value)}
-                    placeholder="e.g. Qwen/Qwen3-4B-Instruct"
+                    placeholder="e.g. nvidia/Nemotron-Mini-4B-Instruct"
                     style={inputStyle}
                     list="model-suggestions"
                     autoComplete="off"
@@ -207,9 +207,27 @@ export default function InferencePage() {
                   </datalist>
                 </div>
 
-                {/* Quick-pick chips */}
-                <div className="row" style={{ gap: 5, flexWrap: "wrap", marginTop: 4 }}>
-                  {models.slice(0, 5).map(m => (
+                {/* Quick-pick chips — Nemotron first */}
+                <div className="row" style={{ gap: 5, flexWrap: "wrap", marginTop: 6 }}>
+                  {/* Nemotron chips */}
+                  {models.filter(m => m.family === "Nemotron").map(m => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setModel(m.id)}
+                      style={{
+                        padding: "2px 9px", borderRadius: 999,
+                        border: `1px solid ${model === m.id ? "var(--brand)" : "#76b900"}`,
+                        background: model === m.id ? "var(--brand-soft)" : "#f0f9e8",
+                        color: model === m.id ? "var(--brand-ink)" : "#3a6600",
+                        fontSize: 11.5, cursor: "pointer", fontWeight: 500,
+                      }}
+                    >
+                      ⚡ {m.name}
+                    </button>
+                  ))}
+                  {/* Other models */}
+                  {models.filter(m => m.family !== "Nemotron").slice(0, 4).map(m => (
                     <button
                       key={m.id}
                       type="button"
@@ -229,11 +247,11 @@ export default function InferencePage() {
               </Field>
 
               {/* GPU */}
-              <Field label="GPU">
+              <Field label="GPU" hint="Nebius AI Cloud preferred">
                 <select value={gpu} onChange={e => setGpu(e.target.value)} style={{ ...inputStyle, appearance: "none" }}>
-                  <option value="1xH100">1× H100 SXM (~$2.20/hr)</option>
-                  <option value="1xA100">1× A100 80GB (~$1.50/hr)</option>
-                  <option value="1xRTX4090">1× RTX 4090 (~$0.55/hr)</option>
+                  <option value="1xH100">1× H100 SXM — Nebius eu-north1 (~$2.49/hr)</option>
+                  <option value="1xA100">1× A100 80GB — Nebius eu-north1 (~$1.89/hr)</option>
+                  <option value="1xRTX4090">1× RTX 4090 — Vast.ai fallback (~$0.55/hr)</option>
                 </select>
               </Field>
 

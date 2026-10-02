@@ -1,146 +1,185 @@
 # Orchapod.ai
 
-> From data to deployed model in 25 minutes. Under $5. Open source.
+> Fine-tune NVIDIA Nemotron on Nebius AI Cloud. Deploy to a live endpoint. In 25 minutes. Under $5.
 
-Orchapod is an open-source agentic orchestration platform for the full post-training lifecycle.
-Type what you want your model to do — Orchapod generates the workflow, trains on the cheapest
-available GPU, and gives you a live OpenAI-compatible endpoint.
+Orchapod is an open-source drag-and-drop workflow platform for the full LLM post-training lifecycle —
+dataset prep → LoRA fine-tune → distillation → quantization → evaluation → live serving.
 
-**Demo:** Fine-tune Qwen3-4B → distill to 1.7B → quantize for Ollama + vLLM → evaluate all three → deploy. Total cost: ~$3.20.
+**Powered by NVIDIA Nemotron models on Nebius AI Cloud.**  
+**Evaluated by Nemotron Ultra via Nebius Token Factory.**
 
----
-
-## MVP pipeline (7 nodes)
-
-```
-data-prep → unsloth-train → distill-sft → quantize (GGUF + AWQ)
-                                        → lm-eval
-                                        → vllm-serve
-```
+[![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ---
 
-## Repository structure
+## Nebius x NVIDIA Hackathon
+
+**Track:** Best Apps and Agents
+
+**How Orchapod uses Nebius + NVIDIA:**
+
+| Component | Nebius / NVIDIA technology |
+|-----------|---------------------------|
+| GPU compute (training, serving) | **Nebius AI Cloud** — H100 SXM instances, eu-north1 |
+| Base models to fine-tune | **NVIDIA Nemotron** — Mini 4B, Super 49B, 70B via HuggingFace |
+| LLM-as-judge (lm-eval) | **NVIDIA Nemotron Ultra 253B** via **Nebius Token Factory** |
+| Model inference during eval | vLLM on Nebius H100, compared with Nemotron judge scores |
+| Direct model serving | Deploy Nemotron models via Nebius Token Factory (instant, no GPU needed) |
+
+**The full demo pipeline:**
+```
+HF Download (Nemotron Mini 4B)
+  → Data Prep (Dolly 15K → ChatML)
+    → Unsloth Train (LoRA SFT on Nebius H100)
+      → Quantize (GGUF Q4_K_M for Ollama)
+      → LM-Eval (benchmarks + Nemotron Ultra judge via Token Factory)
+      → vLLM Serve (OpenAI endpoint on Nebius)
+```
+
+---
+
+## Quick start (hackathon demo)
+
+### Prerequisites
+- Docker (for Postgres + Redis)
+- Python 3.12+
+- Node.js 20+ and pnpm
+
+### 1. Get your credentials
+
+| Service | Where to get it |
+|---------|----------------|
+| **Nebius Token Factory key** | [studio.nebius.ai](https://studio.nebius.ai) → API Keys |
+| **Nebius IAM token** | Nebius Console → IAM → Service Accounts → `nebius iam get-access-token` |
+| **Nebius Folder ID** | Nebius Console → top-left dropdown |
+
+### 2. Clone and configure
+
+```bash
+git clone https://github.com/bangadpurva/orchapod
+cd orchapod
+git checkout NebiusHackathon
+
+cp .env.example .env
+```
+
+Edit `.env` — minimum required for the demo:
+
+```bash
+# Nebius Token Factory — Nemotron inference (OpenAI-compatible)
+NEBIUS_API_KEY=your_key_from_studio.nebius.ai
+
+# Nebius AI Cloud — GPU compute for training/serving
+NEBIUS_IAM_TOKEN=your_iam_token
+NEBIUS_FOLDER_ID=your_folder_id
+
+# Local Postgres
+DATABASE_URL=postgresql+asyncpg://postgres:orchapod@localhost:5432/orchapod
+```
+
+### 3. Start infrastructure
+
+```bash
+# Postgres + Redis
+docker run -d --name orchapod-pg \
+  -e POSTGRES_PASSWORD=orchapod -e POSTGRES_DB=orchapod \
+  -p 5432:5432 postgres:16
+
+docker run -d --name orchapod-redis -p 6379:6379 redis:7
+```
+
+### 4. Start the API
+
+```bash
+pip install -r apps/api/requirements.txt
+
+cd apps/api
+alembic upgrade head
+uvicorn api.main:app --reload
+# → http://localhost:8000  (Swagger: http://localhost:8000/docs)
+```
+
+### 5. Start the frontend
+
+```bash
+cd apps/web
+pnpm install
+pnpm dev
+# → http://localhost:3000
+```
+
+### 6. Run the demo workflow
+
+Open `http://localhost:3000/workflows`, click **+ New Workflow**, then drag these nodes onto the canvas:
+
+1. **HF Download** — `model_id: nvidia/Nemotron-Mini-4B-Instruct`
+2. **Data Prep** — `dataset: databricks/databricks-dolly-15k`
+3. **Train** — base model from step 1, train data from step 2
+4. **LM-Eval** — judge model: `nvidia/Llama-3.1-Nemotron-Ultra-253B-v1`
+5. **vLLM Serve** — model from step 3
+
+Click **▶ Run** → approve the Nebius cost estimate → watch live logs → open the "Try it" chat tab.
+
+---
+
+## What Nebius Token Factory enables
+
+The `lm-eval` node now uses **Nemotron Ultra 253B** as the evaluation judge instead of a closed-source model. This means:
+
+- The entire pipeline — training, evaluation, and serving — runs on **NVIDIA open-source models**
+- The judge call is a single HTTP request to `https://api.studio.nebius.ai/v1/chat/completions`
+- No GPU required for evaluation judging (Token Factory handles inference)
+- Nemotron Super 49B is available as a faster/cheaper judge option via the `judge_model` input
+
+To use Token Factory directly from the Inference page, pick any Nemotron model (shown with ⚡ chips at the top) and click Deploy.
+
+---
+
+## Architecture
 
 ```
 orchapod/
 ├── apps/
-│   ├── web/                        # Next.js 15 frontend
-│   │   ├── app/
-│   │   │   ├── workflows/          # Workflow list + create
-│   │   │   ├── canvas/[id]/        # Visual canvas editor (React Flow)
-│   │   │   └── runs/[id]/          # Run viewer (live logs, eval report, chat box)
-│   │   └── components/canvas/      # React Flow node components
+│   ├── web/                        # Next.js 15 frontend (React Flow canvas)
 │   └── api/                        # FastAPI control plane
 │       ├── routes/                 # REST + WebSocket endpoints
-│       ├── models/db.py            # SQLModel: Workflow, Run, NodeRun, Artifact
-│       ├── agent/workflow_builder.py  # Claude Sonnet: NL → workflow YAML
-│       └── executor/
-│           ├── run_workflow.py     # Asyncio DAG executor
-│           └── dag.py             # YAML → DAG compiler
+│       └── executor/               # Asyncio DAG runner
 │
 ├── packages/
-│   ├── sdk-py/orchapod/            # Node SDK (used inside containers)
-│   │   ├── io.py                   # read_inputs / write_output → R2
-│   │   ├── log.py                  # Streaming logs to control plane
-│   │   └── checkpoint.py          # Checkpoint every N steps → R2
-│   ├── providers/                  # GPU provider adapters
-│   │   ├── base.py                 # GPUProvider Protocol
-│   │   ├── runpod.py              # Primary (official MCP)
-│   │   └── vastai.py              # Fallback (community MCP, forked)
-│   └── workflow-schema/models.py  # Pydantic node schemas + NODE_REGISTRY
+│   ├── providers/
+│   │   ├── nebius.py               # ← NEW: Nebius AI Cloud GPU provider
+│   │   └── vastai.py               # Fallback GPU provider
+│   └── workflow-schema/models.py  # Node types + resource specs
 │
-├── containers/                     # One Dockerfile + run.py per node type
-│   ├── data-prep/                  # CPU: load, validate, reformat to ChatML
-│   ├── unsloth-train/             # GPU: LoRA SFT via Unsloth + TRL
-│   ├── distill-sft/               # GPU: teacher inference → student SFT
-│   ├── quantize/                  # CPU/GPU: GGUF (llama.cpp) + AWQ (AutoAWQ)
-│   ├── lm-eval/                   # GPU: lm-evaluation-harness + LLM-as-judge
-│   └── vllm-serve/                # GPU: OpenAI-compatible endpoint (stays alive)
+├── containers/                     # One container per node type
+│   ├── lm-eval/run.py              # ← UPDATED: Nemotron Ultra judge via Token Factory
+│   └── vllm-serve/                 # OpenAI-compatible endpoint
 │
-├── infra/
-│   ├── terraform/                  # Postgres, Redis, R2 buckets, control-plane
-│   └── docker-compose.dev.yml     # Local dev (Postgres + Redis + MinIO + API)
-│
-├── scripts/
-│   ├── seed-demo-workflow.py      # Seeds the YC demo workflow into DB
-│   └── build-and-push-containers.sh  # Build + push all 6 images to GHCR
-│
-├── tests/
-│   ├── e2e/                        # End-to-end on real GPU (CI on RunPod)
-│   ├── workflow/                   # DAG compiler + executor unit tests
-│   └── agent/                      # Agent tool-use tests (mocked)
-│
-└── docs/
-    ├── NODE_CONTRACT.md            # ← Read this first if adding a node
-    ├── WORKFLOW_SPEC.md            # YAML workflow schema reference
-    └── ARCHITECTURE.md             # System architecture + key invariants
+└── apps/api/services/
+    └── nebius_token_factory.py     # ← NEW: Token Factory client
 ```
 
----
-
-## Quick start (local dev)
-
-```bash
-# 1. Clone and install
-git clone https://github.com/orchapod/orchapod
-cd orchapod
-
-# 2. Copy env template
-cp .env.example .env
-# Fill in: RUNPOD_API_KEY, VASTAI_API_KEY, ANTHROPIC_API_KEY
-
-# 3. Start control-plane dependencies
-docker compose -f infra/docker-compose.dev.yml up -d
-
-# 4. Start API
-cd apps/api && uvicorn main:app --reload
-
-# 5. Start frontend
-cd apps/web && pnpm dev
-
-# 6. Seed demo workflow
-python scripts/seed-demo-workflow.py
-
-# Open http://localhost:3000
-```
-
----
-
-## Branch naming
-
-Use `<area>/<short-description>` for branch names.
-
-Examples:
-
-- `node/data_inference` for node-related work
-- `api/run-status` for API changes
-- `web/canvas-toolbar` for frontend changes
+**Provider priority:** Nebius AI Cloud → Vast.ai fallback (set by `provider_pref` in ResourceSpec).
 
 ---
 
 ## Tech stack
 
-| Layer | Choice | Why |
-|-------|--------|-----|
-| Backend API | FastAPI + Python 3.12 | Same lang as ML stack |
-| Workflow runtime | Custom asyncio + Redis | Prefect/Temporal too heavy for MVP |
-| Database | PostgreSQL 16 | Runs, workflows, artifacts |
-| Object storage | Cloudflare R2 | Zero egress fees for multi-GB checkpoints |
-| Frontend | Next.js 15 + React Flow | React Flow = de-facto canvas library |
-| Training | Unsloth + TRL | 2-5x faster, 80% less VRAM |
-| Inference | vLLM 0.8 | Highest throughput, multi-LoRA built-in |
-| Eval | lm-eval-harness + Claude judge | Standard benchmarks + free-form |
-| Agent | Claude Sonnet 4.5 + tool use | NL → workflow YAML |
-| GPU (primary) | RunPod official MCP | Reliable, mature API |
-| GPU (fallback) | Vast.ai community MCP | Cheapest H100s |
-| Auth | Clerk (alpha) | Zero-effort for MVP |
-| Containers | GHCR | Free for OSS |
+| Layer | Choice |
+|-------|--------|
+| GPU compute | **Nebius AI Cloud** (H100 SXM, eu-north1) |
+| LLM models | **NVIDIA Nemotron** (Mini 4B · Super 49B · Ultra 253B) |
+| Inference API | **Nebius Token Factory** (OpenAI-compatible) |
+| Training | Unsloth + TRL (2–5× faster LoRA SFT) |
+| Serving | vLLM 0.8 (OpenAI-compatible endpoint) |
+| Evaluation | lm-evaluation-harness + Nemotron Ultra judge |
+| Backend | FastAPI + Python 3.12 + PostgreSQL |
+| Frontend | Next.js 15 + React Flow |
+| Storage | Cloudflare R2 (zero-egress model artifacts) |
+| Auth | Clerk (alpha) |
 
 ---
 
 ## License
 
-Fair-code — free to self-host, source-available.
-Commercial use above the free tier requires a license.
-Modeled on [n8n's Sustainable Use License](https://github.com/n8n-io/n8n/blob/master/LICENSE.md).
+[MIT](LICENSE) — open source, free to use and self-host.

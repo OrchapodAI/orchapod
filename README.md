@@ -49,17 +49,19 @@ HF Import (databricks/dolly-15k from HuggingFace)
 ## Quick start (hackathon demo)
 
 ### Prerequisites
-- Docker (for Postgres + Redis)
+- macOS or Linux
+- [Colima](https://github.com/abiosoft/colima) or Docker Desktop (for container runtime)
 - Python 3.12+
 - Node.js 20+ and pnpm
+- Homebrew (macOS) for Redis and MinIO
 
 ### 1. Get your credentials
 
 | Service | Where to get it |
 |---------|----------------|
 | **Nebius Token Factory key** | [studio.nebius.ai](https://studio.nebius.ai) → API Keys |
-| **Nebius IAM token** | Nebius Console → IAM → Service Accounts → `nebius iam get-access-token` |
-| **Nebius Folder ID** | Nebius Console → top-left dropdown |
+| **Nebius IAM token** | `nebius iam get-access-token` (after `nebius profile create`) |
+| **Nebius Folder/Project ID** | `nebius iam project list` — shows the project ID |
 
 ### 2. Clone and configure
 
@@ -71,7 +73,7 @@ git checkout NebiusHackathon
 cp .env.example .env
 ```
 
-Edit `.env` — minimum required for the demo:
+Edit `.env` — minimum required:
 
 ```bash
 # Nebius Token Factory — Nemotron inference (OpenAI-compatible)
@@ -79,45 +81,93 @@ NEBIUS_API_KEY=your_key_from_studio.nebius.ai
 
 # Nebius AI Cloud — GPU compute for training/serving
 NEBIUS_IAM_TOKEN=your_iam_token
-NEBIUS_FOLDER_ID=your_folder_id
+NEBIUS_FOLDER_ID=your_project_id   # e.g. aiproject-e00xxxxx
 
-# Local Postgres
+# Postgres
 DATABASE_URL=postgresql+asyncpg://postgres:orchapod@localhost:5432/orchapod
+
+# MinIO (local R2 stand-in)
+ORCHAPOD_R2_ENDPOINT=http://host.docker.internal:9000
+ORCHAPOD_R2_ACCESS_KEY=orchapod
+ORCHAPOD_R2_SECRET_KEY=orchapod_dev
+ORCHAPOD_R2_BUCKET=orchapod-artifacts
+
+# Control plane URL (used by containers to report artifacts)
+ORCHAPOD_CONTROL_URL=http://host.docker.internal:8000
 ```
 
-### 3. Start infrastructure (one command)
+### 3. Start Docker runtime (macOS — use Colima, no Docker Desktop needed)
 
 ```bash
-# Starts Postgres, Redis, MinIO, API, and the Next.js frontend
-docker compose -f infra/docker-compose.dev.yml up -d
+brew install colima docker docker-compose
+colima start --cpu 4 --memory 8
+
+# Point Docker at Colima socket
+export DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock"
+# Make permanent:
+echo 'export DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock"' >> ~/.zshrc
 ```
 
-This runs everything. MinIO serves as a local R2 stand-in (S3-compatible). CPU nodes (HF Import, Synth Data, Data Prep) run via LocalDockerProvider — no GPU API key needed.
-
-**OR** start services manually:
+### 4. Start infrastructure
 
 ```bash
-# Postgres + Redis + MinIO
-docker run -d --name orchapod-pg -e POSTGRES_PASSWORD=orchapod -e POSTGRES_DB=orchapod -p 5432:5432 postgres:16
-docker run -d --name orchapod-redis -p 6379:6379 redis:7
-docker run -d --name orchapod-minio -e MINIO_ROOT_USER=orchapod -e MINIO_ROOT_PASSWORD=orchapod_dev -p 9000:9000 minio/minio server /data
+# Postgres
+docker run -d --name orchapod-pg \
+  -e POSTGRES_PASSWORD=orchapod -e POSTGRES_DB=orchapod \
+  -p 5432:5432 postgres:16
+
+# Redis (Homebrew — avoids Docker Hub auth)
+brew install redis && brew services start redis
+
+# MinIO (Homebrew — avoids Docker Hub auth)
+brew install minio
+MINIO_ROOT_USER=orchapod MINIO_ROOT_PASSWORD=orchapod_dev \
+  /opt/homebrew/opt/minio/bin/minio server --address=:9000 /tmp/minio-data &
+
+# Create the artifacts bucket (run once)
+python3 -c "
+import boto3
+from botocore.client import Config
+s3 = boto3.client('s3', endpoint_url='http://localhost:9000',
+    aws_access_key_id='orchapod', aws_secret_access_key='orchapod_dev',
+    config=Config(signature_version='s3v4'), region_name='us-east-1')
+s3.create_bucket(Bucket='orchapod-artifacts')
+print('Bucket ready')
+"
 ```
 
+### 5. Start API and frontend
+
 ```bash
-# API
-pip install -r apps/api/requirements.txt
-cd apps/api && alembic upgrade head
-uvicorn api.main:app --reload
+# Install Python deps
+pip3 install -r apps/api/requirements.txt
+
+# Run DB migrations
+PYTHONPATH=apps DATABASE_URL=postgresql+asyncpg://postgres:orchapod@localhost:5432/orchapod \
+  python3 -m alembic -c apps/api/alembic.ini upgrade head
+
+# Start API (from repo root)
+set -a && source .env && set +a
+DATABASE_URL=postgresql+asyncpg://postgres:orchapod@localhost:5432/orchapod \
+DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock" \
+PYTHONPATH=apps uvicorn api.main:app --port 8000
 # → http://localhost:8000  (Swagger: http://localhost:8000/docs)
-```
 
-```bash
-# Frontend
+# Start frontend (separate terminal)
 cd apps/web && pnpm install && pnpm dev
 # → http://localhost:3000
 ```
 
-### 6. Run the demo workflow
+### 6. Build the synth-distilabel container
+
+CPU nodes run locally via Docker. Build the container once:
+
+```bash
+docker build -t ghcr.io/orchapod/synth-distilabel:latest \
+  containers/synth-distilabel/
+```
+
+### 7. Run the demo workflow
 
 Open `http://localhost:3000/workflows`, click **+ New Workflow**, then drag these nodes onto the canvas:
 

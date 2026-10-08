@@ -205,8 +205,10 @@ def run_evol_instruct(teacher: TeacherCall, seed_prompts: list[str],
     while len(rows) < n_samples:
         seed = random.choice(seeds)
         evol_prompt = random.choice(_EVOLUTION_PROMPTS) + f"\n\nOriginal: {seed}"
-        evolved = teacher.generate(evol_prompt, 0.9, 256)
-        completion = teacher.generate(evolved, temperature, max_tokens)
+        evolved = teacher.generate(evol_prompt, 0.9, 256) or ""
+        if not evolved.strip():
+            continue
+        completion = teacher.generate(evolved, temperature, max_tokens) or ""
         rows.append(_row(evolved, completion, "evol-instruct"))
     return rows[:n_samples]
 
@@ -221,8 +223,10 @@ def run_magpie(teacher: TeacherCall, n_samples: int,
             f"Invent a realistic question or task about '{topic}' that a user might ask an AI assistant. "
             f"Output ONLY the question/task, nothing else."
         )
-        instruction = teacher.generate(instr_prompt, temperature, 150)
-        completion  = teacher.generate(instruction, temperature, max_tokens)
+        instruction = teacher.generate(instr_prompt, temperature, 150) or ""
+        if not instruction.strip():
+            continue
+        completion  = teacher.generate(instruction, temperature, max_tokens) or ""
         rows.append(_row(instruction.strip(), completion, "magpie"))
     return rows[:n_samples]
 

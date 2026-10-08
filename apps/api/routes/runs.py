@@ -121,12 +121,13 @@ async def start_run(run_id: uuid.UUID, background_tasks: BackgroundTasks, db: Se
 
     workflow = await db.get(Workflow, run.workflow_id)
 
-    background_tasks.add_task(_launch_run, run_id, workflow.yaml, run.inputs)
-
     run.status = RunStatus.PROVISIONING_GPU
     db.add(run)
     await db.flush()
+    await db.commit()  # commit before background task runs to release row lock
     await db.refresh(run)
+
+    background_tasks.add_task(_launch_run, run_id, workflow.yaml, run.inputs)
     return _run_out(run)
 
 
@@ -234,10 +235,17 @@ async def _launch_run(run_id: uuid.UUID, workflow_yaml: str, run_inputs: dict) -
     Launched as a BackgroundTask from start_run.
     Opens its own DB session (can't share the request session across task boundaries).
     """
+    import logging
+    log = logging.getLogger("api.runs")
+    log.warning("_launch_run STARTING for run_id=%s", run_id)
     from api.database import AsyncSessionLocal
+    log.warning("_launch_run: db imported")
     from api.executor.run_workflow import run_workflow
+    log.warning("_launch_run: run_workflow imported")
 
     async with AsyncSessionLocal() as db:
+        log.warning("_launch_run: db session opened")
+        await asyncio.sleep(0)  # yield so request session can commit first
         task = asyncio.current_task()
         if task:
             _running_tasks[run_id] = task
@@ -246,6 +254,9 @@ async def _launch_run(run_id: uuid.UUID, workflow_yaml: str, run_inputs: dict) -
             await run_workflow(run_id, db, event_bus.publish)
         except asyncio.CancelledError:
             pass  # cancellation is handled in cancel_run
+        except Exception as exc:
+            import traceback, logging
+            logging.getLogger("api.runs").error("_launch_run crashed: %s\n%s", exc, traceback.format_exc())
         finally:
             _running_tasks.pop(run_id, None)
 

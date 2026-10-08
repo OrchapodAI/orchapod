@@ -43,13 +43,18 @@ async def run_workflow(run_id: uuid.UUID, db: AsyncSession, broadcast: Broadcast
     Execute a workflow run end-to-end.
     Called as a background task from POST /runs/{id}/start.
     """
+    import logging
+    _log = logging.getLogger("api.executor")
+    _log.warning("run_workflow: fetching run %s", run_id)
     from api.models.db import Workflow
     run = await db.get(Run, run_id)
+    _log.warning("run_workflow: fetching workflow %s", run.workflow_id)
     workflow = await db.get(Workflow, run.workflow_id)
-
+    _log.warning("run_workflow: compiling dag")
     dag = compile_dag(workflow.yaml, run.inputs)
-
+    _log.warning("run_workflow: dag compiled, setting status RUNNING")
     await _set_run_status(db, run, RunStatus.RUNNING)
+    _log.warning("run_workflow: status set to RUNNING, starting dag loop")
     await broadcast(run_id, {"type": "run_status", "status": "running"})
 
     for dag_node in dag.topological_order():
@@ -143,6 +148,7 @@ async def _execute_node(
     run.gpu_pod_id = pod.pod_id
     db.add(run)
     await db.flush()
+    await db.commit()
 
     # Stream logs until container exits
     async def _stream():
@@ -232,6 +238,8 @@ def _build_env(resolved_inputs: dict, node_run: NodeRun) -> dict[str, str]:
         "ORCHAPOD_R2_SECRET_KEY":    os.environ.get("ORCHAPOD_R2_SECRET_KEY", ""),
         "ORCHAPOD_R2_BUCKET":        os.environ.get("ORCHAPOD_R2_BUCKET", "orchapod-artifacts"),
         "ORCHAPOD_CONTROL_URL":      os.environ.get("ORCHAPOD_CONTROL_URL", ""),
+        "NEBIUS_API_KEY":             os.environ.get("NEBIUS_API_KEY", ""),
+        "OPENAI_API_KEY":            os.environ.get("OPENAI_API_KEY", ""),
         "ANTHROPIC_API_KEY":         os.environ.get("ANTHROPIC_API_KEY", ""),
         "HF_TOKEN":                  os.environ.get("HF_TOKEN", ""),
         # Cloudflare Tunnel — forwarded to vllm-serve pods (KAN-28)
@@ -272,16 +280,24 @@ async def _create_node_run(db: AsyncSession, run: Run, dag_node: DAGNode) -> Nod
     )
     db.add(node_run)
     await db.flush()
+    await db.commit()
     await db.refresh(node_run)
     return node_run
 
 
 async def _set_run_status(db: AsyncSession, run: Run, status: RunStatus) -> None:
+    import logging
+    _log = logging.getLogger("api.executor")
+    _log.warning("_set_run_status: %s -> %s", run.id, status)
     run.status = status
     if status == RunStatus.RUNNING:
         run.started_at = datetime.utcnow()
     db.add(run)
+    _log.warning("_set_run_status: flushing")
     await db.flush()
+    _log.warning("_set_run_status: committing")
+    await db.commit()
+    _log.warning("_set_run_status: done")
 
 
 async def _set_run_succeeded(db: AsyncSession, run: Run) -> None:
@@ -289,6 +305,7 @@ async def _set_run_succeeded(db: AsyncSession, run: Run) -> None:
     run.finished_at = datetime.utcnow()
     db.add(run)
     await db.flush()
+    await db.commit()
 
 
 async def _set_run_failed(db: AsyncSession, run: Run, error: str) -> None:
@@ -296,6 +313,7 @@ async def _set_run_failed(db: AsyncSession, run: Run, error: str) -> None:
     run.finished_at = datetime.utcnow()
     db.add(run)
     await db.flush()
+    await db.commit()
 
 
 async def _mark_node_succeeded(db: AsyncSession, node_run: NodeRun, outputs: dict) -> None:
@@ -304,6 +322,7 @@ async def _mark_node_succeeded(db: AsyncSession, node_run: NodeRun, outputs: dic
     node_run.outputs = outputs
     db.add(node_run)
     await db.flush()
+    await db.commit()
 
 
 async def _mark_node_failed(db: AsyncSession, node_run: NodeRun, error: str) -> None:
@@ -312,3 +331,4 @@ async def _mark_node_failed(db: AsyncSession, node_run: NodeRun, error: str) -> 
     node_run.error = error
     db.add(node_run)
     await db.flush()
+    await db.commit()

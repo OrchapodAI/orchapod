@@ -25,15 +25,15 @@ router = APIRouter()
 BASE_MODELS = [
     # ── NVIDIA Nemotron (Nebius Token Factory / HuggingFace) ──────────────────
     {
-        "id": "nvidia/Llama-3.3-Nemotron-Super-49B-v1",
-        "name": "Nemotron Super 49B",
+        "id": "nvidia/nemotron-3-super-120b-a12b",
+        "name": "Nemotron Super 120B",
         "family": "Nemotron",
-        "params_b": 49,
+        "params_b": 120,
         "context_len": 131072,
         "recommended_gpu": "2xH100",
         "use_cases": ["instruction-following", "reasoning", "code", "agentic"],
-        "hf_url": "https://huggingface.co/nvidia/Llama-3.3-Nemotron-Super-49B-v1",
-        "nebius_token_factory_id": "nvidia/Llama-3.3-Nemotron-Super-49B-v1",
+        "hf_url": "https://huggingface.co/nvidia/nemotron-3-super-120b-a12b",
+        "nebius_token_factory_id": "nvidia/nemotron-3-super-120b-a12b",
         "badge": "NVIDIA · Nebius",
     },
     {
@@ -49,15 +49,15 @@ BASE_MODELS = [
         "badge": "NVIDIA · Nebius",
     },
     {
-        "id": "nvidia/Llama-3.1-Nemotron-70B-Instruct",
-        "name": "Nemotron 70B Instruct",
+        "id": "nvidia/Nemotron-3_5-Lightning",
+        "name": "Nemotron 3.5 Lightning",
         "family": "Nemotron",
-        "params_b": 70,
+        "params_b": 120,
         "context_len": 131072,
         "recommended_gpu": "2xH100",
         "use_cases": ["instruction-following", "reasoning", "multilingual"],
-        "hf_url": "https://huggingface.co/nvidia/Llama-3.1-Nemotron-70B-Instruct",
-        "nebius_token_factory_id": "nvidia/Llama-3.1-Nemotron-70B-Instruct",
+        "hf_url": "https://huggingface.co/nvidia/Nemotron-3_5-Lightning",
+        "nebius_token_factory_id": "nvidia/Nemotron-3_5-Lightning",
         "badge": "NVIDIA · Nebius",
     },
     # ── Qwen3 ─────────────────────────────────────────────────────────────────

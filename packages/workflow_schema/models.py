@@ -140,7 +140,7 @@ class SynthDistilabelInputs(BaseModel):
         description="Teacher LLM provider — 'nebius' uses Nemotron Super via Token Factory",
     )
     teacher_model: str = Field(
-        default="nvidia/Llama-3.3-Nemotron-Super-49B-v1",
+        default="nvidia/nemotron-3-super-120b-a12b",
         description="Model ID. Nemotron Super 49B is the default teacher.",
     )
     n_samples: int = Field(default=1000, ge=10)

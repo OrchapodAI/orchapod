@@ -15,7 +15,7 @@ synthetic rows so the full pipeline is exercisable without credentials.
 Inputs (ORCHAPOD_NODE_INPUTS):
   pipeline_template  — "self-instruct" | "evol-instruct" | "magpie"
   teacher_kind       — "nebius" | "openai" | "anthropic"  (default: "nebius")
-  teacher_model      — model ID (default: nvidia/Llama-3.3-Nemotron-Super-49B-v1)
+  teacher_model      — model ID (default: nvidia/nemotron-3-super-120b-a12b)
   n_samples          — number of rows to generate (default: 1000)
   seed_prompts       — R2 URI to seed prompts JSONL (optional)
   temperature        — sampling temperature (default: 0.8)
@@ -36,7 +36,7 @@ from orchapod import io, log
 
 
 _NEBIUS_API_BASE = "https://api.studio.nebius.ai/v1"
-_DEFAULT_TEACHER_MODEL = "nvidia/Llama-3.3-Nemotron-Super-49B-v1"
+_DEFAULT_TEACHER_MODEL = "nvidia/nemotron-3-super-120b-a12b"
 
 _PRICING_USD_PER_M_TOKENS = {
     "nebius":    {"input": 0.18, "output": 0.60},   # Nemotron Super 49B Token Factory pricing

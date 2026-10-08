@@ -385,7 +385,7 @@ function defaultInputs(type: NodeType): Record<string, unknown> {
     case "s3-import":           return { bucket: "", prefix: "", format: "auto" };
     case "data-prep":           return { dataset: "", format: "chatml", train_split: 0.9 };
     case "auto-label-cleanlab": return { dataset: "", quality_threshold: 0.7 };
-    case "synth-distilabel":    return { pipeline_template: "self-instruct", teacher_kind: "nebius", teacher_model: "nvidia/Llama-3.3-Nemotron-Super-49B-v1", n_samples: 1000, temperature: 0.8, max_tokens: 512 };
+    case "synth-distilabel":    return { pipeline_template: "self-instruct", teacher_kind: "nebius", teacher_model: "nvidia/nemotron-3-super-120b-a12b", n_samples: 1000, temperature: 0.8, max_tokens: 512 };
     case "unsloth-train":       return { model: "Qwen/Qwen3-4B-Instruct", train_data: "", eval_data: "", lora_r: 16, lora_alpha: 32, max_steps: 500, learning_rate: 0.0002 };
     case "distill-sft":         return { teacher: "", student_base: "Qwen/Qwen3-1.7B-Instruct", train_data: "", n_synthetic: 5000 };
     case "quantize":            return { model: "", method: "gguf", precision: "q4_k_m" };

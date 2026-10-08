@@ -21,7 +21,7 @@ dataset prep → LoRA fine-tune → distillation → quantization → evaluation
 | Component | Nebius / NVIDIA technology |
 |-----------|---------------------------|
 | GPU compute (training, serving) | **Nebius AI Cloud** — H100 SXM instances, eu-north1 |
-| Synthetic training data teacher | **Nemotron Super 49B** via **Nebius Token Factory** |
+| Synthetic training data teacher | **Nemotron Super 120B** via **Nebius Token Factory** |
 | Base model to fine-tune | **Nemotron Mini 4B** from HuggingFace |
 | LLM-as-judge (lm-eval) | **Nemotron Ultra 253B** via **Nebius Token Factory** |
 | Data quality scoring | Cleanlab TLM (CPU, runs locally) |
@@ -31,7 +31,7 @@ dataset prep → LoRA fine-tune → distillation → quantization → evaluation
 **The full demo pipeline:**
 ```
 HF Import (databricks/dolly-15k from HuggingFace)
-  → Synth Data (Nemotron Super 49B as teacher — generates 1K synthetic rows via Token Factory)
+  → Synth Data (Nemotron Super 120B as teacher — generates 1K synthetic rows via Token Factory)
     → Data Prep (format, dedup, split)
       → HF Download (Nemotron Mini 4B model)
         → Unsloth Train (LoRA SFT on Nebius H100)
@@ -40,7 +40,7 @@ HF Import (databricks/dolly-15k from HuggingFace)
 ```
 
 **Nemotron is used at every intelligence layer:**
-- **Nemotron Super 49B** → synthetic training data generation (teacher)
+- **Nemotron Super 120B** → synthetic training data generation (teacher)
 - **Nemotron Mini 4B** → the model being fine-tuned (student)
 - **Nemotron Ultra 253B** → evaluation judge (Token Factory, no GPU needed)
 
@@ -122,11 +122,11 @@ cd apps/web && pnpm install && pnpm dev
 Open `http://localhost:3000/workflows`, click **+ New Workflow**, then drag these nodes onto the canvas:
 
 1. **HF Import** — `dataset_id: databricks/databricks-dolly-15k`
-2. **Synth Data** — `teacher_kind: nebius`, `teacher_model: nvidia/Llama-3.3-Nemotron-Super-49B-v1`, `n_samples: 1000`  *(uses Nemotron Super as teacher via Token Factory)*
+2. **Synth Data** — `teacher_kind: nebius`, `teacher_model: nvidia/nemotron-3-super-120b-a12b`, `n_samples: 1000`  *(uses Nemotron Super as teacher via Token Factory)*
 3. **Data Prep** — `dataset` = output of step 2, `format: chatml`
 4. **HF Download** — `model_id: nvidia/Nemotron-Mini-4B-Instruct`
 5. **Train** — base model from step 4, train data from step 3
-6. **LM-Eval** — judge model: `nvidia/Llama-3.1-Nemotron-Ultra-253B-v1`
+6. **LM-Eval** — judge model: `nvidia/Nemotron-3-Ultra-550b-a55b`
 7. **vLLM Serve** — model from step 5
 
 Click **▶ Run** → approve the Nebius cost estimate → watch live logs → open the "Try it" chat tab.
@@ -140,7 +140,7 @@ The `lm-eval` node now uses **Nemotron Ultra 253B** as the evaluation judge inst
 - The entire pipeline — training, evaluation, and serving — runs on **NVIDIA open-source models**
 - The judge call is a single HTTP request to `https://api.studio.nebius.ai/v1/chat/completions`
 - No GPU required for evaluation judging (Token Factory handles inference)
-- Nemotron Super 49B is available as a faster/cheaper judge option via the `judge_model` input
+- Nemotron Super 120B is available as a faster/cheaper judge option via the `judge_model` input
 
 To use Token Factory directly from the Inference page, pick any Nemotron model (shown with ⚡ chips at the top) and click Deploy.
 

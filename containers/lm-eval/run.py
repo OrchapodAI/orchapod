@@ -34,7 +34,7 @@ from orchapod import io, log
 # Default to Nemotron Ultra for highest eval quality; override via input
 _DEFAULT_JUDGE_MODEL = os.environ.get(
     "JUDGE_MODEL",
-    "nvidia/Llama-3.1-Nemotron-Ultra-253B-v1",
+    "nvidia/Nemotron-3-Ultra-550b-a55b",
 )
 
 _NEBIUS_API_BASE = "https://api.studio.nebius.ai/v1"

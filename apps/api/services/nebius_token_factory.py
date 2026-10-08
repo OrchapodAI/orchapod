@@ -7,11 +7,11 @@ Base URL:  https://api.studio.nebius.ai/v1
 Auth:      Bearer NEBIUS_API_KEY
 Docs:      https://studio.nebius.ai/
 
-Available Nemotron models (as of 2026):
-  nvidia/Llama-3.3-Nemotron-Super-49B-v1       → "Super"  — fast, balanced
-  nvidia/Llama-3.1-Nemotron-Ultra-253B-v1      → "Ultra"  — highest reasoning quality
-  nvidia/Nemotron-Mini-4B-Instruct             → "Nano"   — edge / low-latency
-  nvidia/Llama-3.1-Nemotron-70B-Instruct       → mid-tier
+Available Nemotron models via Token Factory (verified 2026-10-08):
+  nvidia/Nemotron-3-Ultra-550b-a55b    → "Ultra"     — highest reasoning quality (judge)
+  nvidia/nemotron-3-super-120b-a12b    → "Super"     — fast, balanced (teacher / general)
+  nvidia/Nemotron-3_5-Lightning        → "Lightning" — fastest
+  nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B → "Nano"    — edge / low-latency
 
 Usage:
   from api.services.nebius_token_factory import token_factory
@@ -27,14 +27,14 @@ import httpx
 
 _BASE_URL = "https://api.studio.nebius.ai/v1"
 
-# Default judge model — Nemotron Ultra for highest eval quality
-NEMOTRON_ULTRA  = "nvidia/Llama-3.1-Nemotron-Ultra-253B-v1"
-NEMOTRON_SUPER  = "nvidia/Llama-3.3-Nemotron-Super-49B-v1"
-NEMOTRON_NANO   = "nvidia/Nemotron-Mini-4B-Instruct"
-NEMOTRON_70B    = "nvidia/Llama-3.1-Nemotron-70B-Instruct"
+# Token Factory model IDs (verified against api.studio.nebius.ai/v1/models 2026-10-08)
+NEMOTRON_ULTRA     = "nvidia/Nemotron-3-Ultra-550b-a55b"       # best judge / reasoning
+NEMOTRON_SUPER     = "nvidia/nemotron-3-super-120b-a12b"       # teacher / general
+NEMOTRON_LIGHTNING = "nvidia/Nemotron-3_5-Lightning"           # fastest
+NEMOTRON_NANO      = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B"   # edge
 
-# All models available via Token Factory for serving fine-tuned results
-TOKEN_FACTORY_MODELS = [NEMOTRON_ULTRA, NEMOTRON_SUPER, NEMOTRON_70B, NEMOTRON_NANO]
+# All models available via Token Factory
+TOKEN_FACTORY_MODELS = [NEMOTRON_ULTRA, NEMOTRON_SUPER, NEMOTRON_LIGHTNING, NEMOTRON_NANO]
 
 
 def _api_key() -> str | None:

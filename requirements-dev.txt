@@ -16,3 +16,8 @@ anyio[trio]>=4.3.0
 # Providers
 vastai>=0.1.0
 runpod>=1.7.0
+
+# Lint + container tests. CI installs only the requirements files: add deps here, never inline in ci.yml
+ruff==0.17.1
+huggingface_hub
+jsonschema

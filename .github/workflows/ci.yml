@@ -21,7 +21,7 @@ jobs:
           cache: pip
 
       - name: Install test deps
-        run: pip install -r requirements-dev.txt -r apps/api/requirements.txt huggingface_hub ruff==0.17.1
+        run: pip install -r requirements-dev.txt -r apps/api/requirements.txt
 
       - name: Lint
         run: ruff check apps packages containers
@@ -140,5 +140,6 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository_owner }}/${{ matrix.node }}:${{ github.sha }}
             ghcr.io/${{ github.repository_owner }}/${{ matrix.node }}:${{ github.ref_name }}
+            ${{ github.ref_name == 'NebiusHackathon' && format('ghcr.io/{0}/{1}:latest', github.repository_owner, matrix.node) || '' }}
           cache-from: type=gha,scope=${{ matrix.node }}
           cache-to: type=gha,scope=${{ matrix.node }},mode=max

@@ -70,7 +70,7 @@ def local_path(artifact_name: str) -> Path:
     Return a local path where the node should write an output artifact.
     The SDK uploads from this path when write_output() is called.
     """
-    outputs_dir = Path(os.environ.get("ORCHAPOD_NODE_OUTPUTS_DIR", "/tmp/orchapod_outputs"))
+    outputs_dir = Path(os.environ.get("ORCHAPOD_NODE_OUTPUTS_DIR") or "/tmp/orchapod_outputs")
     outputs_dir.mkdir(parents=True, exist_ok=True)
     return outputs_dir / artifact_name
 
@@ -176,7 +176,7 @@ def _write_cost() -> None:
 # ---------------------------------------------------------------------------
 
 def _bucket() -> str:
-    return os.environ.get("ORCHAPOD_R2_BUCKET", "orchapod-artifacts")
+    return os.environ.get("ORCHAPOD_R2_BUCKET") or "orchapod-artifacts"
 
 
 def _key(uri: str) -> str:
@@ -187,10 +187,10 @@ def _key(uri: str) -> str:
 def _get_r2_client():
     return boto3.client(
         "s3",
-        endpoint_url=os.environ.get("ORCHAPOD_R2_ENDPOINT", "http://localhost:9000"),
-        aws_access_key_id=os.environ.get("ORCHAPOD_R2_ACCESS_KEY", "orchapod"),
-        aws_secret_access_key=os.environ.get("ORCHAPOD_R2_SECRET_KEY", "orchapod_dev"),
-        region_name=os.environ.get("ORCHAPOD_R2_REGION", "auto"),
+        endpoint_url=os.environ.get("ORCHAPOD_R2_ENDPOINT") or "http://localhost:9000",
+        aws_access_key_id=os.environ.get("ORCHAPOD_R2_ACCESS_KEY") or "orchapod",
+        aws_secret_access_key=os.environ.get("ORCHAPOD_R2_SECRET_KEY") or "orchapod_dev",
+        region_name=os.environ.get("ORCHAPOD_R2_REGION") or "auto",
     )
 
 

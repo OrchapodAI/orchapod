@@ -17,6 +17,6 @@ ENV LLAMA_CPP_DIR=/opt/llama.cpp
 RUN pip3 install --no-cache-dir \
         autoawq transformers accelerate huggingface_hub boto3
 
-COPY ../../packages/sdk-py/orchapod /app/orchapod
-COPY run.py /app/run.py
+COPY packages/sdk-py/orchapod /app/orchapod
+COPY containers/quantize/run.py /app/run.py
 CMD ["python3", "run.py"]

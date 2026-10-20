@@ -81,7 +81,8 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D4 Playwright smoke: template → run → eval → playground; /agent intent #2 — TODO
 - [ ] P0 D5 failure drills · D7 fresh-clone test < 20 min · D8 three rehearsals — TODO
 ### devrel
-- [ ] P0 D2 README skeleton: what, why, how, sponsor usage, setup, demo, costs, what changed, license — REVIEW(hack/devrel-w1)
+- [ ] P0 D2 README skeleton: what, why, how, sponsor usage, setup, demo, costs, what changed, license — APPROVED after fix round 1; merges after platform-w1, same push as qa-w1 (hack/devrel-w1)
+- [ ] P1 devrel next README pass: put ANTHROPIC_API_KEY and OPENAI_API_KEY back in the test's STALE list (sponsor-compliance guard); README:140 hosted golden run and README:181 make e2e/agent-e2e/demo need TODO(D8) until real — TODO
 - [ ] P0 D4 Devpost draft + Token Factory / AI Cloud / NVIDIA feedback doc — TODO
 - [ ] P0 D6 video script + shot list · D8 record and upload · final README pass — TODO
 - [ ] P0 D9 submit; every link checked logged-out; tag v0.1-hackathon — TODO

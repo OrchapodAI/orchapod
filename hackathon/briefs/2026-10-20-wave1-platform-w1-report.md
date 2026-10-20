@@ -112,3 +112,40 @@
 
 ## Coordination
 I sent two messages to backend-w1: agreement on the PRICES shape, and the "blank `ORCHAPOD_INTERNAL_SECRET` = unset" warning.
+
+## Fix round 1 (commit `e416890`)
+### What changed
+1. **Create rule tested at every call site.** The two create tests are now parametrized over `files.create`, `fine_tuning.create` and `lora.deploy`.
+   - The no-retry test covers a 5xx, a read timeout and a dropped connection.
+   - The retry test covers 429, ConnectError and ConnectTimeout.
+   - Mutation check: dropping `create=True` at any one call site fails 3 tests (`CAUGHT` for each of the three sites).
+2. **ModelRef keys (load-bearing).** `_prepare` now uses `key = api_key if base_url else self.api_key`.
+   - When a ModelRef passes no key (`None` or `""`), the request goes out with no Authorization header. This fixes judge-eval's llama-server (`api_key_env ""`) and refs whose env var is unset.
+   - The key↔URL refusal still holds: `api_key=<NEBIUS_API_KEY>` with another URL → `auth`, and nothing is sent.
+   - The key-refusal test's `{}` case now asserts that no Authorization header was sent, and a `""` case was added.
+3. **STUB=1 always uses the stub transport**, even when an `http` client is injected, in both clients. Both stub tests now assert that the injected client saw no requests.
+4. **`base.request` error handling:**
+   - Only 2xx counts as success (`resp.is_success`), so a 307 is now `bad_request 307` and is not retried.
+   - The two exception branches are now one `except httpx.TransportError`. For a create it re-raises unless the error is ConnectError or ConnectTimeout.
+   - The error-body `resp.read()` moved inside the `try`, so no raw httpx exception escapes.
+   - New tests: a ProxyError is retried 3 times and then raised as ProviderError `server`; a redirect is not success.
+5. **Billing order.** `chat` bills from `usage` before it reads `choices[0]`. A reply with no choices → `bad_output`, after billing. A new test covers this.
+6. **Tavily without `usage`** is billed by the contract rule instead of $0: search costs 1 credit (basic) or 2 (advanced); extract costs the same per 5 successful URLs, and failed URLs are free. A new test is parametrized over all four cases.
+
+Optional cuts, all applied:
+- A `_Part` base class replaces the three identical `__init__(self, tf)` methods.
+- The stub's `raw_content` loop is folded into the comprehension.
+- One shared `recorder` fixture now lives in tests/providers/conftest.py, and the new `train` fixture is reused in two tests.
+
+I did not touch the conftest `sys.modules` workaround.
+
+### Tests run
+- RED before the fix: 10 failures, each for the intended reason:
+  - a raw `httpx.ProxyError`
+  - a `JSONDecodeError` on the 307
+  - the `auth` refusal of a ModelRef with no key
+  - `credits 0` ×4
+  - `IndexError` on `choices[0]`
+  - stubs using the injected client ×2
+- `python -m pytest tests/providers -q`: `80 passed` (was 64). Ruff is clean on packages/providers and the new tests.
+- `make check`: lint clean; `211 passed, 58 warnings` (was 195 passed, 58 warnings); the stub e2e is still skipped because qa's script doesn't exist yet.

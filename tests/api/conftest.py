@@ -3,14 +3,17 @@ tests/api/conftest.py
 
 Shared fixtures for API route tests.
 Uses an in-memory SQLite database to avoid requiring PostgreSQL in CI.
+Never patch asyncio.create_task by hand: the `no_bg_tasks` fixture closes the coroutine it is handed,
+so pytest stays free of "coroutine ... was never awaited".
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from datetime import datetime
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -52,6 +55,31 @@ async def db():
         yield session
 
     await engine.dispose()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _clear_ttl_tasks():
+    """Cancel and drop TTL tasks at teardown: api.routes.internal._ttl_tasks is module-global."""
+    yield
+    from api.routes import internal
+
+    tasks = [t for t in internal._ttl_tasks.values() if isinstance(t, asyncio.Task)]
+    internal._ttl_tasks.clear()
+    for t in tasks:
+        t.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.fixture
+def no_bg_tasks():
+    """Use instead of patch("asyncio.create_task"): the coroutine is closed, so it can't warn 'never awaited'."""
+
+    def drop(coro, **_):
+        coro.close()
+        return MagicMock()
+
+    with patch("asyncio.create_task", drop):
+        yield
 
 
 @pytest_asyncio.fixture

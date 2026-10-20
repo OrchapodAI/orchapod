@@ -1,6 +1,6 @@
 # Changelog
 
-Dated, user-facing changes made during the Nebius × NVIDIA hackathon submission period (Aug 26 – Oct 30, 2026). Orchapod's first commit is May 7, 2026; this file becomes the Devpost "what changed" write-up.
+Dated, user-facing changes made during the Nebius × NVIDIA hackathon submission period (Aug 26 – Oct 30, 2026). Orchapod's first commit is May 4, 2026 (367c605); this file becomes the Devpost "what changed" write-up.
 
 ## 2026-10-20
 - Repo hygiene: removed a committed SQLite database, compiled Python files and a stray worktree copy; one workflow-schema package instead of two.

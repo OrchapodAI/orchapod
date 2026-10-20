@@ -23,6 +23,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D2 ORCHAPOD_IMAGE_PREFIX (executor, CI, local provider agree) — TODO
 - [ ] P0 D1 one Token Factory client: fold the three hand-rolled clients on the legacy host into it, delete the zero-caller one — TODO
 - [ ] P1 D2 nebius_serverless provider: Jobs, Endpoints, IAM refresh, Object Storage — TODO
+- [ ] P0 D2 setup gaps from devrel-w1: compose still publishes 8000 and names the 253B judge; storage bucket never auto-created (call ensure_bucket_exists at API start — backend); web app defaults to localhost:8000 (→ 8001 — frontend) — TODO (wave 2)
 - [ ] P0 D3 .env.example complete (every var + where to get it) + budget-guard settings — TODO
 - [ ] P0 D4 hosting decision; reachable by D6 with an uptime check — TODO
 ### data-engineering
@@ -73,7 +74,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D4 Playwright smoke: template → run → eval → playground; /agent intent #2 — TODO
 - [ ] P0 D5 failure drills · D7 fresh-clone test < 20 min · D8 three rehearsals — TODO
 ### devrel
-- [ ] P0 D2 README skeleton: what, why, how, sponsor usage, setup, demo, costs, what changed, license — TODO
+- [ ] P0 D2 README skeleton: what, why, how, sponsor usage, setup, demo, costs, what changed, license — REVIEW(hack/devrel-w1)
 - [ ] P0 D4 Devpost draft + Token Factory / AI Cloud / NVIDIA feedback doc — TODO
 - [ ] P0 D6 video script + shot list · D8 record and upload · final README pass — TODO
 - [ ] P0 D9 submit; every link checked logged-out; tag v0.1-hackathon — TODO
@@ -103,6 +104,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] GHCR packages public (owner bangadpurva → Purva)
 - [ ] Devpost team + draft project (Best Apps and Agents)
 - [ ] vast.ai: two stopped instances from other projects (54041703 rec-l2-bench-2, 54062531 esci-bench-v2), stopped since 2026-10-03, still billing storage (~$0.20/h per the spike agent) — destroy them? Hari's call; agents leave them alone
+- [ ] DECISION: disclose in the README/Devpost that the build used AI coding agents? (Hari's call)
 - [ ] Before the repo goes public (G3): gitleaks clean, keys rotated, docs/Jira.csv reviewed for personal data
 
 ## Tooling (installed skills/plugins/MCP, with install command)

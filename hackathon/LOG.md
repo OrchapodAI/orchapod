@@ -47,3 +47,4 @@ worktrees:
 - Ruling: data-prep's "stratified by source_url" stays proportional (every source in every split). Reference-guided judging limits leakage; a group-holdout option is added if the win rate looks inflated — cost if wrong: an optimistic win rate until then.
 - Ruling: tests/test_harness.py makes CI's image matrix list every containers/<node>/; wave-2 agents that add a node also add its matrix line in ci.yml (one-line exception to qa's ownership).
 - Convention: tests/api uses the no_bg_tasks fixture, never a hand-rolled patch("asyncio.create_task").
+- 2026-10-20T23:33Z devrel-w1 DONE_WITH_CONCERNS (4e25d76 README rewrite: 9 sections, 16 TODO(D8); 1475dee tests/docs/test_readme.py): orchestrator ran `pytest tests/docs` → 5 passed and `make check` → 158 passed in its worktree. Review dispatched. CHANGELOG fixed: first commit is 2026-05-04 (367c605), not May 7 (PLAN.md also says May 7). Setup gaps queued for wave 2.

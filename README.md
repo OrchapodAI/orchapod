@@ -16,7 +16,7 @@ Orchapod is an open-source platform for the whole post-training lifecycle of a l
 - **The Orchapod Agent** (`/agent`). Type one sentence. Nemotron 3 Super drafts a pipeline from the node catalog, the server validates it against the model and cost rules, and a plan card shows the nodes, the models and the estimated dollars and minutes. Press Run and Orchapod executes the plan, streams logs and cost, evaluates the result and writes a report.
 - **The canvas.** Drag nodes onto a React Flow canvas. The YAML workflow is the source of truth, and any plan the Agent writes opens on the canvas for editing.
 
-Three intents define "done". Each runs from the chat box with no manual edits:
+Three intents define "done"; each must run from the chat box with no manual edits. TODO(D8): which intents have run end to end.
 
 | Intent | What the Agent plans |
 | --- | --- |
@@ -28,7 +28,7 @@ Three intents define "done". Each runs from the chat box with no manual edits:
 
 Every team wants a cheaper, faster, private specialist model. Today that takes an ML engineer and a pile of GPU plumbing. Orchapod turns it into a costed, capped and observable workflow.
 
-- **A cascade of NVIDIA models.** Nemotron 3 Ultra judges, Nemotron 3 Super teaches and plans, Nemotron 3.5 Lightning does the cheap calls, and a small model serves. The three Nemotron roles share one OpenAI-compatible endpoint and one key.
+- **A cascade of NVIDIA models.** Nemotron 3 Ultra judges, Nemotron 3 Super teaches and plans, Nemotron 3.5 Lightning does the cheap calls, and a small model serves. The Nemotron models share one OpenAI-compatible endpoint and one key.
 - **It makes models, not only calls them.** Nemotron teaches and judges new specialist models, and every one is measured against its base.
 - **An evaluation you can trust.** Base and tuned models get identical prompts and decoding. A Nemotron Ultra judge sees the question, the reference answer and the source passage, and scores the two answers in both orders; a win counts only if it holds in both. Fine-tuning moves style, format and vocabulary more than it injects facts, so answers are short and sourced.
 - **Cost is a first-class output.** Every billed call (tokens, Tavily credits, GPU hours) is metered per node, estimated before a run and capped during it.
@@ -37,7 +37,7 @@ Every team wants a cheaper, faster, private specialist model. Today that takes a
 
 A typical run: research the topic, generate grounded synthetic data, prepare the splits, fine-tune and serve, judge the tuned model against its base, compare side by side. The fine-tune-and-serve step has two lanes, and a plan can take either without changing the rest:
 
-- **Lane A** fine-tunes on Token Factory and serves the result as a per-token LoRA model, so it needs no GPU quota. TODO(D8): confirm the serving half (see Token Factory fine-tuning below).
+- **Lane A** fine-tunes on Token Factory. TODO(D8): spike 1 decides serving — a per-token LoRA model (no GPU quota) or `vllm-serve` with the adapter (needs GPU quota).
 - **Lane B** trains a Nemotron student on a Nebius Serverless Job and serves it from a Serverless Endpoint.
 
 | Node | Runtime | What it does | Calls |
@@ -46,9 +46,9 @@ A typical run: research the topic, generate grounded synthetic data, prepare the
 | `synth-distilabel` | cpu | synthetic data: self-instruct, evol-instruct, magpie, grounded Q&A from passages, or rows that match a JSON Schema | Nemotron 3 Super |
 | `data-prep` | cpu | validate, exact and near dedupe, optional quality filter, deterministic train / eval / test split | Nemotron 3.5 Lightning (filter) |
 | `tf-finetune` | api | LoRA fine-tune, best checkpoint by validation loss, loss curve | Token Factory fine-tuning |
-| `tf-deploy` | api | deploy the adapter as a per-token LoRA model and prove it with one completion | Token Factory |
+| `tf-deploy` | api | deploy the adapter as a per-token LoRA model if Token Factory accepts the base (TODO(D8): spike 1), then prove it with one completion | Token Factory |
 | `unsloth-train` | gpu | 16-bit LoRA with Unsloth on a Nemotron student, resumable checkpoints | Nebius Serverless Job |
-| `vllm-serve` | api | auto-expiring vLLM endpoint serving the base model and the adapter | Nebius Serverless Endpoint |
+| `vllm-serve` | api | auto-expiring vLLM endpoint serving the base model and the adapter (TODO(D8): spike 4 confirms vLLM loads the adapter) | Nebius Serverless Endpoint |
 | `judge-eval` | api | base vs tuned on held-out questions, reference-guided, both answer orders | Nemotron 3 Ultra |
 | `hf-download` | cpu | Hugging Face model download with SHA-256 verification | Hugging Face Hub |
 | `quantize` | cpu | GGUF q4_k_m, q5_k_m or q8_0 on CPU (AWQ needs a GPU job) | llama.cpp |
@@ -59,7 +59,7 @@ Under the hood:
 
 - **Control plane** (`apps/api`): FastAPI and SQLModel on Postgres, Redis pub/sub feeding a WebSocket for live events, a DAG executor, the budget guard and the Agent (planner, validator, reporter).
 - **One container per node** (`containers/<node>/`). The executor passes a node its inputs as JSON in `ORCHAPOD_NODE_INPUTS`; the node writes outputs through the SDK to S3-compatible storage at `r2://<bucket>/runs/<run_id>/<node_id>/<name>` and exits 0 or non-zero. The node contract is [docs/NODE_CONTRACT.md](docs/NODE_CONTRACT.md), and every interface is pinned in [docs/contracts.md](docs/contracts.md).
-- **Metering.** The node SDK (`packages/sdk-py`) records each billed call and writes `cost.json` and `metrics.json` per node; the run page rolls them up.
+- **Metering.** The node SDK (`packages/sdk-py`) records each billed call and writes `cost_json` and `metrics_json` per node; the run page rolls them up.
 - **Providers** (`packages/providers`): one retrying client per service (Token Factory, Tavily, Nebius Serverless) and a LocalDocker provider for CPU and API nodes. `STUB=1` replaces every external call with a deterministic stub.
 - **Web** (`apps/web`): Next.js 15, React 19 and React Flow; the run page shows the node timeline, live logs, cost and artifacts.
 
@@ -81,14 +81,14 @@ No other model provider is called on this path. TODO(D8): confirm after the lega
 
 ### Token Factory fine-tuning (Lane A)
 
-`tf-finetune` uploads the train and validation files, creates a LoRA job, polls it, keeps the checkpoint with the lowest validation loss and saves the adapter and the loss curve. `tf-deploy` deploys that checkpoint as a per-token LoRA model and sends one proving completion. Token Factory fine-tunes Llama, Qwen, gpt-oss, DeepSeek and Gemma models but not Nemotron, so Lane A tunes a Llama model (3.2 3B or 3.1 8B) that Nemotron teaches and judges.
+`tf-finetune` uploads the train and validation files, creates a LoRA job, polls it, keeps the checkpoint with the lowest validation loss and saves the adapter and the loss curve. `tf-deploy` deploys that checkpoint as a per-token LoRA model if Token Factory accepts the base (TODO(D8): spike 1), then sends one proving completion. Token Factory fine-tunes Llama, Qwen, gpt-oss, DeepSeek and Gemma models but not Nemotron, so Lane A tunes a Llama model (3.2 3B or 3.1 8B) that Nemotron teaches and judges.
 
 TODO(D8): spike 1 decides the deploy path (per-token LoRA through `POST /v0/models`, or `vllm-serve` with the adapter on a Serverless Endpoint). State the answer and the exact base model id here.
 
 ### Nebius AI Cloud (Lane B)
 
 - **Serverless Jobs.** `unsloth-train` runs as a Job on `gpu-h100-sxm` with a 1-hour timeout: a 16-bit LoRA on `nvidia/Llama-3.1-Nemotron-Nano-8B-v1` (TODO(D8): confirm the student after spike 4). Logs and artifacts flow back through the SDK, so `ORCHAPOD_CONTROL_URL` must be a public https URL.
-- **Serverless Endpoints.** `vllm-serve` creates an Endpoint (`vllm/vllm-openai:v0.18.0-cu130`, default `gpu-l40s-a`, bearer-token auth) that serves the base model and the adapter side by side. It registers an expiry (30 minutes by default) and the control plane deletes the endpoint then; an endpoint never exists without one.
+- **Serverless Endpoints.** `vllm-serve` creates an Endpoint (`vllm/vllm-openai:v0.18.0-cu130`, default `gpu-l40s-a`, bearer-token auth) that serves the base model and the adapter side by side (TODO(D8): spike 4 confirms vLLM loads the adapter). It registers an expiry (30 minutes by default) and the control plane deletes the endpoint then; an endpoint never exists without one.
 - **Object Storage.** Datasets, checkpoints and artifacts live in an S3-compatible bucket: `https://storage.eu-north1.nebius.cloud` on Nebius, MinIO locally. The `ORCHAPOD_R2_*` variables and the `r2://` scheme keep their historical names.
 - TODO(D8): GPU quota, the Job and Endpoint ids of the golden run, console screenshots.
 
@@ -108,7 +108,7 @@ make up                         # Postgres, Redis and MinIO
 
 python3.12 -m venv .venv && . .venv/bin/activate
 pip install -r requirements-dev.txt -r apps/api/requirements.txt
-make check                      # ruff + unit tests + stub-mode e2e: no keys, no spend
+make check                      # ruff + unit tests + stub e2e (TODO(D8): script pending); no keys, no spend
 ```
 
 Then create the artifact bucket once and start the API and the web app (two terminals):
@@ -133,14 +133,14 @@ Open http://localhost:3000. `make down` stops Postgres, Redis and MinIO.
 
 **Node images.** A node runs from `orchapod/<node>:dev` when that image exists locally; otherwise Docker pulls `ghcr.io/bangadpurva/<node>:latest`, which CI publishes (forks set `ORCHAPOD_IMAGE_PREFIX`). Build one yourself with the repo root as context, for example `docker build -t orchapod/data-prep:dev -f containers/data-prep/Dockerfile .`. TODO(D8): verify a logged-out `docker pull` of every image; the GHCR packages must be public.
 
-**GPU nodes (Lane B)** also need a Nebius AI Cloud project with billing and GPU quota. Set `NEBIUS_PROJECT_ID`, sign in with the `nebius` CLI (or set `NEBIUS_IAM_TOKEN`), point `ORCHAPOD_R2_ENDPOINT` and `ORCHAPOD_R2_REGION` at a Nebius Object Storage bucket (`https://storage.eu-north1.nebius.cloud`, `eu-north1`) together with its access keys, set `ORCHAPOD_ENDPOINT_TOKEN` (`openssl rand -hex 32`) and set `ORCHAPOD_CONTROL_URL` to a public https URL, because Serverless Jobs report back to it.
+**GPU nodes (Lane B)** also need a Nebius AI Cloud project with billing and GPU quota; `.env.example` lists the Nebius variables to set and where to get each one.
 
 ## Run the demo
 
 - **Hosted.** TODO(D8): URL. The hosted app ships a real, pre-completed golden run (artifacts, logs, verdicts) and a guarded "Run it yourself" button that launches the pipeline at reduced scale under a per-run spend cap.
 - **Locally, from the Agent.** Open http://localhost:3000/agent and paste one of the three intents above, or pick a template. Read the plan card: nodes, models, estimated cost and minutes, warnings. Run stays disabled while the plan has errors, and Edit opens the plan on the canvas. Press Run to follow the live run view (node timeline, logs, cost meter). When the run ends, the report card shows what ran, the metrics, the cost against the estimate and how to use the result.
 - **Headless.** `make agent-e2e INTENT="Create synthetic data of movie likes, shares and subscribes."` runs one intent through the Agent, capped at $3. `make e2e` runs the real golden pipeline under the same cap, and `make demo` seeds the golden run for the hosted app. TODO(D8): the scripts behind these three targets are still being written.
-- **Without keys.** Start the API with `STUB=1` to run the same flow on deterministic stubs: no network beyond your local stack, and $0. TODO(D8): verify end to end.
+- **Without keys.** Start the API with `STUB=1` to run the same flow on deterministic stubs: no network beyond your local stack, and $0. TODO(D8): the stub e2e is not verified end to end yet.
 
 ### Results
 
@@ -180,20 +180,6 @@ During the period (the dated list is [CHANGELOG.md](CHANGELOG.md)):
 - Oct 2–8: first Nebius × NVIDIA integration: a Token Factory service, a Nebius provider, the Nemotron 3 Super teacher node (`synth-distilabel`), Token Factory model ids verified against the live catalog, and the executor fixes that let a CPU workflow run end to end.
 - Oct 20: repo clean-up; `make up`, `make check`, `make e2e`, `make agent-e2e` and `make demo`; a green `make check` with CI running lint and unit tests on every push; interface contracts v1 ([docs/contracts.md](docs/contracts.md)) and the Agent's knowledge base ([docs/agent_knowledge.md](docs/agent_knowledge.md)).
 - TODO(D8): replace this list with the final CHANGELOG entries (Tavily research, grounded and structured synthetic data, Token Factory fine-tuning and deploy, Nebius Serverless, judge-eval, the Agent, the budget guard).
-
-## Repository map
-
-| Path | What is there |
-| --- | --- |
-| `apps/api/` | FastAPI control plane: routes, executor, Agent |
-| `apps/web/` | Next.js app: canvas, run view, `/agent` |
-| `containers/<node>/` | one Docker image per node (`Dockerfile` and `run.py`) |
-| `packages/sdk-py/` | node SDK (I/O, logging, cost metering, checkpoints), copied into every image |
-| `packages/providers/` | Token Factory, Tavily, Nebius Serverless and LocalDocker clients |
-| `packages/workflow_schema/` | node input and output models and `NODE_REGISTRY` |
-| `docs/` | [node contract](docs/NODE_CONTRACT.md), [interface contracts](docs/contracts.md), [Agent knowledge](docs/agent_knowledge.md) |
-| `tests/`, `scripts/`, `infra/` | unit tests, helper scripts, docker-compose for Postgres, Redis and MinIO |
-| `hackathon/` | build journal: plan, state board and daily log |
 
 ## License
 

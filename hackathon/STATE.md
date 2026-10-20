@@ -23,7 +23,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D2 ORCHAPOD_IMAGE_PREFIX (executor, CI, local provider agree) — TODO
 - [ ] P0 D1 one Token Factory client: fold the three hand-rolled clients on the legacy host into it, delete the zero-caller one — TODO
 - [ ] P1 D2 nebius_serverless provider: Jobs, Endpoints, IAM refresh, Object Storage — TODO
-- [ ] P0 D2 setup gaps from devrel-w1: compose still publishes 8000 and names the 253B judge; storage bucket never auto-created (call ensure_bucket_exists at API start — backend); web app defaults to localhost:8000 (→ 8001 — frontend) — TODO (wave 2)
+- [ ] P0 D2 setup gaps from devrel-w1 + ml-w1 review: compose (platform) still publishes 8000, names the 253B judge and passes ANTHROPIC_API_KEY; scripts/build-and-push-containers.sh builds 6 of 8 nodes (qa); storage bucket never auto-created (call ensure_bucket_exists at API start — backend); web app defaults to localhost:8000 (→ 8001 — frontend) — TODO (wave 2)
 - [ ] P0 D3 .env.example complete (every var + where to get it) + budget-guard settings — TODO
 - [ ] P0 D4 hosting decision; reachable by D6 with an uptime check — TODO
 ### data-engineering
@@ -31,12 +31,14 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D2 synth-distilabel grounded mode (passage → short sourced Q&A, JSON schema) + price fix $0.30/$0.90 — TODO
 - [ ] P0 D2 synth-distilabel structured mode for intent #2 (user_id, movie_title, action, timestamp, device) — TODO
 - [ ] P0 D2 Dockerfiles build from the repo root (synth-distilabel, data-prep: `COPY packages/sdk-py/orchapod`, `COPY containers/<node>/…`); delete synth-distilabel's byte-identical SDK copy — TODO
+- [ ] P0 D2 data-engineering reviews the R19 diffs of its two Dockerfiles (synth-distilabel, data-prep) — TODO (wave 2)
 - [ ] P0 D2 synth-distilabel: remove the Anthropic/OpenAI teacher branches and the openai/anthropic pip deps from its image (Nemotron via packages/providers only) — TODO (wave 2)
 - [ ] P0 D3 data-prep: exact + near dedupe, train/val/test, TF dataset rules (quality filter → wave 2) — REVIEW(hack/data-w1 @ a623fe6; merge after backend-w1)
 ### ml-engineering
 - [ ] P1 D1 spike 4: Unsloth 16-bit LoRA on nvidia/Llama-3.1-Nemotron-Nano-8B-v1, vast.ai A100 (≤ $6 / 3 h) — IN_PROGRESS(ml-engineering, hack/ml-spike4)
-- [ ] P0 D2 all 8 Dockerfiles build from the repo root + test_dockerfiles.py; synth's vendored SDK deleted (R19) — REVIEW(hack/ml-w1)
-- [ ] P0 D2 lm-eval: Claude/Anthropic judge fallback removed — REVIEW(hack/ml-w1)
+- [x] P0 D2 all 8 Dockerfiles build from the repo root + test_dockerfiles.py; synth's vendored SDK deleted (R19) — DONE (a298ea1)
+- [x] P0 D2 lm-eval: Claude/Anthropic judge fallback removed — DONE (a298ea1)
+- [ ] P2 test_dockerfiles.py minors: continuation regex `\\[ \t]*\n`, `assert DOCKERFILES` instead of >= 8, one-line docstring (no LocalDocker claim), ROOT.glob — TODO
 - [ ] P0 D3 tf-finetune node: job id, checkpoint id, loss_curve.json; failed/cancelled handled — TODO
 - [ ] P0 D3 tf-deploy node: model name + one proving completion — TODO
 - [ ] P0 D4 judge-eval node: base vs tuned, identical decoding, Ultra pairwise reference-guided, position swap — TODO

@@ -113,20 +113,10 @@ async def deploy_model(body: DeployRequest, db: Session):
     await db.flush()
     await db.refresh(run)
 
-    # Kick off execution in the background
-    import asyncio
-    from api.executor.run_workflow import run_workflow
-    from api.services.events import event_bus
-    from api.database import AsyncSessionLocal
-
-    async def _run():
-        async with AsyncSessionLocal() as bg_db:
-            try:
-                await run_workflow(run.id, bg_db, event_bus.publish)
-            except Exception:
-                pass
-
-    asyncio.create_task(_run())
+    # Kick off execution through the one launcher, so POST /runs/{id}/cancel can stop it
+    from api.executor.run_workflow import launch
+    await db.commit()
+    launch(run.id)
 
     return DeployResponse(
         run_id=run.id,

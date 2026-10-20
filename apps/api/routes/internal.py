@@ -10,15 +10,18 @@ Routes:
   POST /internal/artifact      — receive artifact registration after R2 upload
   POST /internal/progress      — receive training progress (step, loss) for charts
   POST /internal/ttl           — register endpoint + schedule pod termination
-  POST /internal/node-complete — mark a node run succeeded/failed
+
+The node's exit code decides its status (executor); every call carries X-Orchapod-Secret.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -28,6 +31,7 @@ from sqlmodel import select
 
 from api.database import get_session, AsyncSessionLocal
 from api.models.db import (
+    utcnow,
     Artifact, ArtifactKind,
     Model, ModelFormat,
     NodeRun, NodeStatus,
@@ -43,11 +47,13 @@ router = APIRouter()
 
 Session = Annotated[AsyncSession, Depends(get_session)]
 
-_INTERNAL_SECRET = os.environ.get("ORCHAPOD_INTERNAL_SECRET", "")
+# R2: /internal/* is never open. Unset (or blank) → a random secret for this process, which the
+# executor passes to containers; set it explicitly when running more than one API worker.
+INTERNAL_SECRET = os.environ.get("ORCHAPOD_INTERNAL_SECRET") or secrets.token_urlsafe(32)
 
 
-def _verify_secret(x_orchapod_secret: str | None = Header(default=None)) -> None:
-    if _INTERNAL_SECRET and x_orchapod_secret != _INTERNAL_SECRET:
+def _verify_secret(x_orchapod_secret: str = Header(default="")) -> None:
+    if not secrets.compare_digest(x_orchapod_secret.encode(), INTERNAL_SECRET.encode()):
         raise HTTPException(status_code=403, detail="Invalid internal secret")
 
 
@@ -91,13 +97,16 @@ class RegisterTTLRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 @router.post("/log", status_code=204, dependencies=[Depends(_verify_secret)])
-async def receive_log(event: LogEvent):
+async def receive_log(event: LogEvent, db: Session):
     """
     Receive a log line from a container and forward it to the WebSocket subscribers.
-    Does NOT write to DB — logs are streamed live and persisted by the provider
-    (full log is uploaded to R2 at the end of the node run).
+    Only the last ERROR line is stored (NodeRun.error): a failed node's error is "exit <code>: <that line>".
     """
     from fastapi import Response
+    if event.level == "ERROR":
+        node_run = await db.scalar(select(NodeRun).where(NodeRun.run_id == event.run_id, NodeRun.node_id == event.node_id))
+        if node_run:
+            node_run.error = event.message
     await event_bus.publish(event.run_id, {
         "type": "log",
         "node_id": event.node_id,
@@ -153,6 +162,13 @@ async def receive_artifact(event: ArtifactEvent, db: Session):
     # Auto-register a Model record for any model artifact
     if kind == ArtifactKind.MODEL:
         _auto_register_model(db, artifact, node_run, art_data.get("metadata", {}))
+
+    # The SDK's cost_json carries the node's spend as metadata {"usd"}; it rolls up into Run.cost_usd.
+    if art_data["name"] == "cost_json":
+        run = await db.get(Run, event.run_id)
+        run.cost_usd = (run.cost_usd or Decimal(0)) + Decimal(str(artifact.meta.get("usd", 0)))
+        await db.flush()
+        await event_bus.publish(event.run_id, {"type": "run_cost", "cost_usd": float(run.cost_usd)})
 
     await event_bus.publish(event.run_id, {
         "type": "artifact",
@@ -341,43 +357,8 @@ async def _terminate_after_ttl(
         run      = await db.get(Run, uuid.UUID(run_id))
         if node_run:
             node_run.status      = NodeStatus.SUCCEEDED
-            node_run.finished_at = datetime.utcnow()
+            node_run.finished_at = utcnow()
         if run:
             run.status      = RunStatus.SUCCEEDED
-            run.finished_at = datetime.utcnow()
+            run.finished_at = utcnow()
         await db.commit()
-
-
-@router.post("/node-complete", dependencies=[Depends(_verify_secret)])
-async def node_complete(
-    run_id: uuid.UUID,
-    node_id: str,
-    exit_code: int,
-    db: Session,
-):
-    """
-    Called when a container exits. Marks the NodeRun succeeded or failed.
-    """
-    result = await db.execute(
-        select(NodeRun).where(
-            NodeRun.run_id == run_id,
-            NodeRun.node_id == node_id,
-        )
-    )
-    node_run = result.scalar_one_or_none()
-    if not node_run:
-        raise HTTPException(status_code=404, detail="NodeRun not found")
-
-    node_run.status = NodeStatus.SUCCEEDED if exit_code == 0 else NodeStatus.FAILED
-    node_run.finished_at = datetime.utcnow()
-    if exit_code != 0:
-        node_run.error = f"Container exited with code {exit_code}"
-    db.add(node_run)
-    await db.flush()
-
-    await event_bus.publish(run_id, {
-        "type": "node_status",
-        "node_id": node_id,
-        "status": node_run.status.value,
-    })
-    return {"ok": True}

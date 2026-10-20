@@ -7,11 +7,16 @@ Tables: Workflow, Run, NodeRun, Artifact
 
 from __future__ import annotations
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Optional
-from sqlmodel import SQLModel, Field, Column, JSON
+from sqlmodel import SQLModel, Field, Column, JSON, UniqueConstraint
+
+
+def utcnow() -> datetime:
+    """Naive UTC, as the columns store it (datetime.utcnow() is deprecated)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 # ---------------------------------------------------------------------------
@@ -60,8 +65,8 @@ class Workflow(SQLModel, table=True):
     yaml:       str                          # source of truth — YAML string
     graph_json: dict = Field(sa_column=Column(JSON))  # compiled DAG for canvas render
     version:    int   = Field(default=1)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
 
 
 class Run(SQLModel, table=True):
@@ -76,7 +81,7 @@ class Run(SQLModel, table=True):
     finished_at:  Optional[datetime] = None
     gpu_provider: Optional[str] = None      # which provider was picked
     gpu_pod_id:   Optional[str] = None
-    created_at:   datetime = Field(default_factory=datetime.utcnow)
+    created_at:   datetime = Field(default_factory=utcnow)
 
     # Run state machine:
     # pending → provisioning_gpu → running → (succeeded | failed | cancelled)
@@ -84,7 +89,8 @@ class Run(SQLModel, table=True):
 
 
 class NodeRun(SQLModel, table=True):
-    """One node execution within a run."""
+    """One node execution within a run; retry reuses the row."""
+    __table_args__ = (UniqueConstraint("run_id", "node_id"),)  # refs and /internal/artifact assume one row
     id:          uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     run_id:      uuid.UUID = Field(foreign_key="run.id")
     node_id:     str                        # from YAML, e.g. "fine_tune_1"
@@ -111,7 +117,7 @@ class Artifact(SQLModel, table=True):
     uri:         str                        # r2://orchapod-artifacts/runs/...
     size_bytes:  Optional[int] = None
     meta:        dict = Field(default={}, sa_column=Column(JSON))
-    created_at:  datetime = Field(default_factory=datetime.utcnow)
+    created_at:  datetime = Field(default_factory=utcnow)
 
 
 class Model(SQLModel, table=True):
@@ -135,4 +141,4 @@ class Model(SQLModel, table=True):
     node_run_id:     Optional[uuid.UUID] = Field(default=None, foreign_key="noderun.id")
     run_id:          Optional[uuid.UUID] = Field(default=None, foreign_key="run.id")
 
-    created_at:      datetime = Field(default_factory=datetime.utcnow)
+    created_at:      datetime = Field(default_factory=utcnow)

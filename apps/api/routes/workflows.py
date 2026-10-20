@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from api.database import get_session
-from api.models.db import Workflow
+from api.models.db import Workflow, utcnow
 from api.executor.dag import workflow_to_graph_json
 
 router = APIRouter()
@@ -121,7 +121,7 @@ async def update_workflow(workflow_id: uuid.UUID, body: WorkflowUpdate, db: Sess
         workflow.graph_json = graph_json
         workflow.version += 1
 
-    workflow.updated_at = datetime.utcnow()
+    workflow.updated_at = utcnow()
     db.add(workflow)
     await db.flush()
     await db.refresh(workflow)

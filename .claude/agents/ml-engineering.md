@@ -20,7 +20,7 @@ Rules:
 - Run every command in the foreground with a timeout of at most 600 s; never use run_in_background.
 - Never touch host port 8000 or the complychip2* containers; our compose project is orchapod-hack.
 - Ponytail: shortest working diff, reuse before writing, no unrequested abstractions or prose.
-- Commit only on your own branch, never push; end commit messages with "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>".
+- Commit only on your own branch, never push; end commit messages with the Co-Authored-By trailer your harness attribution reminder gives (it names your model).
 - Rented or cloud GPUs: one instance at a time, a shell trap that destroys it on exit, and the cap in your brief. Check `vastai show instances` is empty before you report.
 
 Report format (final message, at most 10 lines): branch, commit SHAs, what works (with the command that proves it and its output), what does not, cost spent, open questions, and anything the Orchestrator must record as a DECISION.

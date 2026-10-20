@@ -39,3 +39,5 @@ worktrees:
 - Ruling R17: area agents own unit tests for their code under tests/<area>/; qa owns harness, CI and e2e — cost if wrong: none, tests still land with code.
 - Ruling R18: wave-1 code reads env via os.environ with contract defaults; platform's config.py consolidates in wave 2 — cost if wrong: a later mechanical migration.
 - Ruling R19: one agent (ml-w1) fixes all Dockerfiles, including data-engineering's two, and deletes synth's vendored SDK — avoids two agents editing the same build files; cost if wrong: data-engineering reviews those two diffs after merge.
+- 2026-10-20T23:25Z ml-w1 DONE (11978a0 Dockerfiles from repo root + test_dockerfiles.py + vendored SDK deleted; cee5243 lm-eval Claude fallback removed): `make check` 174 passed; hf-download and data-prep images built for real. Review dispatched (sonnet). Open: synth image still pip-installs openai/anthropic (data wave 2); compose still names ANTHROPIC_API_KEY (platform wave 2); README hunk may conflict with devrel-w1.
+- 2026-10-20T23:25Z role files: the commit-trailer rule now says to use the trailer from each agent's own harness attribution reminder (sonnet agents were writing 'Opus 5.5').

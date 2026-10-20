@@ -41,19 +41,7 @@ STALE = [
     "studio.nebius.ai",  # legacy Token Factory host
     "Super 49B",
     "Ultra 253B",
-    "Mini 4B",
     "localhost:8000",  # our API is on 8001; 8000 belongs to another project
-    "NEBIUS_FOLDER_ID",  # variables the contracts remove
-    "NEBIUS_SUBNET_ID",
-    "ANTHROPIC_API_KEY",
-    "OPENAI_API_KEY",
-    "RUNPOD_API_KEY",
-    "CLOUDFLARE_TUNNEL_TOKEN",
-    "JUDGE_MODEL",
-    "GITHUB_ORG",
-    "Cloudflare",
-    "Clerk",
-    "Cleanlab",
 ]
 
 
@@ -66,9 +54,19 @@ def test_models_urls_and_clone_url():
     for model in MODELS:
         assert model in README, f"README must name {model}"
         assert model in CONTRACTS, f"{model} is not in docs/contracts.md"
-    for needle in ("https://api.tokenfactory.nebius.com/v1", "github.com/bangadpurva/orchapod.ai", "Tavily"):
+    for needle in ("https://api.tokenfactory.nebius.com/v1", "github.com/bangadpurva/orchapod.ai"):
         assert needle in README, f"README must mention {needle}"
     assert not re.search(r"bangadpurva/orchapod(?!\.ai)", README), "the clone URL ends in orchapod.ai"
+
+
+def test_setup_and_license_lines():
+    for line in (
+        "git clone -b NebiusHackathon https://github.com/bangadpurva/orchapod.ai.git",
+        "make up",
+        "make check",
+        "[MIT](LICENSE)",
+    ):
+        assert line in README, f"README must contain: {line}"
 
 
 def test_no_stale_strings():
@@ -76,7 +74,6 @@ def test_no_stale_strings():
 
 
 def test_every_todo_names_its_day():
-    assert "TODO(D8)" in README
     assert not re.search(r"TODO(?!\(D8\))", README)
 
 

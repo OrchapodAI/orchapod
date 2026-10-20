@@ -32,7 +32,7 @@ export function explainError(err: unknown): string {
   if (status === 404 && detail === "Not Found") return `The API at ${BASE} has no ${path} route yet (404).`;
   if (status === 402) return `Over budget: ${detail}`;
   if (status === 502) return `Nemotron on Token Factory did not answer after retries (502): ${detail}`;
-  if (status === 503) return `The agent is switched off (503): ${detail}. The kill switch is on or NEBIUS_API_KEY is missing.`;
+  if (status === 503) return `The agent is switched off: the kill switch is on or NEBIUS_API_KEY is missing (503: ${detail})`;
   return status === 422 ? detail : `${status} on ${path}: ${detail}`;
 }
 

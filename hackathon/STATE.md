@@ -28,9 +28,11 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D2 web-research node: seed URLs | query → extract → chunk → corpus.jsonl, dedupe, max_pages, STUB=1 — TODO
 - [ ] P0 D2 synth-distilabel grounded mode (passage → short sourced Q&A, JSON schema) + price fix $0.30/$0.90 — TODO
 - [ ] P0 D2 synth-distilabel structured mode for intent #2 (user_id, movie_title, action, timestamp, device) — TODO
+- [ ] P0 D2 Dockerfiles build from the repo root (synth-distilabel, data-prep: `COPY packages/sdk-py/orchapod`, `COPY containers/<node>/…`) — TODO
 - [ ] P0 D3 data-prep: exact + near dedupe, Lightning quality filter, train/val/test, TF dataset rules — TODO
 ### ml-engineering
 - [ ] P1 D1 spike 4: Unsloth 16-bit LoRA on nvidia/Llama-3.1-Nemotron-Nano-8B-v1, vast.ai A100 (≤ $6 / 3 h) — IN_PROGRESS(ml-engineering, hack/ml-spike4)
+- [ ] P0 D2 Dockerfiles build from the repo root (distill-sft, hf-download, lm-eval, quantize, vllm-serve) — TODO
 - [ ] P0 D3 tf-finetune node: job id, checkpoint id, loss_curve.json; failed/cancelled handled — TODO
 - [ ] P0 D3 tf-deploy node: model name + one proving completion — TODO
 - [ ] P0 D4 judge-eval node: base vs tuned, identical decoding, Ultra pairwise reference-guided, position swap — TODO
@@ -56,7 +58,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D4 eval view (win rate, W/T/L bars, judged samples); compare playground — TODO
 - [ ] P0 D6 polish (empty, error, loading states; demo banner) · D7 screenshots — TODO
 ### qa
-- [ ] P0 D1 CI on NebiusHackathon + repo ruff config so `make check` is green; synth-distilabel in the image matrix — IN_PROGRESS(qa, hack/qa-check)
+- [ ] P0 D1 CI on NebiusHackathon + repo ruff config so `make check` is green; synth-distilabel in the image matrix — REVIEW(hack/qa-check @ 7e77488)
 - [ ] P0 D2 provider contract tests from recorded responses + a $1/day real Token Factory call — TODO
 - [ ] P0 D3 scripts/e2e_demo.py (stub + real with --max-cost), nightly — TODO
 - [ ] P0 D3 scripts/e2e_agent.py for the three canonical intents — TODO
@@ -76,6 +78,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - DECISION 2026-10-20: worktree.baseRef=head plus a base check in every brief, because the remote default branch is main — orchestrator.
 - DECISION 2026-10-20: compose project orchapod-hack; `make up` starts postgres, redis, minio only; API on 8001 (8000 = complychip2) — orchestrator.
 - DECISION 2026-10-20: skip claude-mem (episodic-memory installed; these files are the source of truth); nebius CLI deferred to G2 — orchestrator.
+- DECISION 2026-10-20: every container image builds with the repo root as context (matches CI, scripts/build-and-push-containers.sh and the local_docker hint); Dockerfile owners fix their COPY paths — qa finding.
 - OPEN DECISION: Lane B student (spike 4) · intent #1 deploy default (3B on a Serverless Endpoint vs 8B serverless LoRA) · hosting (D4).
 
 ## Blockers

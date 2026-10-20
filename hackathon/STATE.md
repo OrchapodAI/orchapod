@@ -1,18 +1,18 @@
 # STATE — Orchapod × Nebius hackathon
-Updated: 2026-10-20T22:35Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
+Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
 1. Hari: put NEBIUS_API_KEY and TAVILY_API_KEY in ~/src/orchapod-hack/.env (Human actions) — unblocks spikes 1–3 and every live check.
 2. Contracts session: platform, data-engineering, ml-engineering, backend propose their sections (read-only); orchestrator merges docs/contracts.md.
 3. Spike 4 (ml-engineering): vast.ai A100 80 GB, ≤ $6 / 3 h, destroyed after → DECISION: Lane B student.
-4. Ponytail audit of the repo (sonnet) → triage into this board.
+4. Ponytail audit of the repo (sonnet) → triage into this board — IN_PROGRESS.
 5. Spikes 1–3 once keys land: platform (TF train → deploy → chat; Tavily extract), backend (Nemotron Super guided-JSON plan).
 6. Dispatch the D1–D2 P0 tasks below, at most two per agent, each in its own worktree.
 
 ## Board (status ∈ TODO | IN_PROGRESS(<agent>, <branch>) | REVIEW | DONE | BLOCKED(<why>))
 ### orchestrator
 - [x] P0 D0 bootstrap: clone, clean-ups, harness, tooling, push — DONE
-- [ ] P0 D1 contracts session → docs/contracts.md merged — TODO
+- [ ] P0 D1 contracts session → docs/contracts.md merged — IN_PROGRESS(platform, data-engineering, ml-engineering, backend; read-only proposals)
 - [ ] P0 D3+ merge twice a day; nightly real e2e; G2 call D5; freeze D7; submit D9 — TODO
 ### platform
 - [ ] P0 D1 spike 1: 50 rows → TF LoRA fine-tune Llama-3.1-8B → /v0/models deploy → one chat call — BLOCKED(NEBIUS_API_KEY)
@@ -30,7 +30,7 @@ Updated: 2026-10-20T22:35Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D2 synth-distilabel structured mode for intent #2 (user_id, movie_title, action, timestamp, device) — TODO
 - [ ] P0 D3 data-prep: exact + near dedupe, Lightning quality filter, train/val/test, TF dataset rules — TODO
 ### ml-engineering
-- [ ] P1 D1 spike 4: Unsloth 16-bit LoRA on nvidia/Llama-3.1-Nemotron-Nano-8B-v1, vast.ai A100 (≤ $6 / 3 h) — TODO
+- [ ] P1 D1 spike 4: Unsloth 16-bit LoRA on nvidia/Llama-3.1-Nemotron-Nano-8B-v1, vast.ai A100 (≤ $6 / 3 h) — IN_PROGRESS(ml-engineering, hack/ml-spike4)
 - [ ] P0 D3 tf-finetune node: job id, checkpoint id, loss_curve.json; failed/cancelled handled — TODO
 - [ ] P0 D3 tf-deploy node: model name + one proving completion — TODO
 - [ ] P0 D4 judge-eval node: base vs tuned, identical decoding, Ultra pairwise reference-guided, position swap — TODO

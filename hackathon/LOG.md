@@ -15,3 +15,10 @@ in-progress tasks:
 12:## Board (status ∈ TODO | IN_PROGRESS(<agent>, <branch>) | REVIEW | DONE | BLOCKED(<why>))
 worktrees:
 /Users/hari/src/orchapod-hack  faecd8c [NebiusHackathon]
+
+## 2026-10-20T22:39Z orchestrator — cycle 1 dispatch
+- what: make up → orchapod-hack postgres/redis/minio running (5432, 6379, 9000-9001); dispatched in one batch: contracts proposals (platform, data-engineering, ml-engineering, backend; opus, read-only), spike 4 (ml-engineering, opus, worktree .claude/worktrees/ml-spike4 on hack/ml-spike4 @ c866d7f), ponytail audit (sonnet, read-only) · briefs: hackathon/briefs/2026-10-20-*.md · cost so far: $0
+- Ruling: the SDD ledger is hackathon/STATE.md + LOG.md + briefs/ (the kickoff mandates them) rather than .superpowers/sdd — cost if wrong: none, same record.
+- Ruling: agents run in parallel on disjoint owned paths, each in its own worktree (kickoff §3, §5), not one implementer at a time — cost if wrong: merge conflicts, caught at merge.
+- Ruling: the custom role agent types were not loaded in this session, so role agents run as general-purpose agents that first read .claude/agents/<role>.md — cost if wrong: the tools lists in role files are not enforced this session.
+- Ruling: worktrees are created by hand from NebiusHackathon (`git worktree add … -b hack/<name> NebiusHackathon`) because the session directory had not moved yet at dispatch — the base is explicit either way.

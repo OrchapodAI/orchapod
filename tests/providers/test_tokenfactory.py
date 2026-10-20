@@ -176,6 +176,19 @@ def test_stream_chat_yields_deltas_then_bills(replay):
     assert calls == [(("token_factory", SUPER, 1000, 2000), {"usd": pytest.approx(SUPER_USD)})]
 
 
+def test_stream_broken_after_first_chunk_is_a_provider_error(replay):
+    class Broken(httpx.SyncByteStream):
+        def __iter__(self):
+            yield b'data: {"choices": [{"index": 0, "delta": {"content": "Hel"}}]}\n\n'
+            raise httpx.RemoteProtocolError("peer closed connection")
+
+    http, seen = replay(httpx.Response(200, stream=Broken()))
+    got = []
+    with pytest.raises(ProviderError) as e:
+        got.extend(TokenFactory(http=http).stream_chat(MSGS))
+    assert (got, e.value.kind, len(seen)) == (["Hel"], "server", 1)  # no retry once a chunk went out
+
+
 # --- files, fine-tuning, LoRA ---------------------------------------------
 
 def test_fine_tuning_routes_and_best_checkpoint(replay, tmp_path, ft_priced):

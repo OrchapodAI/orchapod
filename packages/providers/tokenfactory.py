@@ -73,6 +73,8 @@ class TokenFactory:
                 for choice in chunk.get("choices") or []:
                     if (choice.get("delta") or {}).get("content"):
                         yield choice["delta"]["content"]
+        except httpx.HTTPError as e:  # mid-stream: too late to retry
+            raise ProviderError(P, "server", None, repr(e)) from e
         finally:
             resp.close()
         bill(usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))

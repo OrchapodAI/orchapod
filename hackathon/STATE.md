@@ -51,8 +51,8 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P1 D5 after G2: real Serverless Job + Endpoint; D6 eval vs base; D7 judging-window plan — TODO
 ### backend
 - [ ] P0 D1 spike 2: Nemotron 3 Super guided-JSON plan for intent #2 — BLOCKED(NEBIUS_API_KEY)
-- [ ] P0 D1 run/node state machine for long-polling nodes: cancel, timeouts, retry-node — TODO
-- [ ] P0 D1 SDK: cost.json + metrics.json conventions — TODO
+- [ ] P0 D1 run/node state machine for long-polling nodes: cancel, timeouts, retry-node — REVIEW(hack/backend-w1)
+- [ ] P0 D1 SDK: cost_json + metrics_json, progress, internal secret — REVIEW(hack/backend-w1)
 - [ ] P0 D2 Orchapod Agent planner on Nemotron (Claude out of agent/workflow_builder.py) + POST /agent/plan — TODO
 - [ ] P0 D2 executor forwards only Nebius/Tavily/HF keys to containers (no ANTHROPIC/OPENAI); default provider_pref not vastai — TODO
 - [ ] P1 D3 checkpoint-resume never fires (looks in a fresh NodeRun's empty outputs); drop the 19 debug log.warning lines in the executor — TODO

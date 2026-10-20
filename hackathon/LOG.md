@@ -7,3 +7,11 @@
 - DECISION: checkpoint.sh commits with a pathspec (`git commit -- hackathon CHANGELOG.md docs`) so a checkpoint can never sweep a half-finished merge in; qa agent inherits all tools (Write for new tests, Playwright MCP); devrel gets Bash for git only.
 - baseline: `pytest tests -q` → 153 passed, 58 warnings (4.4 s). `ruff check apps packages containers` → 168 findings, 97 auto-fixable; the repo has no ruff config, so results depend on the machine → qa D1 adds one. Until `make check` is green the merge gate is "no new failures against this baseline".
 - security: `gitleaks git --log-opts=--all` over all remote branches → 1 finding, a false positive (generic-api-key spanning an empty OPENAI_API_KEY= and STUB_TEACHER=true in .env.example @ c2bc9f7, feat/kan branches only); fingerprint in .gitleaksignore; rescan clean.
+
+## CHECKPOINT 2026-10-20T22:34:54Z
+branch: NebiusHackathon @ faecd8c
+dirty files: 1
+in-progress tasks:
+12:## Board (status ∈ TODO | IN_PROGRESS(<agent>, <branch>) | REVIEW | DONE | BLOCKED(<why>))
+worktrees:
+/Users/hari/src/orchapod-hack  faecd8c [NebiusHackathon]

@@ -1,0 +1,78 @@
+# Contracts: backend proposal (2026-10-20, from NebiusHackathon @ c866d7f)
+Replaces the skeleton's "Run state machine" and "Agent API" sections and adds SDK, event and budget rules to "Node I/O". Aligned with the data-engineering and ml-engineering proposals on the cost envelope, JSON scalar artifacts and cancel-on-SIGTERM. "(code wins)" and "(skeleton wins)" mark where today's code and the skeleton disagree.
+
+## Run state machine (apps/api/executor/run_workflow.py)
+- Run: `pending` → `provisioning_gpu` (start accepted) → `running` (DAG compiled) → `succeeded` | `failed` | `cancelled`. Retry moves `failed|cancelled` → `provisioning_gpu`. (code wins: the UI and /inference/deploy use `provisioning_gpu`; renaming it needs an enum migration and gains nothing.)
+- NodeRun: `pending` → `running` → `succeeded` | `failed`. Nodes have no `cancelled` or `skipped` state: a cancelled node is `failed` with error `cancelled`, and unreached nodes stay `pending`.
+- One NodeRun per (run_id, node_id), enforced by a new unique index (/internal/artifact and ref resolution already assume it). The executor creates every row as `pending` when the run starts. Today rows appear one at a time, and the run page, which loads rows once, never shows later nodes.
+- Nodes run one at a time in topological order, so parallel branches serialise (code wins). A run that stopped mid-way (`failed` or `cancelled`) has exactly one `failed` node, the first unfinished one; its `error` is the run's error, so Run needs no error column.
+- Per node: skip it if `succeeded`; check the budget and the kill switch; persist `running`, started_at, the pod (NodeRun's `gpu_provider`/`gpu_pod_id` columns, which exist but today only Run gets) and the resolved inputs (lineage; today `running` is only broadcast and inputs are stored unresolved); provision; wait up to `ORCHAPOD_NODE_TIMEOUT_S` (default 5400, a backstop above node-level timeouts such as tf-finetune's 60 min). Exit 0 → `succeeded`; anything else → the node is `failed` and the run is `failed`.
+- Node error strings: `exit <code>: <last ERROR log line>` · `timeout after <n> s` · `cancelled` · `budget: <run|day> cap $<x> reached` · `kill switch` · `unresolved ref <ref>` · `no <runtime> provider: <why>` · `provision failed: <why>` · `control plane restarted` · `internal: <exception>`.
+- Refs: an input value is either a literal or exactly one `${{ inputs.X }}` / `${{ nodes.<id>.outputs.<name> }}`, and refs resolve only at the top level of `inputs`. An unresolved ref fails the node (today the template string is passed through as the value).
+- Runtime: `cpu` and `api` run on LocalDockerProvider, `gpu` goes through pick_provider (skeleton wins; today `api` would take the GPU path). The image is `${ORCHAPOD_IMAGE_PREFIX}/<type>:latest`. Platform owns the default (`ghcr.io/bangadpurva`, where CI pushes) and the image resolution; today's hardcoded `ghcr.io/orchapod` does not exist.
+- Startup sweep: when the API starts, each run in `provisioning_gpu|running` → `failed`. Its running node's pod is terminated, so the node cancels its remote job, and that node (or else the first unfinished one) → `failed` "control plane restarted". Today such runs stay `running` forever while their containers keep polling. Retry resumes them.
+
+### Long-polling nodes (tf-finetune, tf-deploy, vllm-serve, unsloth-train)
+- Before creating a priced remote job, compare its estimated $ with `ORCHAPOD_MAX_COST_USD` and fail fast if it is over.
+- Scalars (job ids, model refs) are small JSON artifacts with the same dict in `metadata` (ml section), so the API and UI read `Artifact.meta` and never fetch from object storage.
+- While polling, call `log.progress(...)` at least every 60 s with `extra={"phase": "<remote status>"}`.
+- Cancel and timeout: provider.terminate(pod) sends SIGTERM, waits 30 s, then kills. Today LocalDocker's `rm -f` kills at once; platform changes it. The SDK turns SIGTERM into SystemExit(143), and the node cancels or deletes its remote resource in a `finally` (ml section).
+- Retry reuses the row and keeps its outputs, so `ORCHAPOD_RESUME_CHECKPOINT_URI` (the newest `checkpoint_step_*`) resumes Lane B training. Today it is never set, because the row is always new. The node or the sweep already cancelled the failed attempt's remote work, so a retried TF node starts a new job (ml section).
+- `long_running` goes away: vllm-serve becomes `api` and exits after POST /internal/ttl (ml section), and the executor's vllm-serve special case is deleted.
+
+### Run control API
+- `POST /runs/{id}/cancel` (exists) → 200 RunOut; 409 if the run is terminal. It cancels the executor task, which terminates the pod and marks the node `failed` "cancelled" and the run `cancelled`. Today the executor's handler can overwrite `cancelled` with `failed`, and the container keeps running. Start, retry, /agent/run and /inference/deploy (while it exists) all launch through one function that registers the task; today deploy's runs keep executing after a cancel.
+- `POST /runs/{id}/nodes/{node_id}/retry` (new) → 202 RunOut. 404 if the run or node is unknown; 409 unless the run is `failed|cancelled` and the node is `failed`; 402 if over budget; 503 if the kill switch is on. It re-runs the node and then continues downstream. This refines the skeleton: re-running one node alone would leave the run unfinished.
+- `GET /runs/{id}/summary` (new) → `{run_id, status, cost_usd, error, nodes: [{node_id, type, status, usd, error, started_at, finished_at}], artifacts: [{id, node_id, name, kind, uri, download_url, meta}]}`.
+- `GET /artifacts/{id}/download` (new) → 307 to a presigned GET URL valid for 1 h. This is intent #2's download link. It reuses services/storage.presigned_download_url, so keep that function (audit item 9 calls storage.py zero-caller).
+- `POST /internal/ttl` (exists) also takes `endpoint_id`. At `expires_at` the backend calls platform's endpoints.delete(endpoint_id) and changes no run or node status. Today it terminates a vast.ai pod and marks the whole run `succeeded`. The route is kept for ml's Serverless Endpoints, whereas audit item 1 would delete it with the Vast.ai stack. TTL timers live only in memory, so today a restart leaks a paid endpoint. The startup sweep therefore deletes registered endpoints whose `expires_at` has passed and re-arms the timer for the rest. A 404 from delete counts as done, and success is recorded as `meta.deleted_at`.
+- `POST /compare {"messages": [...], "refs": [ModelRef, ModelRef], "max_tokens": 512}` (D4; ModelRef is defined in the ml section) → SSE `{"i": 0|1, "delta": str}` …, then `{"i", "done": true, "usd": float|null}`. Keys are resolved server-side, and only in two pairs: NEBIUS_API_KEY with the Token Factory base_url, and ORCHAPOD_ENDPOINT_TOKEN with an endpoint URL registered through /internal/ttl. Anything else → 422, because otherwise a caller-chosen base_url would receive our key.
+- `POST /internal/node-complete` is deleted: nothing calls it, and the exit code decides the node's status.
+
+## Budget guard
+- Env (defaults): `ORCHAPOD_MAX_RUN_USD`=3; `ORCHAPOD_MAX_DAY_USD`=15 (per UTC day, the sum of Run.cost_usd over runs created that day); `ORCHAPOD_KILL_SWITCH`=0; `ORCHAPOD_ANON_SCALE`=0.1 (caps × scale for anonymous callers; D6).
+- Checked at plan validation (an estimate above the remaining budget → a plan error); at /agent/run, start and retry (→ 402); at every node boundary (spent ≥ cap → the node is `failed` "budget: …"); and inside the node, where `ORCHAPOD_MAX_COST_USD` = the smaller of the run and day budgets remaining and `cost.add` raises `BudgetExceeded` once spend passes it.
+- Kill switch: 503 on plan, run, start and retry; it also fails the next node boundary.
+
+## Node SDK (packages/sdk-py/orchapod; adds to Node I/O)
+- One SDK: containers COPY packages/sdk-py/orchapod. containers/synth-distilabel/sdk/ is a vendored copy and is deleted.
+- Executor env adds `ORCHAPOD_INTERNAL_SECRET`, `ORCHAPOD_MAX_COST_USD`, `STUB`, `TAVILY_API_KEY`, `NEBIUS_BASE_URL`, `NEBIUS_PROJECT_ID`, `NEBIUS_IAM_TOKEN`, `ORCHAPOD_ENDPOINT_TOKEN` and `ORCHAPOD_R2_REGION`; it drops `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` and `CLOUDFLARE_TUNNEL_TOKEN`.
+- URI: `r2://${ORCHAPOD_R2_BUCKET}/runs/{run_id}/{node_id}/{name}` (skeleton wins; today the SDK hardcodes `orchapod-artifacts`). Output names match `^[a-z][a-z0-9_]*$`, because refs split on dots.
+- `io.write_output(name, path, kind, metadata)` is the only output call; it uploads a file or directory. Kind `model` is reserved for weights, adapters and `model_ref`; ids such as `job` use `metrics`.
+- Cost: call `cost.add(provider, model, in_tokens=0, out_tokens=0, usd=None, calls=1, **extra)` once per billed call or batch; it aggregates per (provider, model). With `usd=None` it prices from `cost.PRICES`, the one price table (per 1M tokens in/out, per Tavily credit, per fine-tune token, per GPU hour). Platform supplies the numbers, and platform's clients and the control plane import the same table. Clients report usage through `on_usage=cost.add`, positionally, and Tavily adds `credits=`.
+- At exit (normal, exception or SIGTERM) the SDK writes `cost_json` (kind metrics) in the envelope data-eng and ml agreed: `{"usd": float, "items": [{"provider": "token_factory"|"tavily"|"nebius_serverless", "model": str, "calls": int, "in_tokens": int, "out_tokens": int, "usd": float}]}`; Tavily items add `credits` and Serverless items add `gpu_hours`. Its metadata is `{"usd": <total>}`, which the control plane adds to Run.cost_usd before emitting `run_cost`.
+- Metrics: `io.write_metrics(dict)` writes `metrics_json` (kind metrics). `stub` is filled in from `STUB`. The dict also travels as metadata when it is ≤ 16 KB (otherwise metadata is `{"truncated": true}` and the file keeps everything), so the summary and the report read it from the DB. Each node's section defines its keys.
+- Logs: `log.info|warn|error` → stdout + POST /internal/log. `log.progress(step, total, loss=None, extra=None)` → POST /internal/progress; today it posts a PROGRESS log line, so `progress` events never fire. Uncaught exceptions are logged as ERROR.
+- Every /internal call sends `X-Orchapod-Secret`.
+  - `ORCHAPOD_INTERNAL_SECRET` defaults to a random value generated when the API starts, so /internal/* is never open; set it explicitly when running more than one worker.
+  - Today /internal/* is open when the secret is unset, and setting it makes every node fail with 403.
+  - An open /internal/ttl would let anyone register a URL that /compare then trusts with ORCHAPOD_ENDPOINT_TOKEN.
+- Output registration retries 3 times (after 1, 2 and 4 s) and then raises; log and progress calls never raise.
+- `STUB=1`: deterministic outputs and no network beyond the control plane and object storage. Synth's `STUB_TEACHER` is folded into `STUB`.
+
+## Events (WS /ws/runs/{id}, fed by Redis channel `run:{id}`)
+- No replay: load GET /runs/{id}, /nodes and /artifacts first, then apply events. The socket closes after a terminal `run_status`; reconnect after a retry.
+- `run_status` {status: running|succeeded|failed|cancelled, error?}.
+- `node_status` {node_id, status: running|succeeded|failed, outputs? (on succeeded), error? (on failed)}. Today the executor never sends `failed`.
+- `log` {node_id, ts, level: INFO|WARN|ERROR|STDOUT, message}. Container stdout arrives as STDOUT, skipping SDK-formatted lines that were already posted. Today these events carry `line` and no `ts`, so they render blank.
+- `progress` {node_id, step, total?, loss?, ...extra} · `artifact` {node_id, name, uri, kind, expires_at?} · `run_cost` {cost_usd} (the UI already types it, but only /inference/extend sends it today) · `endpoint_expiry` (unchanged).
+- The agent monitor is just these events on the /agent page. Scripts poll GET /agent/runs/{id}/report every 5 s until `ready`.
+
+## Agent API (apps/api/agent; Nemotron on Token Factory only)
+- A plan is a workflow spec (docs/WORKFLOW_SPEC.md) written as JSON: `{"name": str, "nodes": [{"id": "snake_case", "type": <visible NODE_REGISTRY key>, "needs": [id], "inputs": {...}}]}`. It has no `resources`; defaults apply. Running a plan means `yaml.safe_dump(plan)` → Workflow (which opens on the canvas) → Run. NODE_REGISTRY is the node catalog; WORKFLOW_SPEC's "7 node types" list is stale.
+- `POST /agent/plan {"intent": str of at most 2000 chars}` → 200 `{"plan", "rationale": str, "estimate": {"usd", "minutes", "by_node": {id: {"usd", "minutes"}}}, "warnings": [str], "errors": [str]}`.
+  - Nemotron 3 Super (guided JSON, temperature 0) reads docs/agent_knowledge.md and NODE_REGISTRY on every request.
+  - Validation errors go back to the model for up to 2 repairs. If `errors` is still non-empty, the UI disables Run.
+  - 422 for a bad intent; 502 if Token Factory still fails after retries; 503 if the kill switch is on or NEBIUS_API_KEY is missing. With STUB=1 it returns the closest canonical template and makes no network call.
+- Validation checks that compile_dag passes; inputs match inputs_schema (refs allowed); each ref names a node in `needs` and a field of that node's outputs_schema; the agent_knowledge.md constraints hold (Token Factory fine-tune bases, serverless-LoRA bases, no Nemotron fine-tune, Nemotron-only teacher and judge); inline ModelRefs pair NEBIUS_API_KEY only with the Token Factory base_url, and endpoint refs come only from a vllm-serve `model_ref` artifact (judge-eval enforces the same at runtime); gpu nodes have a configured GPU provider; and the estimate fits the remaining budget. Each error reads `"<node_id>: <problem>"`.
+- `POST /agent/run {"intent": str, "plan": {...}}` → 201 `{"run_id", "workflow_id", "estimate"}`. The server validates again: 422 `{"detail", "errors"}`, 402 if over budget, 503 if the kill switch is on. It stores `agent_run(run_id, intent, plan, estimate, report_md)`. The evaluate step is a judge-eval node inside the plan.
+- `GET /agent/runs/{id}/report` → 200 `{<summary fields>, "intent", "estimate", "ready": bool, "markdown": str|null}`; 404 for runs the agent did not start. `ready` means the run is terminal and the markdown exists. On the first GET after a terminal status, Nemotron 3.5 Lightning writes the markdown (what ran, metrics, cost against estimate, how to use the result), and it is cached. With STUB=1, or if Lightning fails, a deterministic template is used instead.
+- `GET /agent/templates` → `[{"slug", "title", "intent", "plan", "estimate"}]`, read from apps/api/agent/templates/*.json. These are the three canonical intents, and they double as the STUB plans; one-click Run posts a template to /agent/run.
+- `POST /workflows/from-prompt` stays, now backed by the same planner. workflow_builder.py's Claude path is deleted.
+
+## Open questions
+1. NODE_REGISTRY rows (compile_dag rejects unknown types): data-eng adds its own, and ml asks backend to add tf-finetune, tf-deploy and judge-eval. Proposal: each owner writes the Inputs and Outputs models, and backend adds the row (description, inputs_schema, outputs_schema, runtime cpu|gpu|api, hidden) in the same PR.
+2. The budget env names overlap platform's config section. Use these or platform's, but only one set.
+3. What makes a caller anonymous for ORCHAPOD_ANON_SCALE? There is no auth today, and user_id is a random uuid.
+4. report.md is cached in the DB rather than stored as an Artifact row, because Artifact.node_run_id is NOT NULL. Is that acceptable, or should it also upload to runs/{id}/agent/report.md?
+5. Control-plane spend (the planner, the reporter, /compare) is outside Run.cost_usd, so the day cap misses it. Should it be recorded as one `spend(day, usd)` row, or should /compare get its own cap with the D6 rate limits?

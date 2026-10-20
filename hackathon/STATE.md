@@ -3,7 +3,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 
 ## Next actions (in order)
 1. Hari: put NEBIUS_API_KEY and TAVILY_API_KEY in ~/src/orchapod-hack/.env (Human actions) — unblocks spikes 1–3 and every live check.
-2. Contracts session: platform, data-engineering, ml-engineering, backend propose their sections (read-only); orchestrator merges docs/contracts.md.
+2. Contracts v1 — DONE (docs/contracts.md; rulings R1–R15 at its end).
 3. Spike 4 (ml-engineering): vast.ai A100 80 GB, ≤ $6 / 3 h, destroyed after → DECISION: Lane B student.
 4. Ponytail audit — DONE; triaged into the board below (audit: hackathon/briefs/2026-10-20-ponytail-audit-report.md).
 5. Spikes 1–3 once keys land: platform (TF train → deploy → chat; Tavily extract), backend (Nemotron Super guided-JSON plan).
@@ -12,7 +12,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 ## Board (status ∈ TODO | IN_PROGRESS(<agent>, <branch>) | REVIEW | DONE | BLOCKED(<why>))
 ### orchestrator
 - [x] P0 D0 bootstrap: clone, clean-ups, harness, tooling, push — DONE
-- [ ] P0 D1 contracts session → docs/contracts.md merged — IN_PROGRESS(platform, data-engineering, ml-engineering, backend; read-only proposals)
+- [x] P0 D1 contracts session → docs/contracts.md v1 merged (299 lines, rulings R1–R15) — DONE
 - [ ] P0 D3+ merge twice a day; nightly real e2e; G2 call D5; freeze D7; submit D9 — TODO
 ### platform
 - [ ] P0 D1 spike 1 (now decisive): 50 rows → TF LoRA fine-tune meta-llama/Meta-Llama-3.1-8B-Instruct → try POST /v0/models deploy → one chat call; ALSO dump the raw job + checkpoint JSON and test whether adapter files can be downloaded — BLOCKED(NEBIUS_API_KEY)
@@ -58,7 +58,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D4 compare playground API; templates + golden-run fixture — TODO
 - [ ] P1 D5 Serverless Job runtime · P0 D6 public-demo hardening (anon read, rate limits, CORS, health) — TODO
 ### frontend
-- [ ] P0 D2 palette: hide hf-import, file-upload, s3-import, auto-label-cleanlab; Research/Fine-tune/Deploy/Evaluate forms — TODO
+- [ ] P0 D2 palette: hide hf-import, file-upload, s3-import, auto-label-cleanlab; Research/Fine-tune/Deploy/Evaluate forms; buildYamlFromGraph JSON.stringifies object inputs (R13) — TODO
 - [ ] P0 D2 /agent page: chat box, plan card (Edit/Run), live run view, report card — TODO
 - [ ] P0 D3 template gallery (3 templates, one-click Run); run page cost meter + retry node — TODO
 - [ ] P0 D4 eval view (win rate, W/T/L bars, judged samples); compare playground — TODO
@@ -66,6 +66,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D6 polish (empty, error, loading states; demo banner) · D7 screenshots — TODO
 ### qa
 - [x] P0 D1 CI on NebiusHackathon + repo ruff config so `make check` is green; synth-distilabel in the image matrix — DONE (e11757e)
+- [ ] P0 D2 CI pushes `:latest` on NebiusHackathon (contracts R4) — TODO
 - [ ] P2 requirements-dev.txt gets huggingface_hub + ruff==0.17.1 (drop the inline CI install tail); 58 pytest warnings (mostly datetime.utcnow) — TODO
 - [ ] P0 D2 provider contract tests from recorded responses + a $1/day real Token Factory call — TODO
 - [ ] P0 D3 scripts/e2e_demo.py (stub + real with --max-cost), nightly — TODO

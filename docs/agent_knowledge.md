@@ -14,15 +14,18 @@ Source of truth: `NODE_REGISTRY` in apps/api. Backend adds one row per node as i
 
 ## Constraints every plan must respect
 - Token Factory fine-tunes Llama 3.1 (8B, 70B), Llama 3.2 (1B, 3B), Llama 3.3 70B, Qwen3 and Qwen2.5, gpt-oss, DeepSeek, Gemma 4. It does **not** fine-tune Nemotron.
-- Serverless (per-token) LoRA deploy exists only for meta-llama/Llama-3.1-8B-Instruct and meta-llama/Llama-3.3-70B-Instruct. Any other base fine-tuned on Token Factory needs a dedicated endpoint or an AI Cloud Serverless Endpoint.
+- Deploying a Token Factory fine-tune: per-token LoRA deploy (POST /v0/models) is UNVERIFIED as of 2026-10-20. TF docs say Meta fine-tunes deploy only via Dedicated endpoints (custom weights there: beta, on request), and Llama-3.3-70B left TF serverless on 2026-08-31. Spike 1 tests /v0/models on meta-llama/Meta-Llama-3.1-8B-Instruct; otherwise serve the tuned model with vllm-serve + lora_adapter on an AI Cloud Serverless Endpoint (needs GPU quota).
 - Nemotron students train on AI Cloud (Serverless Job) and serve from a Serverless Endpoint.
 - Quantize: GGUF runs on CPU; AWQ needs a GPU job.
 - Every plan states a cost and time estimate. Caps: $3 per run, $15 per day, Serverless Job timeout 1 h.
 
 ## Expected plans for the canonical intents
-1. "Fine-tuned Llama 3B over US real-estate compliance": web-research (Tavily; Fair Housing Act, RESPA, TILA/TRID, state licensing, disclosure rules) → synth-distilabel grounded Q&A (Super) → data-prep → tf-finetune on meta-llama/Llama-3.2-3B-Instruct → deploy (3B has no serverless LoRA: serve from a Serverless Endpoint, or switch the base to Llama-3.1-8B-Instruct for per-token deploy; the plan card states the trade-off; default: OPEN DECISION) → judge-eval (Ultra, reference-guided, base vs tuned) → report.
+1. "Fine-tuned Llama 3B over US real-estate compliance": web-research (Tavily; Fair Housing Act, RESPA, TILA/TRID, state licensing, disclosure rules) → synth-distilabel grounded Q&A (Super) → data-prep → tf-finetune on meta-llama/Llama-3.2-3B-Instruct → deploy (path depends on spike 1: per-token LoRA if /v0/models accepts the base, else vllm-serve + lora_adapter; the plan card states which and why) → judge-eval (Ultra, reference-guided, base vs tuned) → report.
 2. "Synthetic data of movie likes, shares and subscribes": synth-distilabel structured mode (user_id, movie_title, action ∈ {like, share, subscribe}, timestamp, device; realistic distributions) → data-prep (validate, dedupe, stats) → dataset with download link and stats card. No training; the plan says so.
 3. "Quantize a model which is an expert in maths": pick from the maths shortlist (ml-engineering fills it on D4) and say why → hf-download → quantize (GGUF q4_k_m on CPU; AWQ via Serverless Job when GPU quota exists) → quick eval (50 GSM8K-style items, exact match, plus the Ultra judge on 20) → artifact and report.
+
+## Other prices
+- GPU-hour: gpu-h100-sxm $4.50, gpu-l40s-a $1.82 (nebius.com/prices, 2026-10-20). Tavily: $0.008 per credit. Fine-tune $ per trained token: from spike 1.
 
 ## Other services
 - Tavily (TAVILY_API_KEY): search(query, search_depth="advanced", max_results) and extract(urls). Free tier: 1,000 credits/month.

@@ -1,20 +1,299 @@
 # Contracts (change here first; every agent reads this)
-## Node I/O
-- Inputs: ORCHAPOD_NODE_INPUTS JSON; outputs: io.write_output(name, path, kind, metadata); every node also writes cost.json {provider, model, in_tokens, out_tokens, usd} and metrics.json.
-- Runtimes: cpu (local Docker), gpu (Nebius Serverless Job), api (CPU container that only calls APIs: tf-finetune, tf-deploy, judge-eval, serverless-endpoint).
-- Artifact URIs: r2://<bucket>/runs/{run_id}/{node_id}/{name} (MinIO locally, Nebius Object Storage on Nebius).
-## New nodes (inputs → outputs)
-- web-research: seed_urls | query, max_pages → corpus.jsonl
-- synth-distilabel (grounded + structured modes): corpus | schema, n_rows, teacher_model → dataset.jsonl, cost_summary.json
-- tf-finetune: train_jsonl, val_jsonl, base_model, epochs, lora → job_id, checkpoint_id, loss_curve.json
-- tf-deploy: job_id, checkpoint_id, base_model → model_name
-- judge-eval: test_jsonl, base_model_ref, tuned_model_ref, judge_model → eval_summary.json (win/tie/loss, per-sample verdicts)
-- serverless-train / serverless-endpoint (Lane B): see platform provider interface
-## Provider interfaces
-- TokenFactory: chat(), stream_chat(), files.create(), fine_tuning.create/poll/checkpoints(), lora.deploy()/status()/delete()
-- Tavily: search(), extract()
-- NebiusServerless: jobs.create/get/cancel/delete(), endpoints.create/get/delete(); ObjectStorage: put/get/list
-## Run state machine
-PENDING → RUNNING → (per node: RUNNING → SUCCEEDED | FAILED) → SUCCEEDED | FAILED | CANCELLED; retry-node re-runs one failed node idempotently.
-## Agent API
-POST /agent/plan, POST /agent/run, GET /agent/runs/{id}/report — JSON shapes TBD by backend on D2, reviewed by frontend.
+Version 1 · 2026-10-20 · merged by the orchestrator from the platform, data-engineering, ml-engineering and backend proposals (hackathon/briefs/2026-10-20-contracts-*.md). "wins:" marks where code, the old skeleton or a peer proposal disagreed. Rulings on every open question are at the end and override the sections above them. Change this file in its own commit before code that depends on the change.
+
+Contents: Node SDK · Provider interfaces · Config · Data nodes · ML nodes · Run state machine · Run control API · Budget guard · Events · Agent API · Rulings
+
+## Node SDK (packages/sdk-py/orchapod; adds to Node I/O)
+- One SDK: containers COPY packages/sdk-py/orchapod. containers/synth-distilabel/sdk/ is a vendored copy and is deleted.
+- Executor env adds `ORCHAPOD_INTERNAL_SECRET`, `ORCHAPOD_MAX_COST_USD`, `STUB`, `TAVILY_API_KEY`, `NEBIUS_BASE_URL`, `NEBIUS_PROJECT_ID`, `NEBIUS_IAM_TOKEN`, `ORCHAPOD_ENDPOINT_TOKEN` and `ORCHAPOD_R2_REGION`; it drops `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` and `CLOUDFLARE_TUNNEL_TOKEN`.
+- URI: `r2://${ORCHAPOD_R2_BUCKET}/runs/{run_id}/{node_id}/{name}` (skeleton wins; today the SDK hardcodes `orchapod-artifacts`). Output names match `^[a-z][a-z0-9_]*$`, because refs split on dots.
+- `io.write_output(name, path, kind, metadata)` is the only output call; it uploads a file or directory. Kind `model` is reserved for weights, adapters and `model_ref`; ids such as `job` use `metrics`.
+- Cost: call `cost.add(provider, model, in_tokens=0, out_tokens=0, usd=None, calls=1, **extra)` once per billed call or batch; it aggregates per (provider, model). With `usd=None` it prices from `cost.PRICES`, the one price table (per 1M tokens in/out, per Tavily credit, per fine-tune token, per GPU hour). Platform supplies the numbers, and platform's clients and the control plane import the same table. Clients report usage through `on_usage=cost.add`, positionally, and Tavily adds `credits=`.
+- At exit (normal, exception or SIGTERM) the SDK writes `cost_json` (kind metrics) in the envelope data-eng and ml agreed: `{"usd": float, "items": [{"provider": "token_factory"|"tavily"|"nebius_serverless", "model": str, "calls": int, "in_tokens": int, "out_tokens": int, "usd": float}]}`; Tavily items add `credits` and Serverless items add `gpu_hours`. Its metadata is `{"usd": <total>}`, which the control plane adds to Run.cost_usd before emitting `run_cost`.
+- Metrics: `io.write_metrics(dict)` writes `metrics_json` (kind metrics). `stub` is filled in from `STUB`. The dict also travels as metadata when it is ≤ 16 KB (otherwise metadata is `{"truncated": true}` and the file keeps everything), so the summary and the report read it from the DB. Each node's section defines its keys.
+- Logs: `log.info|warn|error` → stdout + POST /internal/log. `log.progress(step, total, loss=None, extra=None)` → POST /internal/progress; today it posts a PROGRESS log line, so `progress` events never fire. Uncaught exceptions are logged as ERROR.
+- Every /internal call sends `X-Orchapod-Secret`.
+  - `ORCHAPOD_INTERNAL_SECRET` defaults to a random value generated when the API starts, so /internal/* is never open; set it explicitly when running more than one worker.
+  - Today /internal/* is open when the secret is unset, and setting it makes every node fail with 403.
+  - An open /internal/ttl would let anyone register a URL that /compare then trusts with ORCHAPOD_ENDPOINT_TOKEN.
+- Output registration retries 3 times (after 1, 2 and 4 s) and then raises; log and progress calls never raise.
+- `STUB=1`: deterministic outputs and no network beyond the control plane and object storage. Synth's `STUB_TEACHER` is folded into `STUB`.
+
+## Provider interfaces (owner: platform; code in packages/providers/)
+### Shared rules
+- One sync client per service, httpx only (already pinned in apps/api/requirements.txt): `tokenfactory.py`, `tavily.py`, `nebius.py`. One import path everywhere: `from packages.providers.tokenfactory import TokenFactory`. Node images add `COPY packages/providers /app/packages/providers` and `pip install httpx`, next to the SDK they already copy. Nodes never reach Token Factory or Tavily any other way (no openai or tavily-python SDK, no urllib), so retries, $, key pairing and STUB are written once. wins: platform over data-eng's direct openai-SDK calls.
+- The API uses the same clients: `await asyncio.to_thread(tf.chat, ...)` and `StreamingResponse(tf.stream_chat(...))` (Starlette iterates sync generators in its threadpool). apps/api/services/nebius_token_factory.py is deleted (nothing imports it); apps/api/services/tavily.py is not created (only web-research calls Tavily).
+- Constructors: `TokenFactory(api_key=None, *, on_usage=None, http=None)`, same for `Tavily`. `api_key` defaults to the env var. `http` is an `httpx.Client`; tests pass one built on `httpx.MockTransport` that replays recorded responses.
+- `on_usage(provider, model, in_tokens=0, out_tokens=0, usd=None, **extra)` runs after every billed call, matching the SDK's `cost.add`. Nodes pass `on_usage=cost.add`, so every call is recorded and `ORCHAPOD_MAX_COST_USD` can stop a node mid-loop. Provider names are `token_factory`, `tavily` and `nebius_serverless`.
+- `STUB=1`: no network, same shapes, deterministic per request (h = first 8 hex of sha256 of the request). Nodes may short-circuit earlier with their own fixed outputs. chat: text `stub-<h>`; `parsed` = a minimal instance of `json_schema` (first enum value, "stub-<h>", 0, false, one-item arrays); 0 tokens, $0. Fine-tuning: ids `*-stub-<h>`, jobs `succeeded` at once with two checkpoints (step_number 1 and 2, valid_loss 1.0 then 0.5); lora status `active`. Tavily: `max_results` hits, or one page per URL, at `https://example.com/stub/<h>/<i>` with ≥ 400 chars of text. Serverless: jobs `COMPLETED`, endpoints `RUNNING` at `http://stub.invalid`. Without STUB, a missing key → `ProviderError` kind `auth` at the first call.
+
+### TokenFactory — packages/providers/tokenfactory.py
+- Base `NEBIUS_BASE_URL` (default https://api.tokenfactory.nebius.com/v1), key `NEBIUS_API_KEY`. wins: skeleton; four files still call the legacy https://api.studio.nebius.ai/v1.
+- Ids: `SUPER` = nvidia/nemotron-3-super-120b-a12b, `ULTRA` = nvidia/Nemotron-3-Ultra-550b-a55b, `LIGHTNING` = nvidia/Nemotron-3_5-Lightning, `NANO` = nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B.
+- `chat(messages, model=SUPER, *, temperature=0.0, max_tokens=1024, json_schema=None, thinking=None, base_url=None, api_key=None, base_model=None, **params) -> dict`
+  - Returns `{"text": str, "parsed": dict | list | None, "model": str, "in_tokens": int, "out_tokens": int, "usd": float, "finish_reason": str}`.
+  - `json_schema` → `response_format={"type": "json_schema", "json_schema": {"name": "output", "schema": json_schema, "strict": true}}`, TF's documented form (not `extra_body.guided_json`). `parsed = json.loads(text)`. Invalid JSON → `ProviderError` kind `bad_output` naming finish_reason, never retried: a temperature-0 retry repeats the truncation, so raise max_tokens or set thinking=False.
+  - `thinking=False` → `chat_template_kwargs={"enable_thinking": false}`; None keeps the model's default (on for Nemotron 3). `**params` go into the request body verbatim (top_p, stop, seed, …).
+  - ModelRef targets: `base_url` + `api_key` (+ `base_model`) send the same call, with the same retries, to any OpenAI-compatible URL. Off Token Factory, usd = 0 and on_usage is skipped (GPU time is billed by the hour). On Token Factory, usd = in × p_in + out × p_out per 1M from `orchapod.cost.PRICES` by `model`, else by `base_model` (LoRA names). No price → `ProviderError` kind `bad_request` before the call, so nothing is spent unpriced.
+  - Pairing rule, enforced here at the last hop as well as by backend and judge-eval: when the key equals `NEBIUS_API_KEY` and base_url is not `NEBIUS_BASE_URL`, the client sends nothing and raises `ProviderError` kind `auth`.
+- `stream_chat(<chat args>) -> Iterator[str]` yields content deltas. It sends `stream_options={"include_usage": true}` and calls on_usage after the last chunk; retries happen only before the first chunk.
+- `files.create(path, purpose="fine-tune") -> str` (file id) · `files.content(file_id) -> bytes` (for checkpoint `result_files`).
+- `fine_tuning.create(model, training_file, validation_file=None, hyperparameters=None, suffix=None, seed=None) -> dict` (the TF job). Hyperparameters keep TF's names and defaults: lora (false, so set true), n_epochs (3), batch_size (8), learning_rate (1e-5), lora_r (8), lora_alpha (8), lora_dropout (0), packing (true), context_length (8192), warmup_ratio, weight_decay, max_grad_norm. wins: TF's OpenAPI over ORCHESTRATOR §7's `learning_rate_multiplier`, which TF does not have.
+- `fine_tuning.get(job_id) -> dict`: `status` ∈ validating_files | queued | running | succeeded | failed | cancelled, `error {code, message}`, `trained_tokens`, `trained_steps`, `total_steps`, `estimated_finish`. Poll at least 15 s apart (TF guidance).
+- `fine_tuning.events(job_id) -> list[{created_at, level: info|warn|error, message}]` · `fine_tuning.checkpoints(job_id) -> list[{id, step_number, metrics {train_loss, valid_loss, …}, result_files}]` · `fine_tuning.best_checkpoint(job_id) -> dict` (min valid_loss, else max step_number) · `fine_tuning.cancel(job_id) -> dict` · `fine_tuning.list(limit=20) -> list[dict]` (`GET /v1/fine_tuning/jobs`; finds a job by its `suffix` after a lost create response). TF objects come back as TF sends them: `step_number`, not `step`.
+- `lora.deploy(name, base_model, source) -> str` = `POST /v0/models {name, base_model, source: "<job_id>:<checkpoint_id>"}`; it returns the model id to chat with, which may differ from `name`. `lora.status(name) -> "validating" | "active" | "error" | "deleted"` · `lora.delete(name)`. Unverified (open question 1), so the failure path is explicit: 404/405 (no such route) or a 400/422 that rejects the base → `ProviderError` kind `unsupported`, message "Token Factory has no per-token LoRA deploy for <base_model> (<status>): serve lora_adapter with vllm-serve". tf-deploy exits 1 with that line and deletes nothing it did not create.
+
+### Tavily — packages/providers/tavily.py (REST https://api.tavily.com, `TAVILY_API_KEY`)
+- `search(query, *, search_depth="advanced", max_results=10, include_raw_content=False, include_domains=None, **params) -> dict`: Tavily's JSON, `results[{url, title, content, score, raw_content?}]`.
+- `extract(urls, *, extract_depth="basic", **params) -> dict`: `results[{url, raw_content}]`, `failed_results[{url, error}]`. More than 20 URLs go out in batches of 20 and are merged.
+- Both send `include_usage: true` and call on_usage(provider="tavily", model="search"|"extract", credits=usage.credits, usd=credits × the PRICES credit price), which is data-eng's `cost.add` call. Credits: search 1 (basic) or 2 (advanced); extract 1 or 2 per 5 successful URLs; failed URLs are free. wins: raw REST over data-eng's tavily-python: no new dependency, one retry/usage/STUB path.
+
+### NebiusServerless — packages/providers/nebius.py (REST https://api.nebius.cloud/ai/v1, Bearer IAM token)
+- A rewrite: today's file targets the legacy Compute API (folderId, zoneId, serial port) and has never provisioned a VM. Parent: `NEBIUS_PROJECT_ID`. Auth: `NEBIUS_IAM_TOKEN`; when it is empty or a call gets 401, the client runs `nebius iam get-access-token` once (if the CLI is installed) and retries.
+- `jobs.create(name, image, *, args="", env: dict[str, str], platform, preset, volumes=()) -> str` (job id; `spec.timeout` fixed at "3600s", the CLAUDE.md cap and Nebius's minimum; the default would be 24 h) · `jobs.get(id) -> {id, state, code, message}` · `jobs.cancel(id)` · `jobs.delete(id)`.
+- Job states: PROVISIONING, STARTING, IMAGE_PULLING, RUNNING, CANCELLING, DELETING; terminal: COMPLETED, FAILED, CANCELLED, ERROR. Codes include NotEnoughResources (no capacity within 30 min), TimeoutExceeded, ContainerFailed, StartFailed.
+- `endpoints.create(name, image, *, args="", env: dict[str, str], platform, preset, port=8000, auth_token, volumes=()) -> str` (endpoint id; sends one HTTP port, `authToken`, a 250 GiB NETWORK_SSD disk, 16 GiB shm) · `endpoints.get(id) -> {id, state, url, code, message}` (`url` = the first https public endpoint, None until RUNNING) · `endpoints.delete(id)`. States: PROVISIONING, STARTING, IMAGE_PULLING, RUNNING, STOPPING, STOPPED, DELETING, ERROR.
+- `volumes` take the CLI form `"s3://<bucket>:<container_path>:ro|rw"`; the client fills `s3Config {endpoint, region, credentials}` from ORCHAPOD_R2_*. Env and keys travel as plain `environmentVariables` (the project is private); MysteryBox is out of scope.
+- `NebiusProvider` (GPUProvider, name "nebius") runs gpu nodes as Jobs. `provision` → jobs.create, mapping GPUSpec H100 → gpu-h100-sxm / 1gpu-16vcpu-200gb and L40S → gpu-l40s-a / 1gpu-8vcpu-32gb. `wait` polls every 15 s: COMPLETED → 0; any other terminal state → log code + message, return 1. `terminate` → cancel, then delete. `stream_logs` yields nothing, because Jobs have no REST logs: nodes log through the SDK, so ORCHAPOD_CONTROL_URL must be a public https URL. `quote` → the PRICES GPU-hour rate.
+
+### ObjectStorage
+- No new class. The SDK's io (put, get, list over boto3) and apps/api/services/storage.py (presigned URLs) already speak S3. On Nebius: ORCHAPOD_R2_ENDPOINT=https://storage.eu-north1.nebius.cloud and ORCHAPOD_R2_REGION=eu-north1, used as boto3 `region_name` (today hard-coded to "auto", an R2 convention) and in Job/Endpoint `s3Config`, where region is required. wins: code over the skeleton's put/get/list client; the `r2://` scheme stays.
+
+### Errors and retries (every client)
+- One exception: `packages.providers.base.ProviderError(provider, kind, status, message)`, kind ∈ rate_limit | quota | auth | bad_request | bad_output | unsupported | server. `str()` = "<provider> <kind> <status>: <message>", which the node logs as its last ERROR line.
+- Retried inside the client, at most 3 times: 429 (sleep Retry-After, capped at 60 s), 500/502/503/504, timeouts and connection errors, backing off 1, 2, 4 s plus up to 1 s of jitter. Still failing → rate_limit or server.
+- Creates (files.create, fine_tuning.create, lora.deploy, jobs.create, endpoints.create) retry only on 429 and connect errors, never after a 5xx or read timeout, so a lost response never starts a second paid job.
+- Not retried: 400/404/409/422 → bad_request; 401/403 → auth (after Nebius's one IAM refresh); 402, Tavily 432/433 and Nebius NotEnoughResources → quota.
+- Timeouts: connect 10 s, read 120 s.
+
+### Prices — numbers for `orchapod.cost.PRICES` (backend's SDK table, settled; synth-distilabel's stale table is deleted)
+- Tokens, $ per 1M in/out: Super 0.30/0.90, Ultra 1.00/3.00, Lightning 0.06/0.24; Nano and meta-llama/Llama-3.1-8B-Instruct come from spike 1 (GET /v1/models?verbose=true returns `pricing`). Tavily: $0.008 per credit. Fine-tune $ per trained token: from spike 1; tf-finetune multiplies it by `trained_tokens`. GPU-hour: gpu-h100-sxm 4.50, gpu-l40s-a 1.82 (nebius.com/prices on 2026-10-20; nebius.py's 2.49 for H100 is stale and would under-count).
+- Clients import the table (`from orchapod.cost import PRICES`): images already copy the SDK to /app/orchapod, and the API adds packages/sdk-py to its path, as pytest.ini already does.
+
+### Images, LocalDocker, provider selection
+- Image = `f"{ORCHAPOD_IMAGE_PREFIX}/{node_type}:latest"`, prefix default `ghcr.io/bangadpurva`, where CI pushes. CI adds the `:latest` tag on NebiusHackathon and builds every `containers/*/` (synth-distilabel is missing today). wins: CI's registry over the executor's `ghcr.io/orchapod`, which does not exist; Serverless Jobs must pull the image anonymously.
+- LocalDockerProvider runs `orchapod/<node_type>:dev` if that image exists locally, else the full ref (docker pulls it). `terminate` = `docker stop -t 30` (SIGTERM, 30 s grace, then SIGKILL), then `docker rm -f`.
+- provider_selector registers `nebius` when NEBIUS_PROJECT_ID is set and `vastai` when VASTAI_API_KEY is set. RunPod and vastai.py's duplicate registry (PROVIDERS, register_providers, pick_provider) are deleted. `ResourceSpec.provider_pref` defaults to ["nebius"], so a gpu node never lands on vast.ai silently. `get_providers()` stays for the plan validator.
+
+## Config (every env var, with its default)
+API code reads these through `apps/api/config.py` (`settings`, one pydantic-settings object, already installed, so defaults live in one place); clients and containers read os.environ. `.env.example` lists every variable below with where to get it.
+- Token Factory: NEBIUS_API_KEY (none), NEBIUS_BASE_URL (https://api.tokenfactory.nebius.com/v1). Tavily: TAVILY_API_KEY (none).
+- Nebius AI Cloud: NEBIUS_PROJECT_ID (none; gpu nodes need it), NEBIUS_IAM_TOKEN (none; CLI fallback), ORCHAPOD_ENDPOINT_TOKEN (none; the one static bearer of our Serverless Endpoints, from `openssl rand -hex 32`).
+- Object storage (defaults = the compose MinIO): ORCHAPOD_R2_ENDPOINT (http://localhost:9000), ORCHAPOD_R2_REGION (auto), ORCHAPOD_R2_ACCESS_KEY (orchapod), ORCHAPOD_R2_SECRET_KEY (orchapod_dev), ORCHAPOD_R2_BUCKET (orchapod-artifacts).
+- Images: ORCHAPOD_IMAGE_PREFIX (ghcr.io/bangadpurva).
+- Control plane: DATABASE_URL (sqlite+aiosqlite:///./orchapod_dev.db; .env.example sets postgresql+asyncpg://orchapod:orchapod_dev@localhost:5432/orchapod to match compose, replacing today's postgres:orchapod), REDIS_URL (redis://localhost:6379), ORCHAPOD_CONTROL_URL (http://localhost:8001; a public https URL whenever gpu nodes run), ORCHAPOD_INTERNAL_SECRET (empty = webhooks open; required once public).
+- Budget (backend's names, one set): ORCHAPOD_MAX_RUN_USD (3), ORCHAPOD_MAX_DAY_USD (15), ORCHAPOD_KILL_SWITCH (0), ORCHAPOD_ANON_SCALE (0.1), ORCHAPOD_NODE_TIMEOUT_S (5400). The executor injects ORCHAPOD_MAX_COST_USD per node.
+- Nodes: STUB (unset), HF_TOKEN (none; gated models). Optional: VASTAI_API_KEY (spikes only), RESEND_API_KEY, ORCHAPOD_FROM_EMAIL (noreply@orchapod.ai), ORCHAPOD_ALERT_EMAIL.
+- The executor forwards exactly these to containers: NEBIUS_API_KEY, NEBIUS_BASE_URL, TAVILY_API_KEY, HF_TOKEN, NEBIUS_PROJECT_ID, NEBIUS_IAM_TOKEN, ORCHAPOD_ENDPOINT_TOKEN, ORCHAPOD_R2_* (including REGION), ORCHAPOD_CONTROL_URL, ORCHAPOD_INTERNAL_SECRET, ORCHAPOD_MAX_COST_USD, STUB, and backend's ORCHAPOD_PREVIOUS_OUTPUTS.
+- Removed from code, compose and .env.example: ANTHROPIC_API_KEY, OPENAI_API_KEY, JUDGE_MODEL (now judge-eval's `judge_model` input), NEBIUS_FOLDER_ID, NEBIUS_SUBNET_ID, RUNPOD_API_KEY, GITHUB_ORG (→ ORCHAPOD_IMAGE_PREFIX), CLOUDFLARE_TUNNEL_TOKEN. Compose's `api` service publishes 8001 (8000 belongs to complychip2).
+
+## Data nodes: web-research → synth-distilabel → data-prep (owner: data-engineering)
+### Shared rules
+- **Runtime `cpu`** (LocalDocker). These nodes only call APIs and finish in minutes.
+- **Build.** The image name is the node type, built from the repo root with `docker build -t orchapod/<node>:dev -f containers/<node>/Dockerfile .`; the Dockerfile does `COPY packages/sdk-py/orchapod /app/orchapod`, `COPY packages/providers /app/packages/providers`, `pip install httpx` and `COPY containers/<node>/run.py /app/run.py`. The repo root wins over data-prep's `COPY run.py` and synth's vendored `sdk/` (which is deleted), because CI, build-and-push-containers.sh and local_docker.py all build from `.`.
+- **Outputs.** Names match `^[a-z][a-z0-9_]*$`, because refs split on dots, so the skeleton's `corpus.jsonl` and `dataset.jsonl` become `corpus` and `dataset`.
+  - The R2 key is the bare name, so every dataset artifact is UTF-8 JSONL whatever it is called. Every declared output is always written, empty if need be, so consumers never fail with `unresolved ref`.
+- **API calls go only through platform's clients** (platform section): `TokenFactory(on_usage=cost.add)` and `Tavily(on_usage=cost.add)` from `packages.providers`, with no openai SDK, tavily-python or urllib.
+  - `teacher_kind`, the OpenAI/Anthropic code paths and synth's legacy api.studio.nebius.ai URL are deleted.
+  - Generation calls `tf.chat(messages, model, json_schema=…, thinking=False)` and reads `parsed`. `NEBIUS_BASE_URL`, retries, prices (`orchapod.cost.PRICES`) and STUB all live in the client.
+- **Cost and metrics go through the SDK** (backend section). `on_usage=cost.add` records every billed call (Token Factory tokens, Tavily credits), and the SDK writes `cost_json` at exit.
+  - Each node calls `io.write_metrics(dict)` once with the keys below, and the SDK fills in `stub`.
+  - Together these replace synth's `cost_summary_json`, data-prep's `stats_json` (nothing reads either) and synth's stale price table ($0.18/$0.60).
+- **`STUB=1`.** Nodes run their normal path against the clients' deterministic stubs (minimal schema instances, Tavily pages of ≥ 400 chars), so outputs keep their shapes with `usd: 0`. data-prep skips its quality filter: a stub score of 0 would drop every row.
+  - Without STUB, a missing key is fatal. Today synth silently stubs when `NEBIUS_API_KEY` is "" and reads `STUB_TEACHER`; the contract wins.
+- **Errors.** A fatal error is `log.error("<reason>")` then exit 1; the executor shows that last ERROR line.
+  - `ProviderError` kinds `auth`, `bad_request` (including a model with no price) and `quota` are fatal.
+  - `rate_limit`, `server` and `bad_output` (raised after the client's retries) are counted in `failed_calls` and skipped.
+- **Progress.** Call `log.progress(done, total)` once per batch.
+
+### web-research (new: `NodeType.WEB_RESEARCH = "web-research"`, containers/web-research/; models and registry row in packages/workflow_schema/models.py)
+- Inputs (`WebResearchInputs`):
+  - `queries: list[str] = []`: each one becomes `search(q, search_depth="advanced", include_raw_content=True, max_results=⌈max_pages / len(queries)⌉)`. The skeleton's single `query` becomes this list, because intent #1 spans several topics.
+  - `seed_urls: list[str] = []`: passed to `extract(urls)`. At least one of `queries` and `seed_urls` is required (validator).
+  - `max_pages: int = 20` (1–100): caps pages extracted, and with them credits.
+- Output `corpus` (`WebResearchOutputs`): one `{"url": str, "text": str}` per line.
+  - Passages are 200–2,000 chars, split at paragraph breaks; shorter fragments (navigation, banners) are dropped.
+  - URLs are normalised (no fragment, no trailing slash) and deduped. Exact-duplicate passages are dropped.
+- metrics: `{queries, urls, urls_failed, passages, duplicates_dropped}`.
+- Errors: a failed URL (Tavily `failed_results`) is skipped and counted. 0 passages is fatal.
+
+### synth-distilabel (adds two templates; existing input names stay)
+- Inputs (`SynthDistilabelInputs`):
+  - `pipeline_template`: "self-instruct" | "evol-instruct" | "magpie" | "grounded" | "structured", default "self-instruct". This is the only mode selector; there is no `mode` input.
+  - `n_samples: int = 1000` (≥ 10). It wins over the skeleton's `n_rows`, because the schema, canvas defaults and README already use it.
+  - Unchanged: `teacher_model` (default `nvidia/nemotron-3-super-120b-a12b`), `seed_prompts`, `temperature` and `max_tokens`.
+  - `corpus: str | None`: the r2 URI of a web-research corpus. Required for grounded. Optional for structured, where it supplies real values (e.g. movie titles).
+  - `row_schema: dict | str | None`: the JSON Schema of one row; a str is parsed as JSON. Structured only. It is not named `schema`, which shadows `BaseModel.schema` (pydantic warns).
+  - `instructions: str = ""`: domain, audience and style hints for the teacher. For structured, the target value distributions.
+  - `max_usd: float = 1.0`: before each call, stop if its worst case (prompt + `max_tokens`) would push spend past min(`max_usd`, `ORCHAPOD_MAX_COST_USD`). The node writes what it has, exits 0 and sets `metrics.stopped = "max_usd"`, before the SDK's `BudgetExceeded` would fire.
+- Output `dataset` (`SynthDistilabelOutputs`), chat templates (self-instruct, evol-instruct, magpie, grounded):
+  - Row: `{"messages": [{"role": "user", "content": q}, {"role": "assistant", "content": a}], "context": str, "source_url": str}`. Only grounded rows have `context` and `source_url`. The old `_meta` key is dropped.
+  - The user turn is the question alone (closed-book). The passage lives only in `context`, which judge-eval passes to the judge.
+  - Grounded makes one pass over the corpus: one guided-JSON call per passage returns `{"pairs": [{"question": str, "answer": str}]}`, with k = min(5, ⌈n_samples / passages⌉) pairs. Answers are ≤ 3 sentences and answerable from the passage alone.
+- Structured template: one object per line matching `row_schema`, with no extra keys.
+  - Batches of ≤ 25 rows come from guided JSON `{"rows": [row]}`. Each row is checked with `jsonschema`; invalid rows are dropped and counted.
+  - Intent #2 schema: `{"type":"object","additionalProperties":false,"required":["user_id","movie_title","action","timestamp","device"],"properties":{"user_id":{"type":"string"},"movie_title":{"type":"string"},"action":{"enum":["like","share","subscribe"]},"timestamp":{"type":"string","format":"date-time"},"device":{"enum":["mobile","tv","web","tablet"]}}}`.
+- metrics: `{template, teacher_model, n_requested, n_rows, calls, failed_calls, invalid_rows, stopped}`. `stopped` is null, "max_usd" or "exhausted": the corpus ran out, or 3 batches in a row produced no valid row.
+- Errors: grounded without `corpus`, or structured without `row_schema`, fails the validator and is fatal. Per-call errors follow the shared rule. 0 rows is fatal.
+
+### data-prep (existing; adds a test split, dedupe, a quality filter, and structured and QA rows)
+- Inputs (`DataPrepInputs`):
+  - `dataset: str`: an r2:// URI, `hf://<id>` or `<org>/<name>`.
+    - Today r2:// URIs reach the HF loader (`or` binds looser than `and`), and files without an extension are rejected. Fix: test r2:// first, and read JSONL unless the name ends in .csv.
+  - New `hf_config: str | None = None` and `hf_split: str = "train"` (hard-coded today). Both are passed to `datasets.load_dataset`, so slices like `"test[:50]"` work.
+  - `format`: "chatml" | "alpaca" | "sharegpt" | "qa" | "structured", default "chatml". `qa` maps `question` → user and `answer` → assistant verbatim. `structured` keeps rows as they are.
+  - `train_split: float = 0.9`. The default stays, because two templates set 0.9 and read `eval_jsonl` as their eval set.
+  - New `test_split: float = 0.0`. Eval gets 1 − train − test, and train + test ≤ 1 (validator). Plans that include judge-eval use 0.8 / 0.1.
+  - `quality_filter: bool = False` (chat formats only): Lightning scores each row 1–5 via guided JSON `{"score": int}`, and rows below 3 are dropped.
+- Steps: load → convert and validate (bad rows dropped) → exact dedupe on canonical JSON → near dedupe → quality filter → deterministic split (seed 42), stratified by `source_url` when present.
+  - Near dedupe applies to chat only: char 5-gram Jaccard ≥ 0.9 on the normalised first user turn.
+- Outputs (`DataPrepOutputs`):
+  - `dataset`: every cleaned row, extra keys kept. This is the download link for intent #2 and the GSM8K eval set for intent #3.
+  - `train_jsonl` and `eval_jsonl` (validation; existing names kept). Chat rows are reduced to `{"messages": [...]}` and must pass the TF rules; failing rows are dropped. Structured rows are written unchanged.
+    - TF rules: roles are in {system, user, assistant}, with system only first; there is at least one user turn; the last turn is the assistant's; every content is a non-empty string.
+  - `test_jsonl` (new): held out, keeps `context` and `source_url`.
+- Wiring (agreed with ml-engineering): tf-finetune `train_data`/`eval_data` ← `train_jsonl`/`eval_jsonl`; judge-eval `test_data` ← `test_jsonl`.
+- Intent #3 wiring: data-prep with `dataset: hf://openai/gsm8k`, `hf_config: main`, `hf_split: "test[:50]"`, `format: qa`; judge-eval `test_data` ← `dataset`.
+- metrics: these replace stats.json and keep its keys: `{total, train, eval, test, skipped, exact_dupes, near_dupes, quality_dropped, avg_length_chars, max_length_chars, fields}`.
+  - `fields` (structured only) gives per field `{distinct, nulls, top: [[value, count] ×≤10]}`; numeric and ISO-8601 fields add `min`/`max`. It feeds the intent #2 stats card, and with intent #2's 5 fields it stays under the SDK's 16 KB metadata cap.
+- Errors: 0 rows after cleaning is fatal.
+
+## ML nodes (owner: ml-engineering)
+### Conventions (all ML nodes)
+- Inputs by name via `io.read_inputs()`. Outputs go through `io.write_output(name, path, kind, metadata)`, which uploads a **file or directory** to `runs/{run_id}/{node_id}/{name}`; `${{ nodes.X.outputs.name }}` resolves to that r2 URI. Output names have no "." (`_resolve_ref` splits on it), and files carry no extension.
+- Scalars (job id, model name, endpoint URL) travel as one small JSON artifact (`job`, `model_ref`), with the same dict in `metadata`, so the API and UI read `Artifact.meta` and never fetch R2. Kinds: weights, adapters and refs are `model`, which auto-registers a Model row; `job`, `eval_summary` and cost/metrics are `metrics`. wins: code. `write_output` cannot take a bare string (vllm-serve's `endpoint_url` / `openai_api_key` calls crash in `_upload_to_r2`).
+- Directory artifacts (`hf_model`, `merged_model`, `lora_adapter`, `awq_model`) are key prefixes, read with `io.download_directory`. `io.download_input` fetches one object; quantize and vllm-serve `resolve_model` misuse it today.
+- Every node writes `cost_json` + `metrics_json` (kind=metrics). It records costs with backend's SDK `cost.add(provider, model, in_tokens, out_tokens, usd=None, calls=1, **extra)`, and the SDK writes the file at exit. Metrics go through `io.write_metrics(dict)`. The shape is the one agreed with data-eng: `{"usd", "items":[{"provider","model","calls","in_tokens","out_tokens","usd"}]}`. TF items use provider `token_factory`. GPU items use `nebius_serverless` with `model`=`<platform>/<preset>` and extra `gpu_hours`. Calls to our own endpoints or llama.cpp are unpaid and not listed. metrics always has `"stub": bool`.
+- `STUB=1`: no TF / HF / Nebius / GPU calls. Outputs are fixed: job `stub-job`, a 2-point loss curve, canned answers, a 4-byte `GGUF` file, usd 0. SDK uploads still run (MinIO).
+- No secrets in inputs, because inputs are stored in the DB and YAML and shown in the UI. The `hf_token` inputs are removed. Env read by ML nodes: NEBIUS_API_KEY, NEBIUS_BASE_URL (the TF base; default https://api.tokenfactory.nebius.com/v1), HF_TOKEN (gated models), ORCHAPOD_ENDPOINT_TOKEN (new: the bearer for our endpoints), ORCHAPOD_R2_BUCKET (vllm-serve's volume), NEBIUS_PROJECT_ID and NEBIUS_IAM_TOKEN (for endpoints), and STUB.
+- Types: ids, names, URIs and text are str. `*_loss`, `win_rate`, `consistency`, `usd`, `gpu_hours` and `temperature` are float. Counts, steps, tokens, `i` and `*_min` are int. `*_correct` is bool|null. Inputs are coerced as they are today (`int(inputs.get(...))`).
+- Runtimes: tf-finetune, tf-deploy, judge-eval and vllm-serve are `api`, which the executor must run like `cpu` (today anything not `cpu` goes to a GPU provider). hf-download and quantize are `cpu`. unsloth-train is `gpu`, a Nebius Serverless Job behind the GPUProvider interface.
+- Errors: exit non-zero after one readable `log.error`. For a provider failure that line is `str(ProviderError)`, "<provider> <kind> <status>: <message>". On failure, timeout or cancel, a `finally` block cancels or deletes the remote thing the node created: a TF job, a LoRA deploy, or an endpoint that is not yet registered. Cancel reaches the node as SIGTERM, which the SDK raises as SystemExit(143); terminate waits 30 s before it kills. The node's own timeouts fire before the executor's backstop, ORCHAPOD_NODE_TIMEOUT_S=5400.
+
+### ModelRef — the one format judge-eval and the compare playground accept
+`{"base_url": str, "model": str, "api_key_env": str, "base_model": str|null}`: an OpenAI-compatible target. `api_key_env` names an env var and never holds a secret. Callers go through platform's client, `TokenFactory().chat(messages, model, base_url=, api_key=os.environ.get(api_key_env), base_model=, json_schema=)` (`packages.providers.tokenfactory`). It returns `{text, parsed, model, in_tokens, out_tokens, usd, finish_reason}`, with usd 0 off Token Factory. Prices come from `orchapod.cost.PRICES`, looked up by `model` and then `base_model`.
+- TF base: `{"base_url": "https://api.tokenfactory.nebius.com/v1", "model": "meta-llama/Llama-3.1-8B-Instruct", "api_key_env": "NEBIUS_API_KEY", "base_model": null}`
+- TF LoRA (from tf-deploy): same base_url and key; `model` = the id lora.deploy returned; `base_model` = its base.
+- Serverless Endpoint (from vllm-serve): `{"base_url": "<endpoint https URL>/v1", "model": "<served name>", "api_key_env": "ORCHAPOD_ENDPOINT_TOKEN", "base_model": "<base id>"}`. ORCHAPOD_ENDPOINT_TOKEN is one static bearer we pass as each endpoint's `--auth token --token`.
+- An input may be: the JSON object; a bare string, meaning a TF model id (base or LoRA name); or an `r2://` URI to a `model_ref` artifact (JSON). judge-eval also accepts an `r2://` URI to a GGUF file (magic `GGUF`), which it serves locally with llama.cpp `llama-server` as `{"base_url": "http://127.0.0.1:<port>/v1", ...}`.
+- Keys never reach the browser. The compare API resolves `api_key_env` server-side and streams; TryItChat's direct browser call with `apiKey` moves behind it.
+- Allowed key/URL pairs. Plans come from the LLM or from public users, and a mismatched pair would send our key to whoever owns that URL. Backend enforces these in /compare and the plan validator, and judge-eval refuses anything else.
+  - `NEBIUS_API_KEY`: only with base_url == `$NEBIUS_BASE_URL`.
+  - `ORCHAPOD_ENDPOINT_TOKEN`: only in a ref read from a vllm-serve `runs/…/model_ref` or `base_model_ref` artifact, never an inline one. Backend also checks the endpoint was registered via /internal/ttl.
+  - `""`: only for judge-eval's own llama-server.
+  - Anything else → exit 1 "refused ModelRef <input>".
+
+### tf-finetune (api) — Lane A train
+- in: `model` (meta-llama/Llama-3.1-8B-Instruct), `train_data`, `eval_data` ("" or an empty file = no validation file, because data-prep always writes `eval_jsonl`), `n_epochs` (2), `hyperparameters` ({}, TF names verbatim: batch_size, learning_rate, lora_r, lora_alpha, lora_dropout, packing, context_length, warmup_ratio, weight_decay, max_grad_norm; merged over `{"lora": true, "n_epochs": n_epochs}`), `timeout_min` (60).
+- out: `job` = `{"job_id","model","status","checkpoint_id","checkpoint_step","train_loss","valid_loss","trained_tokens"}`. `lora_adapter` (dir) = the chosen checkpoint's `result_files`, PEFT, metadata `{format: peft, base_model}`. metrics_json adds `loss_curve: [{step, train_loss, valid_loss}]` (one row per checkpoint) and `wall_s`. cost = trained_tokens × the TF fine-tune price.
+- flow: files.create (train, val) → fine_tuning.create(model, training_file, validation_file, hyperparameters, suffix=`<run_id[:8]>-<node_id>`); the suffix lets us find a job whose create response was lost. Read the id from `job["id"]`. Poll fine_tuning.get every 15 s until succeeded | failed | cancelled, sending `trained_steps`/`total_steps` → `log.progress` and events → log. Then fine_tuning.best_checkpoint (minimum `valid_loss`, else the last) → files.content(result_files) → `lora_adapter`. `loss_curve.step` is the checkpoint's `step_number`. failed or cancelled → exit 1 with `error.message`. Timeout → cancel the job, exit 1. retry-node starts a new job.
+- wins: code. The input names copy unsloth-train (`model`, `train_data`, `eval_data`), so the two lanes are drop-in swaps; the skeleton's `train_jsonl`/`val_jsonl`/`base_model`/`epochs`/`lora` and its separate loss_curve.json go.
+
+### tf-deploy (api) — Lane A serve (per-token LoRA)
+- in: `job` (tf-finetune's `job` URI, or the same JSON inline), `name` (`orchapod-<run_id[:8]>`). out: `model_ref` (TF LoRA ref; metadata adds `proof`, one 16-token completion).
+- flow: lora.deploy(name, base_model, source=`<job_id>:<checkpoint_id>`) returns the model id to chat with, which may differ from `name`; that id goes into `model_ref.model`. Poll lora.status(name) up to 15 min for `active` → one proving chat. A `ProviderError` of kind `unsupported` (the base has no per-token LoRA) → exit 1: "serve it with vllm-serve + lora_adapter". Status `error`, or not active in time → lora.delete, exit 1. It costs nothing idle, so it stays up; cleanup is manual.
+- wins: one `job` input replaces the skeleton's job_id / checkpoint_id / base_model, because the executor passes one URI per input; `model_ref` replaces `model_name`.
+
+### judge-eval (api) — Evaluate (new; lm-eval stays optional and leaves the demo path; delete its Claude fallback)
+- in: `test_data`, `base_model_ref`, `tuned_model_ref`, `judge_model` (nvidia/Nemotron-3-Ultra-550b-a55b), `max_samples` (60), `n_judge` (= max_samples; the judge sees the first n rows), `temperature` (0.0), `max_tokens` (512), `exact_match` (false).
+- rows: data-prep `test_jsonl` (or `dataset`) rows `{"messages":[..., {"role":"assistant","content":reference}], "context"?, "source_url"?}`. Both models get `messages[:-1]` with identical decoding. The judge sees question, reference and context, with the two answers as A/B in both orders (position swap), and replies through `json_schema` (read from `parsed`) with `{"reasoning": str, "winner": "A"|"B"|"tie"}`. A `bad_output` error counts as a row error.
+- out: `eval_summary` = `{"n","judged","wins","ties","losses","errors","win_rate","consistency","exact_match":{"base","tuned"}|null,"base":ModelRef,"tuned":ModelRef,"judge_model","decoding":{"temperature","max_tokens"},"stub","samples":[Verdict]}`. metrics_json = eval_summary without `samples`.
+- Verdict: `{"i","question","reference","context","source_url","base","tuned","base_correct","tuned_correct","verdict":"win"|"tie"|"loss"|null,"judgments":[{"order":"tuned_first"|"base_first","winner":"tuned"|"base"|"tie","reasoning"}],"error":str|null}`.
+- rules: verdicts are from tuned's side. A win needs both orders to pick tuned, a loss needs both to pick base, and anything else is a tie. `win_rate` = (wins + 0.5·ties) / (wins+ties+losses). `consistency` = share of judged rows whose two orders agree. `exact_match` compares the last number in each answer with the reference's final number (GSM8K `#### n`, commas stripped). An empty `test_data` → exit 1 "no test rows". A row that still fails after the client's retries gets `error` and is excluded. The node writes its outputs, then exits 1 if errors > 10% of judged.
+- wins: skeleton. One file holds both the summary and the verdicts, so the eval view needs one fetch.
+
+### quantize (cpu) — intent #3
+- in: `model` (HF id, or hf-download's `hf_model`), `method` (gguf | awq), `precision` (q4_k_m; q5_k_m, q8_0), `bits` (4, awq only), `keep_f16` (false).
+- out: `gguf_file` (file), `gguf_f16` (only when keep_f16; the eval's base), `awq_model` (dir). metadata `{format, precision|bits, base_model, size_bytes}`. metrics_json `{method, precision, size_bytes, f16_size_bytes, wall_s}`.
+- errors: awq without CUDA → exit 1 "AWQ needs a GPU job; use gguf". Mode-specific outputs exist only in their mode. A consumer handed an unresolved `${{ … }}` string exits 1 with "unresolved ref <input>".
+- intent #3 plan: hf-download → quantize(keep_f16) → judge-eval(base=`gguf_f16`, tuned=`gguf_file`, test_data = data-prep `dataset` from `hf://openai/gsm8k` with hf_config main, hf_split `test[:50]` and format qa (agreed with data-eng), exact_match, n_judge 20). Shortlist rule: ≤ 2B and short chain of thought, since answers come from llama.cpp on CPU.
+
+### hf-download (cpu)
+- in: `model_id`, `revision` (main), `ignore_patterns` (non-PyTorch formats). out: `hf_model` (dir; metadata `{format: hf, model_id, revision}`); metrics_json `{files, bytes, sha256_verified}`. A SHA mismatch → exit 1. A gated model without HF_TOKEN → exit 1 "set HF_TOKEN and accept the licence".
+
+### unsloth-train (gpu = Nebius Serverless Job) — Lane B train
+- in (existing): `model` (student: nvidia/Llama-3.1-Nemotron-Nano-8B-v1 until the spike-4 DECISION), `train_data`, `eval_data` ("" or an empty file = none), `lora_r` (16), `lora_alpha` (32), `max_steps` (500), `learning_rate` (2e-4), `target_modules` (all-linear), `checkpoint_steps` (100). New: `load_in_4bit` (false, i.e. 16-bit LoRA).
+- out (existing): `lora_adapter` (dir, peft), `merged_model` (dir, hf 16-bit), `checkpoint_step_NNNNNN` (resume). `train_metrics_json` becomes metrics_json with tf-finetune's `loss_curve` rows. cost = gpu_hours × price. I/O goes through the SDK (boto3 to Nebius Object Storage), with no volume mount, and must finish inside the Job's 1 h timeout.
+
+### vllm-serve (gpu → api) — Lane B serve, and any TF LoRA without per-token deploy
+- in (existing): `model` (HF id, or an r2 dir such as `merged_model`), `max_model_len` (8192), `keep_alive_min` (30, was 60: L40S costs $1.82/h against the $3 run cap; max 120), `served_model_name` (the HF id; "tuned" for an r2 dir or adapter), `gpu_memory_utilization` (0.90), `dtype` (bfloat16). New: `lora_adapter` (r2 PEFT dir), `platform` (gpu-l40s-a), `preset` (1gpu-8vcpu-32gb).
+- flow: endpoints.create(name, `vllm/vllm-openai:v0.18.0-cu130`, args, env, platform, preset, auth_token=ORCHAPOD_ENDPOINT_TOKEN, volumes=(`s3://$ORCHAPOD_R2_BUCKET:/mnt/artifacts:ro`,)) returns the endpoint id. An r2 key becomes `/mnt/artifacts/<key>`, and args add `--enable-lora --lora-modules tuned=<path>` when an adapter is set. Poll endpoints.get(id) until state RUNNING (url set) within 15 min, with base_url = url + "/v1" → one smoke completion → `POST /internal/ttl` (+ `endpoint_id`) → exit 0.
+- out: `model_ref` (endpoint ref). With `lora_adapter` it also writes `base_model_ref`: the same endpoint, model = base id, so base and tuned share one serving stack. metadata adds `endpoint_id`, `expires_at`. cost: gpu_hours = keep_alive_min/60.
+- errors: if the endpoint does not reach Running, the smoke completion fails, or TTL registration fails → delete the endpoint, exit 1. We never leave an endpoint without an expiry. At expiry the backend calls endpoints.delete(endpoint_id).
+- wins: code. The existing type names stay, over the skeleton's serverless-train / serverless-endpoint, because the registry, the /inference routes, the UI and the tests use them. Dropped: the cloudflared self-hosted path and the `endpoint_url` / `openai_api_key` outputs (one crashes, the other leaks a key). /internal/ttl still sets `outputs.endpoint_url`.
+
+### Needs from other areas
+- backend (agreed in contracts-backend.md): `api` runs like `cpu`; vllm-serve is `api` and not long_running; terminate sends SIGTERM, waits 30 s, then kills; `/internal/ttl` takes `endpoint_id` and deletes the endpoint at expiry; /compare takes two ModelRefs and applies the pair rule; `_build_env` adds ORCHAPOD_ENDPOINT_TOKEN and drops the OpenAI and Anthropic keys; retry reuses the NodeRun, so unsloth-train's resume works. ml-engineering writes the Inputs/Outputs models; backend adds the NODE_REGISTRY rows. Still to ask: sweep expired endpoints at startup, because `_ttl_tasks` live only in memory.
+- platform (agreed in contracts-platform.md): API-node images `COPY packages/providers /app/packages/providers` and `pip install httpx`. The client covers chat with the ModelRef overrides and its own pair check (ProviderError `auth`), plus files, fine_tuning (create/get/events/checkpoints/best_checkpoint/cancel), lora (deploy/status/delete) and endpoints (create/get/delete). Creates retry only on 429 or a connect error. Prices are in PRICES; ORCHAPOD_ENDPOINT_TOKEN is in .env.example.
+- data-eng (agreed): test_jsonl and dataset rows as above; train/eval rows hold only `messages`; the cost/metrics shapes; GSM8K through data-prep's `hf_config` / `hf_split` / format `qa`.
+
+## Run state machine (apps/api/executor/run_workflow.py)
+- Run: `pending` → `provisioning_gpu` (start accepted) → `running` (DAG compiled) → `succeeded` | `failed` | `cancelled`. Retry moves `failed|cancelled` → `provisioning_gpu`. (code wins: the UI and /inference/deploy use `provisioning_gpu`; renaming it needs an enum migration and gains nothing.)
+- NodeRun: `pending` → `running` → `succeeded` | `failed`. Nodes have no `cancelled` or `skipped` state: a cancelled node is `failed` with error `cancelled`, and unreached nodes stay `pending`.
+- One NodeRun per (run_id, node_id), enforced by a new unique index (/internal/artifact and ref resolution already assume it). The executor creates every row as `pending` when the run starts. Today rows appear one at a time, and the run page, which loads rows once, never shows later nodes.
+- Nodes run one at a time in topological order, so parallel branches serialise (code wins). A run that stopped mid-way (`failed` or `cancelled`) has exactly one `failed` node, the first unfinished one; its `error` is the run's error, so Run needs no error column.
+- Per node: skip it if `succeeded`; check the budget and the kill switch; persist `running`, started_at, the pod (NodeRun's `gpu_provider`/`gpu_pod_id` columns, which exist but today only Run gets) and the resolved inputs (lineage; today `running` is only broadcast and inputs are stored unresolved); provision; wait up to `ORCHAPOD_NODE_TIMEOUT_S` (default 5400, a backstop above node-level timeouts such as tf-finetune's 60 min). Exit 0 → `succeeded`; anything else → the node is `failed` and the run is `failed`.
+- Node error strings: `exit <code>: <last ERROR log line>` · `timeout after <n> s` · `cancelled` · `budget: <run|day> cap $<x> reached` · `kill switch` · `unresolved ref <ref>` · `no <runtime> provider: <why>` · `provision failed: <why>` · `control plane restarted` · `internal: <exception>`.
+- Refs: an input value is either a literal or exactly one `${{ inputs.X }}` / `${{ nodes.<id>.outputs.<name> }}`, and refs resolve only at the top level of `inputs`. An unresolved ref fails the node (today the template string is passed through as the value).
+- Runtime: `cpu` and `api` run on LocalDockerProvider, `gpu` goes through pick_provider (skeleton wins; today `api` would take the GPU path). The image is `${ORCHAPOD_IMAGE_PREFIX}/<type>:latest`. Platform owns the default (`ghcr.io/bangadpurva`, where CI pushes) and the image resolution; today's hardcoded `ghcr.io/orchapod` does not exist.
+- Startup sweep: when the API starts, each run in `provisioning_gpu|running` → `failed`. Its running node's pod is terminated, so the node cancels its remote job, and that node (or else the first unfinished one) → `failed` "control plane restarted". Today such runs stay `running` forever while their containers keep polling. Retry resumes them.
+
+### Long-polling nodes (tf-finetune, tf-deploy, vllm-serve, unsloth-train)
+- Before creating a priced remote job, compare its estimated $ with `ORCHAPOD_MAX_COST_USD` and fail fast if it is over.
+- Scalars (job ids, model refs) are small JSON artifacts with the same dict in `metadata` (ml section), so the API and UI read `Artifact.meta` and never fetch from object storage.
+- While polling, call `log.progress(...)` at least every 60 s with `extra={"phase": "<remote status>"}`.
+- Cancel and timeout: provider.terminate(pod) sends SIGTERM, waits 30 s, then kills. Today LocalDocker's `rm -f` kills at once; platform changes it. The SDK turns SIGTERM into SystemExit(143), and the node cancels or deletes its remote resource in a `finally` (ml section).
+- Retry reuses the row and keeps its outputs, so `ORCHAPOD_RESUME_CHECKPOINT_URI` (the newest `checkpoint_step_*`) resumes Lane B training. Today it is never set, because the row is always new. The node or the sweep already cancelled the failed attempt's remote work, so a retried TF node starts a new job (ml section).
+- `long_running` goes away: vllm-serve becomes `api` and exits after POST /internal/ttl (ml section), and the executor's vllm-serve special case is deleted.
+
+### Run control API
+- `POST /runs/{id}/cancel` (exists) → 200 RunOut; 409 if the run is terminal. It cancels the executor task, which terminates the pod and marks the node `failed` "cancelled" and the run `cancelled`. Today the executor's handler can overwrite `cancelled` with `failed`, and the container keeps running. Start, retry, /agent/run and /inference/deploy (while it exists) all launch through one function that registers the task; today deploy's runs keep executing after a cancel.
+- `POST /runs/{id}/nodes/{node_id}/retry` (new) → 202 RunOut. 404 if the run or node is unknown; 409 unless the run is `failed|cancelled` and the node is `failed`; 402 if over budget; 503 if the kill switch is on. It re-runs the node and then continues downstream. This refines the skeleton: re-running one node alone would leave the run unfinished.
+- `GET /runs/{id}/summary` (new) → `{run_id, status, cost_usd, error, nodes: [{node_id, type, status, usd, error, started_at, finished_at}], artifacts: [{id, node_id, name, kind, uri, download_url, meta}]}`.
+- `GET /artifacts/{id}/download` (new) → 307 to a presigned GET URL valid for 1 h. This is intent #2's download link. It reuses services/storage.presigned_download_url, so keep that function (audit item 9 calls storage.py zero-caller).
+- `POST /internal/ttl` (exists) also takes `endpoint_id`. At `expires_at` the backend calls platform's endpoints.delete(endpoint_id) and changes no run or node status. Today it terminates a vast.ai pod and marks the whole run `succeeded`. The route is kept for ml's Serverless Endpoints, whereas audit item 1 would delete it with the Vast.ai stack. TTL timers live only in memory, so today a restart leaks a paid endpoint. The startup sweep therefore deletes registered endpoints whose `expires_at` has passed and re-arms the timer for the rest. A 404 from delete counts as done, and success is recorded as `meta.deleted_at`.
+- `POST /compare {"messages": [...], "refs": [ModelRef, ModelRef], "max_tokens": 512}` (D4; ModelRef is defined in the ml section) → SSE `{"i": 0|1, "delta": str}` …, then `{"i", "done": true, "usd": float|null}`. Keys are resolved server-side, and only in two pairs: NEBIUS_API_KEY with the Token Factory base_url, and ORCHAPOD_ENDPOINT_TOKEN with an endpoint URL registered through /internal/ttl. Anything else → 422, because otherwise a caller-chosen base_url would receive our key.
+- `POST /internal/node-complete` is deleted: nothing calls it, and the exit code decides the node's status.
+
+## Budget guard
+- Env (defaults): `ORCHAPOD_MAX_RUN_USD`=3; `ORCHAPOD_MAX_DAY_USD`=15 (per UTC day, the sum of Run.cost_usd over runs created that day); `ORCHAPOD_KILL_SWITCH`=0; `ORCHAPOD_ANON_SCALE`=0.1 (caps × scale for anonymous callers; D6).
+- Checked at plan validation (an estimate above the remaining budget → a plan error); at /agent/run, start and retry (→ 402); at every node boundary (spent ≥ cap → the node is `failed` "budget: …"); and inside the node, where `ORCHAPOD_MAX_COST_USD` = the smaller of the run and day budgets remaining and `cost.add` raises `BudgetExceeded` once spend passes it.
+- Kill switch: 503 on plan, run, start and retry; it also fails the next node boundary.
+
+## Events (WS /ws/runs/{id}, fed by Redis channel `run:{id}`)
+- No replay: load GET /runs/{id}, /nodes and /artifacts first, then apply events. The socket closes after a terminal `run_status`; reconnect after a retry.
+- `run_status` {status: running|succeeded|failed|cancelled, error?}.
+- `node_status` {node_id, status: running|succeeded|failed, outputs? (on succeeded), error? (on failed)}. Today the executor never sends `failed`.
+- `log` {node_id, ts, level: INFO|WARN|ERROR|STDOUT, message}. Container stdout arrives as STDOUT, skipping SDK-formatted lines that were already posted. Today these events carry `line` and no `ts`, so they render blank.
+- `progress` {node_id, step, total?, loss?, ...extra} · `artifact` {node_id, name, uri, kind, expires_at?} · `run_cost` {cost_usd} (the UI already types it, but only /inference/extend sends it today) · `endpoint_expiry` (unchanged).
+- The agent monitor is just these events on the /agent page. Scripts poll GET /agent/runs/{id}/report every 5 s until `ready`.
+
+## Agent API (apps/api/agent; Nemotron on Token Factory only)
+- A plan is a workflow spec (docs/WORKFLOW_SPEC.md) written as JSON: `{"name": str, "nodes": [{"id": "snake_case", "type": <visible NODE_REGISTRY key>, "needs": [id], "inputs": {...}}]}`. It has no `resources`; defaults apply. Running a plan means `yaml.safe_dump(plan)` → Workflow (which opens on the canvas) → Run. NODE_REGISTRY is the node catalog; WORKFLOW_SPEC's "7 node types" list is stale.
+- `POST /agent/plan {"intent": str of at most 2000 chars}` → 200 `{"plan", "rationale": str, "estimate": {"usd", "minutes", "by_node": {id: {"usd", "minutes"}}}, "warnings": [str], "errors": [str]}`.
+  - Nemotron 3 Super (guided JSON, temperature 0) reads docs/agent_knowledge.md and NODE_REGISTRY on every request.
+  - Validation errors go back to the model for up to 2 repairs. If `errors` is still non-empty, the UI disables Run.
+  - 422 for a bad intent; 502 if Token Factory still fails after retries; 503 if the kill switch is on or NEBIUS_API_KEY is missing. With STUB=1 it returns the closest canonical template and makes no network call.
+- Validation checks that compile_dag passes; inputs match inputs_schema (refs allowed); each ref names a node in `needs` and a field of that node's outputs_schema; the agent_knowledge.md constraints hold (Token Factory fine-tune bases, serverless-LoRA bases, no Nemotron fine-tune, Nemotron-only teacher and judge); inline ModelRefs pair NEBIUS_API_KEY only with the Token Factory base_url, and endpoint refs come only from a vllm-serve `model_ref` artifact (judge-eval enforces the same at runtime); gpu nodes have a configured GPU provider; and the estimate fits the remaining budget. Each error reads `"<node_id>: <problem>"`.
+- `POST /agent/run {"intent": str, "plan": {...}}` → 201 `{"run_id", "workflow_id", "estimate"}`. The server validates again: 422 `{"detail", "errors"}`, 402 if over budget, 503 if the kill switch is on. It stores `agent_run(run_id, intent, plan, estimate, report_md)`. The evaluate step is a judge-eval node inside the plan.
+- `GET /agent/runs/{id}/report` → 200 `{<summary fields>, "intent", "estimate", "ready": bool, "markdown": str|null}`; 404 for runs the agent did not start. `ready` means the run is terminal and the markdown exists. On the first GET after a terminal status, Nemotron 3.5 Lightning writes the markdown (what ran, metrics, cost against estimate, how to use the result), and it is cached. With STUB=1, or if Lightning fails, a deterministic template is used instead.
+- `GET /agent/templates` → `[{"slug", "title", "intent", "plan", "estimate"}]`, read from apps/api/agent/templates/*.json. These are the three canonical intents, and they double as the STUB plans; one-click Run posts a template to /agent/run.
+- `POST /workflows/from-prompt` stays, now backed by the same planner. workflow_builder.py's Claude path is deleted.
+
+## Rulings (orchestrator, 2026-10-20) — these override the sections above
+- R1 Clients: one sync httpx client per service in packages/providers (platform). Nodes call Token Factory and Tavily only through them; data-engineering's openai-SDK and tavily-python plan is superseded. Images COPY packages/providers and packages/sdk-py.
+- R2 ORCHAPOD_INTERNAL_SECRET: when unset, the API generates a random value at start and passes it to containers, so /internal/* is never open (backend). This overrides platform's "empty = open".
+- R3 NODE_REGISTRY lives in packages/workflow_schema/models.py. Each owner adds its own node's NodeType, Inputs/Outputs models and registry row there, in one contiguous block per node. Backend owns the runtime and hidden semantics and reviews them; the orchestrator resolves merge conflicts. This replaces "backend adds every row".
+- R4 Images: `${ORCHAPOD_IMAGE_PREFIX}/<type>:latest` with prefix default ghcr.io/bangadpurva. qa makes CI push `:latest` on NebiusHackathon. Local dev runs `orchapod/<type>:dev` when that image exists.
+- R5 Prices: `orchapod.cost.PRICES` in the SDK is the only table. Unpriced calls fail closed. Spike 1 fills in Nano, Llama-3.1-8B (and its LoRA) and the fine-tune price per trained token. GPU-hour: gpu-h100-sxm 4.50, gpu-l40s-a 1.82.
+- R6 Budget: backend's env names are the one set. Control-plane spend (planner, reporter, /compare) goes into a per-UTC-day ledger and counts toward ORCHAPOD_MAX_DAY_USD.
+- R7 Anonymous caller (ORCHAPOD_ANON_SCALE): any request without `X-Orchapod-Admin: $ORCHAPOD_ADMIN_TOKEN`. No user auth (D6).
+- R8 The agent report is cached in the DB (agent_run.report_md), not stored as an artifact.
+- R9 Kept despite the audit: storage.presigned_download_url, /internal/ttl (now with endpoint_id), the provisioning_gpu status, and the startup sweep that fails orphaned runs and deletes expired endpoints. Retry resumes the run from the failed node and continues downstream.
+- R10 One static ORCHAPOD_ENDPOINT_TOKEN for all our endpoints. The ModelRef key↔URL pairing is enforced in the client, /compare, the plan validator and judge-eval.
+- R11 Intent #3 judges the quantized model against the f16 GGUF of the same model. Lane B serves base + adapter on one endpoint by default (spike 4 may change this).
+- R12 synth-distilabel: add jsonschema to its image and to requirements-dev.txt. Generation runs with Super's reasoning off (`thinking=False`); if spike 2 shows Token Factory ignores that flag, use `reasoning_effort` instead.
+- R13 frontend: buildYamlFromGraph must JSON.stringify object inputs (row_schema).
+- R14 Lane B runs stay under the $3 cap: at most 25 min of H100 plus at most 30 min of L40S endpoint (about $2.8). A larger run needs Hari's yes.
+- R15 Hosted Nebius auth: the CLI with a service-account profile on the host is acceptable until G2; the JWT exchange moves into code only if the host cannot run the CLI.
+- Pending spikes: spike 1 decides tf-deploy (/v0/models vs vllm-serve + lora_adapter vs Dedicated endpoint) and the exact 8B model id (meta-llama/Meta-Llama-3.1-8B-Instruct per TF's fine-tune list); spike 2 decides the thinking switch; spike 4 decides the Lane B student and whether vLLM loads its LoRA.

@@ -200,9 +200,19 @@ def _upload_to_r2(local_path: Path, r2_key: str) -> None:
         for f in local_path.rglob("*"):
             if f.is_file():
                 rel = f.relative_to(local_path)
-                client.upload_file(str(f), _bucket(), f"{r2_key}/{rel}")
+                _upload_file(client, f, f"{r2_key}/{rel}")
     else:
-        client.upload_file(str(local_path), _bucket(), r2_key)
+        _upload_file(client, local_path, r2_key)
+
+
+def _upload_file(client, path: Path, key: str) -> None:
+    # upload_file's thread pool is refused at interpreter exit, where cost_json is written; a file
+    # below the 8 MiB multipart threshold goes up as one plain PUT instead.
+    if path.stat().st_size < 8 * 1024 * 1024:
+        with path.open("rb") as f:
+            client.put_object(Bucket=_bucket(), Key=key, Body=f)
+    else:
+        client.upload_file(str(path), _bucket(), key)
 
 
 def _download_from_r2(r2_key: str, dest: Path) -> None:

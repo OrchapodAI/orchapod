@@ -157,13 +157,22 @@ def test_write_metrics_fills_stub_and_truncates_metadata(sdk, node_env, monkeypa
     assert out[1][3] == {"truncated": True} and len(out[1][1]["blob"]) == 20_000
 
 
-# A node process: SDK uploads and webhooks are captured into files under argv[2].
+# A node process: object storage and webhooks are captured into files under argv[2].
 _NODE = textwrap.dedent("""
-    import json, os, signal, sys, time
+    import concurrent.futures, json, os, shutil, signal, sys, time
     from pathlib import Path
     from orchapod import cost, io, log
     cap = Path(sys.argv[2])
-    io._upload_to_r2 = lambda local_path, r2_key: (cap / r2_key.rsplit("/", 1)[1]).write_text(Path(local_path).read_text())
+
+    class S3:  # boto3's upload_file runs on a thread pool (s3transfer), which is refused at interpreter exit
+        def upload_file(self, filename, bucket, key):
+            with concurrent.futures.ThreadPoolExecutor(1) as pool:
+                pool.submit(shutil.copy, filename, cap / key.rsplit("/", 1)[1]).result()
+
+        def put_object(self, Bucket, Key, Body):
+            (cap / Key.rsplit("/", 1)[1]).write_bytes(Body.read())
+
+    io._get_r2_client = S3
     log.post = lambda path, payload, timeout=3: open(cap / "posts.jsonl", "a").write(json.dumps([path, payload]) + "\\n")
     io.read_inputs()
     cost.add("token_factory", "m", 10, 20, usd=0.25)

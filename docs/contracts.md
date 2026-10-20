@@ -291,7 +291,7 @@ API code reads these through `apps/api/config.py` (`settings`, one pydantic-sett
 - R8 The agent report is cached in the DB (agent_run.report_md), not stored as an artifact.
 - R9 Kept despite the audit: storage.presigned_download_url, /internal/ttl (now with endpoint_id), the provisioning_gpu status, and the startup sweep that fails orphaned runs and deletes expired endpoints. Retry resumes the run from the failed node and continues downstream.
 - R10 One static ORCHAPOD_ENDPOINT_TOKEN for all our endpoints. The ModelRef key↔URL pairing is enforced in the client, /compare, the plan validator and judge-eval.
-- R11 Intent #3 judges the quantized model against the f16 GGUF of the same model. Lane B serves base + adapter on one endpoint by default (spike 4 may change this).
+- R11 Intent #3 judges the quantized model against the f16 GGUF of the same model. Lane B: spike 4 proved merged 16-bit weights served by vLLM; base + adapter on one endpoint (`--enable-lora`) stays the goal if the vllm-serve task proves it, otherwise serve merged weights.
 - R12 synth-distilabel: add jsonschema to its image and to requirements-dev.txt. Generation runs with Super's reasoning off (`thinking=False`); if spike 2 shows Token Factory ignores that flag, use `reasoning_effort` instead.
 - R13 frontend: buildYamlFromGraph must JSON.stringify object inputs (row_schema).
 - R14 Lane B runs stay under the $3 cap: at most 25 min of H100 plus at most 30 min of L40S endpoint (about $2.8). A larger run needs Hari's yes.

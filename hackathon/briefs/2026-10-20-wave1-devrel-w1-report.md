@@ -52,3 +52,19 @@ Red at the base README (`git grep … 178d2e6 -- README.md`): required sections 
 - DECISION 2026-10-20: README convention is API `:8001`, web `:3000`, local stack via `make up`; the web app needs the `NEXT_PUBLIC_*` override until its defaults move — devrel-w1.
 - DECISION 2026-10-20: the README is written against contracts v1 as the end state; whatever depends on a spike result, unmerged work or a measurement is a `TODO(D8)` line, and `tests/docs/test_readme.py` keeps ids, ports, env names and make targets consistent with contracts.md and the Makefile — devrel-w1.
 - DECISION 2026-10-20: demo cost claims in the README are the R14 / PLAN design budgets (Lane A < $2, Lane B ≈ $2.8), labelled as such; the "25 minutes, under $5" tagline is removed until measured — devrel-w1.
+
+## Fix round 1 (orchestrator review): `a6f9e72` README, `be103ce` test; HEAD `be103ce`
+Supersedes the first-pass numbers above (README 200 lines, 16 TODO(D8) lines, 5 tests, 158 total). Still not run (Bash is git-only for this role). Desk-check by `git grep` on the edited files: 9 of 9 sections; no hit for the 4 stale strings, the bad clone URL or a bare TODO; the 4 setup-guard strings are present (README L104, L107, L111, L186); `make` targets in code (up, check, down, agent-e2e, e2e, demo) all exist in the Makefile; 12 env names, all in contracts.md or NODE_CONTRACT.md. Expected: 6 tests in `tests/docs` pass, 159 total on the 7f27372 base (153 + 6).
+
+**Important 1, spike-dependent claims are conditional** (README line numbers at HEAD):
+- L40 Lane A: "fine-tunes on Token Factory. TODO(D8): spike 1 decides serving — a per-token LoRA model (no GPU quota) or `vllm-serve` with the adapter (needs GPU quota)." Your wording, with `vllm-serve` in backticks.
+- L49 (tf-deploy row) and L84 (prose): "deploy(s) the adapter as a per-token LoRA model if Token Factory accepts the base (TODO(D8): spike 1), then …".
+- L51 (vllm-serve row) and L91 (Serverless Endpoints bullet): "(TODO(D8): spike 4 confirms vLLM loads the adapter)".
+- Left as is: L41 and L50, which are design statements; L51, L90, L91 and L93 tag what they depend on.
+
+**Important 2, test** (`tests/docs/test_readme.py`, now 86 lines): L76-77 no longer asserts `"TODO(D8)" in README`; only the bare-TODO regex remains, so the test passes on a finished README with no TODOs.
+
+**Also applied:**
+- README L62 `cost_json` and `metrics_json`. L19 "each must run from the chat box … TODO(D8): which intents have run end to end." (I changed "runs" to "must run" and ended the sentence with a full stop, since the table follows a blank line.) L31 "The Nemotron models share …". L111 `make check` comment now "stub e2e (TODO(D8): script pending)"; L143 "TODO(D8): the stub e2e is not verified end to end yet." L136 Lane B paragraph is one sentence pointing at `.env.example` (true once platform-w1's rewrite merges).
+- Repository map deleted (old L184-197, including the blank line, so License follows one blank line and is now L184). README is 186 lines. `hackathon/` no longer appears in the README, so open question 2 (disclosure) is moot for it.
+- Test: `STALE` cut to studio.nebius.ai, Super 49B, Ultra 253B, localhost:8000 (L40-45; "Mini 4B" and the env-var, Cloudflare, Clerk and Cleanlab entries are gone); the `"Tavily"` needle is removed (L57); new `test_setup_and_license_lines` (L62-69) asserts the `git clone -b NebiusHackathon https://github.com/bangadpurva/orchapod.ai.git` line, `make up`, `make check` and `[MIT](LICENSE)`.

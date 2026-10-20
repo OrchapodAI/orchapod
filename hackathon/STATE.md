@@ -4,7 +4,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 ## Next actions (in order)
 1. Hari: put NEBIUS_API_KEY and TAVILY_API_KEY in ~/src/orchapod-hack/.env (Human actions) — unblocks spikes 1–3 and every live check.
 2. Contracts v1 — DONE (docs/contracts.md; rulings R1–R15 at its end).
-3. Spike 4 (ml-engineering): vast.ai A100 80 GB, ≤ $6 / 3 h, destroyed after → DECISION: Lane B student.
+3. Spike 4 — DONE: Lane B student = nvidia/Llama-3.1-Nemotron-Nano-8B-v1 (DECISION below).
 4. Ponytail audit — DONE; triaged into the board below (audit: hackathon/briefs/2026-10-20-ponytail-audit-report.md).
 5. Spikes 1–3 once keys land: platform (TF train → deploy → chat; Tavily extract), backend (Nemotron Super guided-JSON plan).
 6. Wave 1 (hackathon/briefs/2026-10-20-wave1.md) — IN_PROGRESS: platform-w1, backend-w1, data-w1, ml-w1, frontend-w1, qa-w1, devrel-w1. Wave 2 after platform's clients merge: synth grounded/structured + web-research (data), tf-finetune/tf-deploy/judge-eval (ml), Agent API + budget + /compare (backend), quality_filter, config.py migration.
@@ -37,7 +37,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D3 data-prep: exact + near dedupe, train/val/test, TF dataset rules (quality filter → wave 2) — APPROVED, waits for backend-w1 (hack/data-w1 @ a623fe6)
 - [ ] P1 data-prep minors (review of data-w1): unhashable role crashes instead of dropping (move tf_valid inside the try); CSV keep_default_na=False; small-n test split can be empty; log before near-dedupe; tests for missing dataset, CSV, eval/test composition — TODO (with quality_filter, wave 2)
 ### ml-engineering
-- [ ] P1 D1 spike 4: Unsloth 16-bit LoRA on nvidia/Llama-3.1-Nemotron-Nano-8B-v1, vast.ai A100 (≤ $6 / 3 h) — IN_PROGRESS(ml-engineering, hack/ml-spike4)
+- [ ] P1 D1 spike 4: Unsloth 16-bit LoRA on nvidia/Llama-3.1-Nemotron-Nano-8B-v1, vast.ai A100 (≤ $6 / 3 h) — DONE ($1.29, 48 min; containers/unsloth-train/spike/RESULTS.md)
 - [x] P0 D2 all 8 Dockerfiles build from the repo root + test_dockerfiles.py; synth's vendored SDK deleted (R19) — DONE (a298ea1)
 - [x] P0 D2 lm-eval: Claude/Anthropic judge fallback removed — DONE (a298ea1)
 - [ ] P2 test_dockerfiles.py minors: continuation regex `\\[ \t]*\n`, `assert DOCKERFILES` instead of >= 8, one-line docstring (no LocalDocker claim), ROOT.glob — TODO
@@ -45,7 +45,8 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D3 tf-deploy node: model name + one proving completion — TODO
 - [ ] P0 D4 judge-eval node: base vs tuned, identical decoding, Ultra pairwise reference-guided, position swap — TODO
 - [ ] P0 D4 quantize path for intent #3: maths shortlist, GGUF q4_k_m on CPU, 50-item GSM8K eval — TODO
-- [ ] P1 D2 unsloth-train container: bucket I/O, SDK logs, --max-steps, pinned versions — TODO
+- [ ] P1 D2 unsloth-train container: bucket I/O, SDK logs, --max-steps, pinned to spike 4's requirements.lock.txt (BOS fix; Mamba out_proj excluded; tvm-ffi restore) — TODO
+- [ ] P1 D3 vllm-serve: test `--enable-lora` with the 8B adapter (one endpoint for base + tuned); merged weights are the proven fallback — TODO
 - [ ] P1 D3 vllm-serve spec (vllm/vllm-openai:v0.18.0-cu130, token auth) + smoke script — TODO
 - [ ] P1 D5 after G2: real Serverless Job + Endpoint; D6 eval vs base; D7 judging-window plan — TODO
 ### backend
@@ -93,7 +94,8 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - DECISION 2026-10-20: compose project orchapod-hack; `make up` starts postgres, redis, minio only; API on 8001 (8000 = complychip2) — orchestrator.
 - DECISION 2026-10-20: skip claude-mem (episodic-memory installed; these files are the source of truth); nebius CLI deferred to G2 — orchestrator.
 - DECISION 2026-10-20: every container image builds with the repo root as context (matches CI, scripts/build-and-push-containers.sh and the local_docker hint); Dockerfile owners fix their COPY paths — qa finding.
-- OPEN DECISION: Lane B student (spike 4) · intent #1 deploy default (3B on a Serverless Endpoint vs 8B serverless LoRA) · hosting (D4).
+- DECISION 2026-10-20: Lane B student = nvidia/Llama-3.1-Nemotron-Nano-8B-v1 — spike 4: 60 steps 62 s / 15.9 GiB, merge 41 s, vLLM healthy 51 s, fits an L40S; Nemotron-3-Nano-30B-A3B also works (router frozen) but is 12× slower per step and needs 80 GB — a proven option, not the default.
+- OPEN DECISION: intent #1 deploy default (3B on a Serverless Endpoint vs 8B serverless LoRA) · hosting (D4).
 
 - DECISION 2026-10-20 (audit triage): Anthropic/OpenAI code leaves the demo path now (P0, stage-one rule); Vast.ai/RunPod/legacy Compute stack (~3,500 lines) is hidden from the demo path (P1) and deleted after G1 if still off-path (P2); other dead weight (Alembic beside create_all, second model registry, static Registry page, zero-caller modules) is P2.
 
@@ -119,6 +121,6 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - Playwright MCP (`claude mcp add -s project playwright -- npx @playwright/mcp@latest`, in .mcp.json)
 - Plugins: superpowers 6.3.0, ponytail, episodic-memory (already installed) · nebius CLI: deferred to G2
 ## Spend to date (per day, per key)
-- 2026-10-20: $0
+- 2026-10-20: $1.29 (vast.ai A100 SXM4 80 GB at $1.2485/h, 48 min, spike 4; instance destroyed)
 ## Golden path status (last real run: id, date, cost, result)
 - Never run end to end. `make check` green since e11757e (ruff E4/E7/E9/F clean, pytest 153 passed); gitleaks clean (1 triaged false positive).

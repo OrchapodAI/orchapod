@@ -15,7 +15,7 @@ Source of truth: `NODE_REGISTRY` in apps/api. Backend adds one row per node as i
 ## Constraints every plan must respect
 - Token Factory fine-tunes Llama 3.1 (8B, 70B), Llama 3.2 (1B, 3B), Llama 3.3 70B, Qwen3 and Qwen2.5, gpt-oss, DeepSeek, Gemma 4. It does **not** fine-tune Nemotron.
 - Deploying a Token Factory fine-tune: per-token LoRA deploy (POST /v0/models) is UNVERIFIED as of 2026-10-20. TF docs say Meta fine-tunes deploy only via Dedicated endpoints (custom weights there: beta, on request), and Llama-3.3-70B left TF serverless on 2026-08-31. Spike 1 tests /v0/models on meta-llama/Meta-Llama-3.1-8B-Instruct; otherwise serve the tuned model with vllm-serve + lora_adapter on an AI Cloud Serverless Endpoint (needs GPU quota).
-- Nemotron students train on AI Cloud (Serverless Job) and serve from a Serverless Endpoint.
+- Nemotron students train on AI Cloud (Serverless Job) and serve from a Serverless Endpoint. Default student: nvidia/Llama-3.1-Nemotron-Nano-8B-v1 (spike 4: trains, merges and serves on one GPU; fits an L40S). nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16 also works but needs an 80 GB GPU and is about 12× slower to train.
 - Quantize: GGUF runs on CPU; AWQ needs a GPU job.
 - Every plan states a cost and time estimate. Caps: $3 per run, $15 per day, Serverless Job timeout 1 h.
 

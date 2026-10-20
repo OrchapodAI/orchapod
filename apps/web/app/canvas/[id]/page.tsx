@@ -11,10 +11,12 @@ import "@xyflow/react/dist/style.css";
 
 import { api } from "@/lib/api";
 import type { Run, Workflow, NodeType } from "@/lib/types";
-import { OrchaNode, type OrchaNodeData } from "@/components/canvas/OrchaNode";
+import { OrchaNode, NODE_META, type OrchaNodeData } from "@/components/canvas/OrchaNode";
 import { NodePalette } from "@/components/canvas/NodePalette";
 import { NodePanel } from "@/components/canvas/NodePanel";
 import Link from "next/link";
+import { buildYamlFromGraph } from "@/lib/workflowYaml";
+import { formDefaults } from "@/lib/nodeForms";
 
 const nodeTypes: NodeTypes = { orchapodNode: OrchaNode as NodeTypes[string] };
 
@@ -116,7 +118,7 @@ export default function CanvasPage() {
           node_type: type,
           label: nodeId,
           inputs: defaultInputs(type),
-          resources: { gpu: "1xH100", provider_pref: ["runpod", "vastai"] },
+          resources: {},
         },
       };
       setNodes((nds) => [...nds, newNode]);
@@ -244,13 +246,14 @@ export default function CanvasPage() {
             <Background color="oklch(0.86 0.010 280)" gap={20} size={1} />
             <Controls />
             <MiniMap
-              nodeColor={(n) => nodeColor((n.data as OrchaNodeData)?.node_type)}
+              nodeColor={(n) => NODE_META[(n.data as OrchaNodeData)?.node_type]?.accent ?? "#97A0AF"}
             />
           </ReactFlow>
         </div>
 
         {selectedNode && (
           <NodePanel
+            key={selectedNode.id}
             node={selectedNode}
             onClose={() => setSelectedNode(null)}
             onUpdate={handleNodeUpdate}
@@ -359,32 +362,12 @@ export default function CanvasPage() {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function nodeColor(type: NodeType): string {
-  const map: Partial<Record<NodeType, string>> = {
-    "hf-download":         "oklch(0.72 0.10 60)",
-    "hf-import":           "oklch(0.72 0.10 60)",
-    "file-upload":         "oklch(0.65 0.13 200)",
-    "s3-import":           "oklch(0.65 0.13 220)",
-    "data-prep":           "oklch(0.65 0.13 200)",
-    "auto-label-cleanlab": "oklch(0.60 0.16 285)",
-    "synth-distilabel":    "oklch(0.62 0.13 162)",
-    "unsloth-train":       "oklch(0.55 0.18 282)",
-    "distill-sft":         "oklch(0.62 0.16 320)",
-    "quantize":            "oklch(0.68 0.14 75)",
-    "lm-eval":             "oklch(0.62 0.13 162)",
-    "vllm-serve":          "oklch(0.55 0.16 25)",
-  };
-  return map[type] ?? "oklch(0.72 0.008 280)";
-}
-
 function defaultInputs(type: NodeType): Record<string, unknown> {
+  const fromForm = formDefaults(type);
+  if (fromForm) return fromForm;
   switch (type) {
     case "hf-download":         return { model_id: "", revision: "main", ignore_patterns: [] };
-    case "hf-import":           return { dataset_id: "", split: "train", format: "auto" };
-    case "file-upload":         return { upload_id: "", format: "auto" };
-    case "s3-import":           return { bucket: "", prefix: "", format: "auto" };
     case "data-prep":           return { dataset: "", format: "chatml", train_split: 0.9 };
-    case "auto-label-cleanlab": return { dataset: "", quality_threshold: 0.7 };
     case "synth-distilabel":    return { pipeline_template: "self-instruct", teacher_kind: "nebius", teacher_model: "nvidia/nemotron-3-super-120b-a12b", n_samples: 1000, temperature: 0.8, max_tokens: 512 };
     case "unsloth-train":       return { model: "Qwen/Qwen3-4B-Instruct", train_data: "", eval_data: "", lora_r: 16, lora_alpha: 32, max_steps: 500, learning_rate: 0.0002 };
     case "distill-sft":         return { teacher: "", student_base: "Qwen/Qwen3-1.7B-Instruct", train_data: "", n_synthetic: 5000 };
@@ -393,40 +376,4 @@ function defaultInputs(type: NodeType): Record<string, unknown> {
     case "vllm-serve":          return { model: "", max_model_len: 8192, keep_alive_min: 60 };
     default:                    return {};
   }
-}
-
-function buildYamlFromGraph(
-  nodes: Node<OrchaNodeData>[],
-  edges: Edge[],
-  existingYaml: string,
-): string {
-  // Preserve the existing YAML header (name, version, inputs)
-  // then rebuild nodes section from the current graph state.
-  const lines = [
-    ...existingYaml.split("\n").filter((l) => !l.startsWith("  - id:") && !l.match(/^    (type|needs|inputs|resources):/)),
-  ];
-
-  // Find where nodes: starts and truncate there
-  const nodesIdx = lines.findIndex((l) => l.trimStart().startsWith("nodes:"));
-  const header = nodesIdx >= 0 ? lines.slice(0, nodesIdx + 1) : [...lines, "nodes:"];
-
-  const nodeLines: string[] = [];
-  for (const node of nodes) {
-    const needs = edges
-      .filter((e) => e.target === node.id)
-      .map((e) => e.source);
-
-    nodeLines.push(`  - id: ${node.data.label}`);
-    nodeLines.push(`    type: ${node.data.node_type}`);
-    if (needs.length > 0) {
-      nodeLines.push(`    needs: [${needs.join(", ")}]`);
-    }
-    nodeLines.push("    inputs:");
-    for (const [k, v] of Object.entries(node.data.inputs ?? {})) {
-      const val = Array.isArray(v) ? JSON.stringify(v) : v;
-      nodeLines.push(`      ${k}: ${val}`);
-    }
-  }
-
-  return [...header, ...nodeLines].join("\n");
 }

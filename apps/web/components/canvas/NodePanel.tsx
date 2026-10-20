@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { X, ExternalLink } from "lucide-react";
 import type { Node } from "@xyflow/react";
 import type { OrchaNodeData } from "./OrchaNode";
+import { NODE_FORMS, type FormField } from "@/lib/nodeForms";
 
 interface Props {
   node: Node<OrchaNodeData>;
@@ -22,15 +23,62 @@ const FIELD_LABELS: Record<string, string> = {
   max_model_len: "Max model length", keep_alive_min: "Keep-alive (minutes)",
 };
 
+const INPUT_CLASS = "w-full bg-white border border-[#DFE1E6] rounded px-3 py-2 text-xs text-[#172B4D] focus:outline-none focus:border-[#0052CC] focus:ring-2 focus:ring-[#0052CC]/20 transition-colors";
+
+const asText = (v: unknown) => v == null ? "" : typeof v === "string" ? v : JSON.stringify(v, null, 2);
+
+// JSON when it parses (objects, ModelRefs), else the text as typed (refs, model ids, URIs).
+function parseLoose(text: string): unknown {
+  try { return JSON.parse(text); } catch { return text; }
+}
+
+// Uncontrolled on purpose (defaultValue), so parsing never moves the caret; the panel is keyed by node.
+function FormInput({ field: f, value, onChange }: { field: FormField; value: unknown; onChange: (v: unknown) => void }) {
+  switch (f.kind) {
+    case "bool":
+      return <input type="checkbox" defaultChecked={Boolean(value)} onChange={(e) => onChange(e.target.checked)} />;
+    case "number":
+      return <input type="number" step="any" defaultValue={asText(value)} placeholder={f.placeholder} className={INPUT_CLASS}
+        onChange={(e) => onChange(e.target.value === "" ? undefined : e.target.valueAsNumber)} />;
+    case "list":
+      return <textarea rows={3} defaultValue={Array.isArray(value) ? value.join("\n") : asText(value)} className={INPUT_CLASS}
+        onChange={(e) => onChange(e.target.value.split("\n").map((l) => l.trim()).filter(Boolean))} />;
+    case "json":
+      return <textarea rows={typeof value === "object" ? 4 : 2} defaultValue={asText(value)} className={`${INPUT_CLASS} font-mono`}
+        onChange={(e) => onChange(parseLoose(e.target.value))} />;
+    default:
+      return <input defaultValue={asText(value)} placeholder={f.placeholder} className={INPUT_CLASS}
+        onChange={(e) => onChange(e.target.value === "" && f.default === undefined ? undefined : e.target.value)} />;
+  }
+}
+
 export function NodePanel({ node, onClose, onUpdate }: Props) {
   const data: OrchaNodeData = node.data as OrchaNodeData;
   const inputs: Record<string, unknown> = (data.inputs as Record<string, unknown>) ?? {};
+  const form = NODE_FORMS[data.node_type];
   const inputEntries: [string, unknown][] = Object.entries(inputs);
   const resourceEntries: [string, unknown][] = Object.entries(
     (data.resources as Record<string, unknown>) ?? {}
   );
 
-  const inputsSection: ReactNode = inputEntries.length > 0 ? (
+  const inputsSection: ReactNode = form ? (
+    <div>
+      <p className="text-xs font-semibold text-[#6B778C] uppercase tracking-wide mb-3">Inputs</p>
+      <div className="space-y-3">
+        {form.map((f) => (
+          <div key={f.key}>
+            <label className="block">
+              <span className="block text-xs font-medium text-[#172B4D] mb-1.5">
+                {f.label} <span className="font-mono font-normal text-[#97A0AF]">{f.key}</span>
+              </span>
+              <FormInput field={f} value={inputs[f.key]} onChange={(v) => setInput(f.key, v)} />
+            </label>
+            <p className="text-[10.5px] text-[#6B778C] mt-1 leading-snug">{f.help}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  ) : inputEntries.length > 0 ? (
     <div>
       <p className="text-xs font-semibold text-[#6B778C] uppercase tracking-wide mb-3">Inputs</p>
       <div className="space-y-3">
@@ -40,9 +88,9 @@ export function NodePanel({ node, onClose, onUpdate }: Props) {
               {FIELD_LABELS[key] ?? key}
             </label>
             <input
-              value={String(val ?? "")}
+              value={val !== null && typeof val === "object" ? JSON.stringify(val) : String(val ?? "")}
               onChange={(e) => handleChange(key, e.target.value)}
-              className="w-full bg-white border border-[#DFE1E6] rounded px-3 py-2 text-xs text-[#172B4D] focus:outline-none focus:border-[#0052CC] focus:ring-2 focus:ring-[#0052CC]/20 transition-colors"
+              className={INPUT_CLASS}
             />
           </div>
         ))}
@@ -66,6 +114,11 @@ export function NodePanel({ node, onClose, onUpdate }: Props) {
 
   function handleChange(key: string, value: string) {
     onUpdate(node.id, { inputs: { ...inputs, [key]: value } });
+  }
+
+  // undefined drops the input, so the node's own default applies.
+  function setInput(key: string, value: unknown) {
+    onUpdate(node.id, { inputs: Object.fromEntries(Object.entries({ ...inputs, [key]: value }).filter(([, v]) => v !== undefined)) });
   }
 
   return (

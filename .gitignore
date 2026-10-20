@@ -35,3 +35,9 @@ Thumbs.db
 # Editors
 .vscode/
 .idea/
+
+# Orchestrator control files (local only)
+hackathon/WAITING_FOR_HUMAN
+hackathon/AUTOPILOT
+hackathon/STOP
+hackathon/.autopilot_count

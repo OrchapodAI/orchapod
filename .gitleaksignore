@@ -1,0 +1,2 @@
+# Triaged false positive (2026-10-20): generic-api-key matched an empty OPENAI_API_KEY= plus the next line STUB_TEACHER=true
+c2bc9f7a10a64631411a1225d2ea2a35794f1f50:.env.example:generic-api-key:38

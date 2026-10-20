@@ -145,16 +145,14 @@ def request(http: httpx.Client, provider: str, method: str, url: str, *, create:
         wait = None
         try:
             resp = http.send(http.build_request(method, url, **kwargs), stream=stream)
-        except (httpx.ConnectError, httpx.ConnectTimeout) as e:  # never reached the server
-            err = ProviderError(provider, "server", None, repr(e))
-        except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as e:
-            err = ProviderError(provider, "server", None, repr(e))
-            if create:
-                raise err from e
-        else:
-            if resp.status_code < 400:
+            if resp.is_success:
                 return resp
             resp.read()
+        except httpx.TransportError as e:
+            err = ProviderError(provider, "server", None, repr(e))
+            if create and not isinstance(e, (httpx.ConnectError, httpx.ConnectTimeout)):  # it may have landed
+                raise err from e
+        else:
             err = ProviderError(provider, _kind(resp.status_code), resp.status_code, resp.text[:500])
             if resp.status_code == 429:
                 try:

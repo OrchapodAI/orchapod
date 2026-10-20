@@ -35,7 +35,7 @@ class TokenFactory:
         self.base_url = (os.environ.get("NEBIUS_BASE_URL") or TF_BASE).rstrip("/")
         self.on_usage = on_usage
         self.stub = os.environ.get("STUB") == "1"
-        self.http = http or http_client(_stub)
+        self.http = http_client(_stub) if self.stub or http is None else http  # STUB never touches the network
         self.files, self.fine_tuning, self.lora = _Files(self), _FineTuning(self), _Lora(self)
 
     def chat(self, messages: list[dict], model: str = SUPER, **kw) -> dict:
@@ -44,9 +44,12 @@ class TokenFactory:
         Returns {text, parsed, model, in_tokens, out_tokens, usd, finish_reason}."""
         url, headers, body, bill = self._prepare(messages, model, **kw)
         data = request(self.http, P, "POST", url, json=body, headers=headers).json()
-        choice, usage = data["choices"][0], data.get("usage") or {}
+        usage = data.get("usage") or {}
         in_tokens, out_tokens = usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
-        usd = bill(in_tokens, out_tokens)  # before parsing: bad output still cost tokens
+        usd = bill(in_tokens, out_tokens)  # first: a bad reply still cost tokens
+        if not data.get("choices"):
+            raise ProviderError(P, "bad_output", 200, f"{model} returned no choices")
+        choice = data["choices"][0]
         text = choice["message"].get("content") or ""
         parsed = None
         if kw.get("json_schema") is not None:
@@ -82,7 +85,7 @@ class TokenFactory:
     def _prepare(self, messages, model, *, temperature=0.0, max_tokens=1024, json_schema=None, thinking=None,
                  base_url=None, api_key=None, base_model=None, **params):
         base = (base_url or self.base_url).rstrip("/")
-        key = self.api_key if api_key is None else api_key
+        key = api_key if base_url else self.api_key  # a ModelRef brings its own key, or none
         on_tf = base == self.base_url
         if key and not on_tf and key in (self.api_key, os.environ.get("NEBIUS_API_KEY")):
             raise ProviderError(P, "auth", None, f"refused: the Token Factory key goes only to {self.base_url}, not {base}")
@@ -118,10 +121,12 @@ class TokenFactory:
                        headers={"Authorization": f"Bearer {self.api_key}"}, **kwargs)
 
 
-class _Files:
+class _Part:
     def __init__(self, tf: TokenFactory):
         self._tf = tf
 
+
+class _Files(_Part):
     def create(self, path: str | Path, purpose: str = "fine-tune") -> str:
         """Upload a file; returns its id. Sent as bytes, so a retry re-sends the whole file."""
         files = {"file": (Path(path).name, Path(path).read_bytes())}
@@ -135,10 +140,7 @@ class _Files:
         return self._tf._call("GET", f"/files/{file_id}/content").content
 
 
-class _FineTuning:
-    def __init__(self, tf: TokenFactory):
-        self._tf = tf
-
+class _FineTuning(_Part):
     def create(self, model: str, training_file: str, validation_file: str | None = None,
                hyperparameters: dict | None = None, suffix: str | None = None, seed: int | None = None) -> dict:
         """Start a job; hyperparameters keep TF's names (lora, n_epochs, batch_size, learning_rate, lora_r, ...).
@@ -179,10 +181,7 @@ class _FineTuning:
         return self._tf._call("GET", "/fine_tuning/jobs", params={"limit": limit}).json()["data"]
 
 
-class _Lora:
-    def __init__(self, tf: TokenFactory):
-        self._tf = tf
-
+class _Lora(_Part):
     def deploy(self, name: str, base_model: str, source: str) -> str:
         """POST /v0/models with source "<job_id>:<checkpoint_id>"; returns the model id to chat with (may differ
         from `name`). Unverified until spike 1, so a missing route or a rejected base raises kind `unsupported`."""

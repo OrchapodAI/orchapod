@@ -34,9 +34,19 @@ def ft_priced(monkeypatch):
     monkeypatch.setitem(PRICES["token_factory_finetune"], LLAMA, 1e-6)
 
 
-def recorder():
-    calls = []
-    return calls, lambda *a, **k: calls.append((a, k))
+@pytest.fixture
+def train(tmp_path):
+    path = tmp_path / "train.jsonl"
+    path.write_text('{"messages": [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]}\n')
+    return path
+
+
+CREATES = {  # every paid create call site, and the reply that means "created"
+    "files.create": (lambda tf, train: tf.files.create(train), {"id": "file-1"}),
+    "fine_tuning.create": (lambda tf, train: tf.fine_tuning.create(LLAMA, "file-1"), JOB),
+    "lora.deploy": (lambda tf, train: tf.lora.deploy("orchapod-1234abcd", LLAMA, "ftjob-7f3a:ftckpt-2"),
+                    {"name": "orchapod-1234abcd", "status": "validating"}),
+}
 
 
 # --- retries --------------------------------------------------------------
@@ -62,18 +72,38 @@ def test_timeouts_and_connection_errors_retried(replay, first):
     assert TokenFactory(http=http).chat(MSGS)["text"] == "Hello." and len(seen) == 2
 
 
-@pytest.mark.parametrize("first", [httpx.Response(500, text="boom"), httpx.ReadTimeout("slow")])
-def test_create_never_retried_after_5xx_or_read_timeout(replay, ft_priced, first):
-    http, seen = replay(first)
+@pytest.mark.parametrize("site", CREATES)
+@pytest.mark.parametrize("first", [lambda: httpx.Response(500, text="boom"), lambda: httpx.ReadTimeout("slow"),
+                                   lambda: httpx.RemoteProtocolError("dropped")], ids=["5xx", "read_timeout", "dropped"])
+def test_create_never_retried_once_the_request_may_have_landed(replay, ft_priced, train, site, first):
+    call, _ = CREATES[site]
+    http, seen = replay(first())
     with pytest.raises(ProviderError) as e:
-        TokenFactory(http=http).fine_tuning.create(LLAMA, "file-1")
+        call(TokenFactory(http=http), train)
     assert e.value.kind == "server" and len(seen) == 1
 
 
-def test_create_retried_on_429_and_connect_error(replay, ft_priced):
-    http, seen = replay(httpx.Response(429), httpx.ConnectError("refused"), httpx.Response(200, json=JOB))
-    assert TokenFactory(http=http).fine_tuning.create(LLAMA, "file-1")["id"] == "ftjob-7f3a"
-    assert len(seen) == 3
+@pytest.mark.parametrize("site", CREATES)
+def test_create_retried_on_429_and_connect_errors(replay, ft_priced, train, site):
+    call, created = CREATES[site]
+    http, seen = replay(httpx.Response(429), httpx.ConnectError("refused"), httpx.ConnectTimeout("slow connect"),
+                        httpx.Response(200, json=created))
+    call(TokenFactory(http=http), train)
+    assert len(seen) == 4
+
+
+def test_any_transport_error_is_retried_then_a_provider_error(replay):
+    http, seen = replay(*[httpx.ProxyError("proxy down") for _ in range(4)])
+    with pytest.raises(ProviderError) as e:
+        TokenFactory(http=http).chat(MSGS)
+    assert (e.value.kind, len(seen)) == ("server", 4)
+
+
+def test_redirect_is_not_success(replay):
+    http, seen = replay(httpx.Response(307, headers={"location": "https://elsewhere.example/v1/chat/completions"}))
+    with pytest.raises(ProviderError) as e:
+        TokenFactory(http=http).chat(MSGS)
+    assert (e.value.kind, e.value.status, len(seen)) == ("bad_request", 307, 1)
 
 
 @pytest.mark.parametrize("status,kind", [(400, "bad_request"), (404, "bad_request"), (409, "bad_request"),
@@ -89,17 +119,18 @@ def test_client_errors_not_retried(replay, status, kind):
 # --- key and price guards -------------------------------------------------
 
 def test_token_factory_key_never_sent_off_token_factory(replay):
-    http, seen = replay()
+    http, seen = replay(completion(model="tuned"), completion(model="tuned"))
     tf = TokenFactory(http=http)
-    for kw in ({}, {"api_key": "tf-key"}):  # default key, or the same key passed explicitly
-        with pytest.raises(ProviderError) as e:
-            tf.chat(MSGS, "tuned", base_url="https://evil.example/v1", **kw)
-        assert e.value.kind == "auth"
-    assert seen == []
+    with pytest.raises(ProviderError) as e:
+        tf.chat(MSGS, "tuned", base_url="https://evil.example/v1", api_key="tf-key")
+    assert e.value.kind == "auth" and seen == []
+    for kw in ({}, {"api_key": ""}):  # no key (unset api_key_env; judge-eval's llama-server): sent with none
+        tf.chat(MSGS, "tuned", base_url="http://127.0.0.1:8080/v1", **kw)
+    assert [r.headers.get("authorization") for r in seen] == [None, None]
 
 
-def test_endpoint_model_ref_is_sent_with_its_own_key_and_unbilled(replay):
-    calls, on_usage = recorder()
+def test_endpoint_model_ref_is_sent_with_its_own_key_and_unbilled(replay, recorder):
+    calls, on_usage = recorder
     http, seen = replay(completion(model="tuned"))
     out = TokenFactory(on_usage=on_usage, http=http).chat(
         MSGS, "tuned", base_url="https://ep.example/v1", api_key="ep-token", base_model=LLAMA)
@@ -137,9 +168,9 @@ def test_missing_key_is_auth_error_before_send(replay, monkeypatch):
 
 # --- chat -----------------------------------------------------------------
 
-def test_json_schema_is_parsed_and_billed(replay, monkeypatch):
+def test_json_schema_is_parsed_and_billed(replay, monkeypatch, recorder):
     monkeypatch.setenv("NEBIUS_BASE_URL", "")  # blank = the default
-    calls, on_usage = recorder()
+    calls, on_usage = recorder
     http, seen = replay(completion('{"score": 4}'))
     out = TokenFactory(on_usage=on_usage, http=http).chat(MSGS, json_schema=SCORE, thinking=False, seed=7)
     body = json.loads(seen[0].content)
@@ -153,8 +184,8 @@ def test_json_schema_is_parsed_and_billed(replay, monkeypatch):
     assert calls == [(("token_factory", SUPER, 1000, 2000), {"usd": pytest.approx(SUPER_USD)})]
 
 
-def test_invalid_json_is_bad_output_billed_and_not_retried(replay):
-    calls, on_usage = recorder()
+def test_invalid_json_is_bad_output_billed_and_not_retried(replay, recorder):
+    calls, on_usage = recorder
     http, seen = replay(completion('{"score": ', finish_reason="length"))
     with pytest.raises(ProviderError) as e:
         TokenFactory(on_usage=on_usage, http=http).chat(MSGS, json_schema=SCORE)
@@ -162,8 +193,17 @@ def test_invalid_json_is_bad_output_billed_and_not_retried(replay):
     assert len(seen) == 1 and len(calls) == 1  # the tokens were spent
 
 
-def test_stream_chat_yields_deltas_then_bills(replay):
-    calls, on_usage = recorder()
+def test_reply_without_choices_is_billed_then_bad_output(replay, recorder):
+    calls, on_usage = recorder
+    http, _ = replay(httpx.Response(200, json={"model": SUPER, "choices": [],
+                                               "usage": {"prompt_tokens": 1000, "completion_tokens": 2000}}))
+    with pytest.raises(ProviderError) as e:
+        TokenFactory(on_usage=on_usage, http=http).chat(MSGS)
+    assert e.value.kind == "bad_output" and len(calls) == 1
+
+
+def test_stream_chat_yields_deltas_then_bills(replay, recorder):
+    calls, on_usage = recorder
     sse = "".join(f"data: {json.dumps(c)}\n\n" for c in [
         {"choices": [{"index": 0, "delta": {"role": "assistant", "content": "Hel"}}]},
         {"choices": [{"index": 0, "delta": {"content": "lo."}, "finish_reason": "stop"}]},
@@ -191,9 +231,7 @@ def test_stream_broken_after_first_chunk_is_a_provider_error(replay):
 
 # --- files, fine-tuning, LoRA ---------------------------------------------
 
-def test_fine_tuning_routes_and_best_checkpoint(replay, tmp_path, ft_priced):
-    train = tmp_path / "train.jsonl"
-    train.write_text('{"messages": [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]}\n')
+def test_fine_tuning_routes_and_best_checkpoint(replay, train, ft_priced):
     done = {**JOB, "status": "succeeded", "trained_tokens": 51234, "trained_steps": 12, "total_steps": 12}
     checkpoints = [
         {"id": "ftckpt-1", "step_number": 6, "metrics": {"train_loss": 1.2, "valid_loss": 0.9}, "result_files": ["file-a"]},
@@ -264,14 +302,16 @@ def test_lora_deploy_rejected_is_unsupported(replay, status):
 
 # --- STUB=1 ---------------------------------------------------------------
 
-def test_stub_is_deterministic_and_offline(monkeypatch, tmp_path):
+def test_stub_is_deterministic_and_offline(monkeypatch, train, recorder, replay):
     monkeypatch.setenv("STUB", "1")
     monkeypatch.delenv("NEBIUS_API_KEY")  # no key needed, nothing sent
-    calls, on_usage = recorder()
+    calls, on_usage = recorder
     tf = TokenFactory(on_usage=on_usage)
     a, b = tf.chat(MSGS, LLAMA), TokenFactory().chat(MSGS, LLAMA)  # unpriced is fine: nothing is spent
     assert a == b and a["text"].startswith("stub-") and len(a["text"]) == 13
     assert tf.chat([{"role": "user", "content": "other"}], LLAMA)["text"] != a["text"]
+    http, seen = replay()
+    assert TokenFactory(http=http).chat(MSGS, LLAMA) == a and seen == []  # STUB wins over an injected client
     assert (a["in_tokens"], a["out_tokens"], a["usd"]) == (0, 0, 0)
     assert calls[0] == (("token_factory", LLAMA, 0, 0), {"usd": 0.0})
 
@@ -284,8 +324,6 @@ def test_stub_is_deterministic_and_offline(monkeypatch, tmp_path):
     streamed = "".join(tf.stream_chat(MSGS, LLAMA))
     assert streamed == "".join(tf.stream_chat(MSGS, LLAMA)) and streamed.startswith("stub-")
 
-    train = tmp_path / "train.jsonl"
-    train.write_text("{}\n")
     file_id = tf.files.create(train)
     assert file_id == TokenFactory().files.create(train) and "-stub-" in file_id
     job = tf.fine_tuning.create(LLAMA, file_id, hyperparameters={"lora": True})

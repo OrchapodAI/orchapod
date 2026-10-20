@@ -32,6 +32,13 @@ def sleeps(monkeypatch):
 
 
 @pytest.fixture
+def recorder():
+    """(calls, on_usage): on_usage records each call as (args, kwargs)."""
+    calls = []
+    return calls, lambda *a, **k: calls.append((a, k))
+
+
+@pytest.fixture
 def replay():
     """replay(*answers) -> (httpx.Client, seen requests); each request gets the next answer (a Response, or an exception to raise)."""
     def make(*answers):

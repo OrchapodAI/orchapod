@@ -11,13 +11,8 @@ from packages.providers.base import ProviderError
 from packages.providers.tavily import Tavily
 
 
-def recorder():
-    calls = []
-    return calls, lambda *a, **k: calls.append((a, k))
-
-
-def test_search_sends_usage_flag_and_bills_credits(replay):
-    calls, on_usage = recorder()
+def test_search_sends_usage_flag_and_bills_credits(replay, recorder):
+    calls, on_usage = recorder
     hit = {"url": "https://www.hud.gov/fair-housing", "title": "Fair Housing Act", "content": "The Act ...", "score": 0.91}
     http, seen = replay(httpx.Response(200, json={"query": "fair housing act", "results": [hit],
                                                   "response_time": 1.2, "usage": {"credits": 2}}))
@@ -31,8 +26,8 @@ def test_search_sends_usage_flag_and_bills_credits(replay):
     assert calls == [(("tavily", "search"), {"credits": 2, "usd": pytest.approx(0.016)})]
 
 
-def test_extract_goes_out_in_batches_of_20_and_merges(replay):
-    calls, on_usage = recorder()
+def test_extract_goes_out_in_batches_of_20_and_merges(replay, recorder):
+    calls, on_usage = recorder
     urls = [f"https://example.org/{i}" for i in range(45)]
 
     def batch(urls_in, credits):
@@ -45,6 +40,24 @@ def test_extract_goes_out_in_batches_of_20_and_merges(replay):
     assert json.loads(seen[0].content)["extract_depth"] == "basic"
     assert len(out["results"]) == 42 and [f["url"] for f in out["failed_results"]] == [urls[0], urls[20], urls[40]]
     assert [k["credits"] for _, k in calls] == [4, 4, 1]
+
+
+def answer_without_usage(n_ok, n_failed=0):
+    return httpx.Response(200, json={"results": [{"url": f"https://x.example/{i}", "raw_content": "text"} for i in range(n_ok)],
+                                     "failed_results": [{"url": "https://x.example/gone", "error": "404"}] * n_failed})
+
+
+@pytest.mark.parametrize("call,credits", [
+    (lambda t: t.search("q"), 2),  # advanced, the default
+    (lambda t: t.search("q", search_depth="basic"), 1),
+    (lambda t: t.extract(["u"] * 8), 2),  # basic: 1 per 5 successful URLs (7 of 8 succeed); failed ones are free
+    (lambda t: t.extract(["u"] * 8, extract_depth="advanced"), 4),
+], ids=["search_advanced", "search_basic", "extract_basic", "extract_advanced"])
+def test_missing_usage_falls_back_to_the_credit_rule(replay, recorder, call, credits):
+    calls, on_usage = recorder
+    http, _ = replay(answer_without_usage(7, 1))
+    call(Tavily(on_usage=on_usage, http=http))
+    assert calls[0][1] == {"credits": credits, "usd": pytest.approx(credits * 0.008)}
 
 
 @pytest.mark.parametrize("status", [432, 433])
@@ -63,16 +76,18 @@ def test_missing_key_is_auth_error_before_send(replay, monkeypatch):
     assert e.value.kind == "auth" and seen == []
 
 
-def test_stub_is_deterministic_and_offline(monkeypatch):
+def test_stub_is_deterministic_and_offline(monkeypatch, recorder, replay):
     monkeypatch.setenv("STUB", "1")
     monkeypatch.delenv("TAVILY_API_KEY")
-    calls, on_usage = recorder()
+    calls, on_usage = recorder
     a = Tavily(on_usage=on_usage).search("fair housing act", max_results=3, include_raw_content=True)
     assert a == Tavily().search("fair housing act", max_results=3, include_raw_content=True)
     urls = [r["url"] for r in a["results"]]
     assert len(urls) == 3 and all(u.startswith("https://example.com/stub/") for u in urls) and len(set(urls)) == 3
     assert all(len(r["raw_content"]) >= 400 for r in a["results"])
     assert Tavily().search("other", max_results=3)["results"][0]["url"] != urls[0]
+    http, seen = replay()
+    assert Tavily(http=http).search("fair housing act", max_results=3, include_raw_content=True) == a and seen == []
     pages = Tavily().extract(["https://a.example/x", "https://b.example/y"])["results"]
     assert [p["url"] for p in pages] == ["https://a.example/x", "https://b.example/y"]
     assert all(len(p["raw_content"]) >= 400 for p in pages) and pages[0]["raw_content"] != pages[1]["raw_content"]

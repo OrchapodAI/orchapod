@@ -8,6 +8,7 @@ Retries per base.request; STUB=1 answers from a deterministic offline fake.
 from __future__ import annotations
 
 import json
+import math
 import os
 
 import httpx
@@ -26,7 +27,7 @@ class Tavily:
         self.api_key = os.environ.get("TAVILY_API_KEY") if api_key is None else api_key
         self.on_usage = on_usage
         self.stub = os.environ.get("STUB") == "1"
-        self.http = http or http_client(_stub)
+        self.http = http_client(_stub) if self.stub or http is None else http  # STUB never touches the network
 
     def search(self, query: str, *, search_depth: str = "advanced", max_results: int = 10,
                include_raw_content: bool = False, include_domains: list[str] | None = None, **params) -> dict:
@@ -51,7 +52,10 @@ class Tavily:
             raise ProviderError(P, "auth", None, "TAVILY_API_KEY is not set")
         data = request(self.http, P, "POST", f"{TAVILY_BASE}/{endpoint}", json={**body, "include_usage": True},
                        headers={"Authorization": f"Bearer {self.api_key}"}).json()
-        credits = (data.get("usage") or {}).get("credits", 0)
+        credits = (data.get("usage") or {}).get("credits")
+        if credits is None:  # the contract's rule: 1 (basic) or 2 (advanced) per search, or per 5 extracted URLs
+            per = 2 if body.get(f"{endpoint}_depth") == "advanced" else 1
+            credits = per if endpoint == "search" else per * math.ceil(len(data.get("results", [])) / 5)
         if self.on_usage:
             self.on_usage(P, endpoint, credits=credits, usd=credits * PRICES["tavily"]["credit"])
         return data
@@ -68,11 +72,9 @@ def _stub(request: httpx.Request) -> httpx.Response:
         return f"Stub page {i} for request {h}. {_FILLER}"
 
     if request.url.path == "/search":
+        raw = body.get("include_raw_content")
         results = [{"url": f"https://example.com/stub/{h}/{i}", "title": f"stub-{h}-{i}", "content": page(i),
-                    "score": 1.0} for i in range(body["max_results"])]
-        if body.get("include_raw_content"):
-            for r in results:
-                r["raw_content"] = r["content"]
+                    "score": 1.0, **({"raw_content": page(i)} if raw else {})} for i in range(body["max_results"])]
         return httpx.Response(200, json={"query": body["query"], "results": results, "usage": {"credits": 0}})
     return httpx.Response(200, json={"results": [{"url": u, "raw_content": page(i)} for i, u in enumerate(body["urls"])],
                                      "failed_results": [], "usage": {"credits": 0}})

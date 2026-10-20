@@ -12,7 +12,6 @@ This module is for the API to interact with R2 on behalf of the user.
 from __future__ import annotations
 
 import os
-from typing import Optional
 
 import boto3
 from botocore.config import Config

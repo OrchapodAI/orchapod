@@ -30,7 +30,6 @@ import json
 import os
 import urllib.error
 import urllib.request
-from pathlib import Path
 
 from orchapod import io, log
 
@@ -168,7 +167,6 @@ def run_self_instruct(teacher: TeacherCall, seed_prompts: list[str],
                       n_samples: int, temperature: float, max_tokens: int) -> list[dict]:
     rows = []
     batch_size = 8
-    per_call = max(1, n_samples // batch_size + 1)
     while len(rows) < n_samples:
         remaining = n_samples - len(rows)
         k = min(batch_size, remaining)

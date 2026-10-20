@@ -26,7 +26,7 @@ from sqlmodel import select
 
 from api.database import get_session
 from api.models.db import Workflow
-from api.executor.dag import compile_dag, workflow_to_graph_json
+from api.executor.dag import workflow_to_graph_json
 
 router = APIRouter()
 

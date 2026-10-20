@@ -21,10 +21,13 @@ jobs:
           cache: pip
 
       - name: Install test deps
-        run: pip install pytest pytest-asyncio httpx pyyaml pydantic boto3 aiosqlite sqlmodel fastapi redis huggingface_hub
+        run: pip install -r requirements-dev.txt -r apps/api/requirements.txt huggingface_hub ruff==0.17.1
+
+      - name: Lint
+        run: ruff check apps packages containers
 
       - name: Run tests
-        run: python -m pytest tests/ -v --tb=short
+        run: python -m pytest tests -q
 
   # ── 1. API Docker image ─────────────────────────────────────────────────────
   api:
@@ -113,6 +116,7 @@ jobs:
           - quantize
           - lm-eval
           - vllm-serve
+          - synth-distilabel
 
     steps:
       - uses: actions/checkout@v4

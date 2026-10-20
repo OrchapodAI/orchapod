@@ -255,7 +255,8 @@ async def _launch_run(run_id: uuid.UUID, workflow_yaml: str, run_inputs: dict) -
         except asyncio.CancelledError:
             pass  # cancellation is handled in cancel_run
         except Exception as exc:
-            import traceback, logging
+            import traceback
+            import logging
             logging.getLogger("api.runs").error("_launch_run crashed: %s\n%s", exc, traceback.format_exc())
         finally:
             _running_tasks.pop(run_id, None)

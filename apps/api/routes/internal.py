@@ -21,10 +21,6 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 
-# node_run_id (str) → running asyncio.Task for TTL termination.
-# Stored so the extend endpoint can cancel + reschedule it.
-_ttl_tasks: dict[str, asyncio.Task] = {}
-
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,6 +34,10 @@ from api.models.db import (
     Run, RunStatus,
 )
 from api.services.events import event_bus
+
+# node_run_id (str) → running asyncio.Task for TTL termination.
+# Stored so the extend endpoint can cancel + reschedule it.
+_ttl_tasks: dict[str, asyncio.Task] = {}
 
 router = APIRouter()
 

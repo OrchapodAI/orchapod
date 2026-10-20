@@ -39,7 +39,7 @@ from orchapod import io, log
 def start_teacher_vllm(model_path: Path) -> str:
     """Start vLLM server with the teacher model. Returns the base URL."""
     log.info(f"Starting teacher vLLM server with {model_path}")
-    proc = subprocess.Popen([
+    subprocess.Popen([
         "python", "-m", "vllm.entrypoints.openai.api_server",
         "--model", str(model_path),
         "--port", "8001",
@@ -101,7 +101,7 @@ def main():
     # Download training prompts
     train_path = io.download_input(train_data_uri, "/workspace/data")
     with open(train_path) as f:
-        train_examples = [json.loads(l) for l in f if l.strip()]
+        train_examples = [json.loads(line) for line in f if line.strip()]
 
     # Extract prompts only (user messages)
     prompts = []

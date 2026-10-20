@@ -242,7 +242,7 @@ def main():
 
     judge_path = io.download_input(judge_eval_uri, "/workspace")
     with open(judge_path) as f:
-        eval_set = [json.loads(l) for l in f if l.strip()]
+        eval_set = [json.loads(line) for line in f if line.strip()]
 
     # Run eval for each model
     all_results = {}
@@ -270,8 +270,10 @@ def main():
     # Write outputs
     report_json = io.local_path("eval_report.json")
     report_md   = io.local_path("comparison_table.md")
-    with open(report_json, "w") as f: json.dump(all_results, f, indent=2)
-    with open(report_md,   "w") as f: f.write(comparison_md)
+    with open(report_json, "w") as f:
+        json.dump(all_results, f, indent=2)
+    with open(report_md,   "w") as f:
+        f.write(comparison_md)
 
     io.write_output("eval_report_json",    report_json, kind="metrics")
     io.write_output("comparison_table_md", report_md,   kind="metrics")

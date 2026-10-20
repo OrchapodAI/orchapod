@@ -21,7 +21,6 @@ Demo dataset: argilla/databricks-dolly-15k-curated-en (5K rows, public)
 """
 
 import json
-import sys
 from pathlib import Path
 
 from orchapod import io, log

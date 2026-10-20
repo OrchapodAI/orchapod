@@ -71,7 +71,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D6 polish (empty, error, loading states; demo banner) · D7 screenshots — TODO
 ### qa
 - [x] P0 D1 CI on NebiusHackathon + repo ruff config so `make check` is green; synth-distilabel in the image matrix — DONE (e11757e)
-- [ ] P0 D2 CI pushes `:latest` on NebiusHackathon (R4); pins in requirements-dev.txt; never-awaited warning fixed — REVIEW(hack/qa-w1; rebase after backend-w1)
+- [ ] P0 D2 CI pushes `:latest` on NebiusHackathon (R4); pins in requirements-dev.txt; never-awaited warning fixed — APPROVED; rebase after backend-w1 and fold in review minors (loosen test_harness pins, delete _clear_ttl_tasks + order-coupled tests, conftest utcnow) (hack/qa-w1)
 - [ ] P2 56 remaining pytest warnings (mostly datetime.utcnow; list by owner in qa-w1 report) — TODO
 - [ ] P0 D2 provider contract tests from recorded responses + a $1/day real Token Factory call — TODO
 - [ ] P0 D3 scripts/e2e_demo.py (stub + real with --max-cost), nightly — TODO

@@ -31,7 +31,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D2 synth-distilabel structured mode for intent #2 (user_id, movie_title, action, timestamp, device) — TODO
 - [ ] P0 D2 Dockerfiles build from the repo root (synth-distilabel, data-prep: `COPY packages/sdk-py/orchapod`, `COPY containers/<node>/…`); delete synth-distilabel's byte-identical SDK copy — TODO
 - [ ] P0 D2 synth-distilabel: remove the Anthropic/OpenAI teacher branches and the openai/anthropic pip deps from its image (Nemotron via packages/providers only) — TODO (wave 2)
-- [ ] P0 D3 data-prep: exact + near dedupe, Lightning quality filter, train/val/test, TF dataset rules — TODO
+- [ ] P0 D3 data-prep: exact + near dedupe, train/val/test, TF dataset rules (quality filter → wave 2) — REVIEW(hack/data-w1 @ a623fe6; merge after backend-w1)
 ### ml-engineering
 - [ ] P1 D1 spike 4: Unsloth 16-bit LoRA on nvidia/Llama-3.1-Nemotron-Nano-8B-v1, vast.ai A100 (≤ $6 / 3 h) — IN_PROGRESS(ml-engineering, hack/ml-spike4)
 - [ ] P0 D2 all 8 Dockerfiles build from the repo root + test_dockerfiles.py; synth's vendored SDK deleted (R19) — REVIEW(hack/ml-w1)
@@ -49,7 +49,6 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D1 SDK: cost.json + metrics.json conventions — TODO
 - [ ] P0 D2 Orchapod Agent planner on Nemotron (Claude out of agent/workflow_builder.py) + POST /agent/plan — TODO
 - [ ] P0 D2 executor forwards only Nebius/Tavily/HF keys to containers (no ANTHROPIC/OPENAI); default provider_pref not vastai — TODO
-- [ ] P2 test fixture cancels internal._ttl_tasks (RuntimeWarning: _terminate_after_ttl never awaited) — TODO
 - [ ] P1 D3 checkpoint-resume never fires (looks in a fresh NodeRun's empty outputs); drop the 19 debug log.warning lines in the executor — TODO
 - [ ] P0 D2 remote logs: public ORCHAPOD_CONTROL_URL, WebSocket fan-out verified — TODO
 - [ ] P0 D2 lineage + cost roll-up; GET /runs/{id}/summary — TODO
@@ -66,8 +65,8 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D6 polish (empty, error, loading states; demo banner) · D7 screenshots — TODO
 ### qa
 - [x] P0 D1 CI on NebiusHackathon + repo ruff config so `make check` is green; synth-distilabel in the image matrix — DONE (e11757e)
-- [ ] P0 D2 CI pushes `:latest` on NebiusHackathon (contracts R4) — TODO
-- [ ] P2 requirements-dev.txt gets huggingface_hub + ruff==0.17.1 (drop the inline CI install tail); 58 pytest warnings (mostly datetime.utcnow) — TODO
+- [ ] P0 D2 CI pushes `:latest` on NebiusHackathon (R4); pins in requirements-dev.txt; never-awaited warning fixed — REVIEW(hack/qa-w1; rebase after backend-w1)
+- [ ] P2 56 remaining pytest warnings (mostly datetime.utcnow; list by owner in qa-w1 report) — TODO
 - [ ] P0 D2 provider contract tests from recorded responses + a $1/day real Token Factory call — TODO
 - [ ] P0 D3 scripts/e2e_demo.py (stub + real with --max-cost), nightly — TODO
 - [ ] P0 D3 scripts/e2e_agent.py for the three canonical intents — TODO

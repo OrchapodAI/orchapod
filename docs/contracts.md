@@ -296,4 +296,5 @@ API code reads these through `apps/api/config.py` (`settings`, one pydantic-sett
 - R13 frontend: buildYamlFromGraph must JSON.stringify object inputs (row_schema).
 - R14 Lane B runs stay under the $3 cap: at most 25 min of H100 plus at most 30 min of L40S endpoint (about $2.8). A larger run needs Hari's yes.
 - R15 Hosted Nebius auth: the CLI with a service-account profile on the host is acceptable until G2; the JWT exchange moves into code only if the host cannot run the CLI.
+- R16 The PRICES numbers live in packages/sdk-py/orchapod/prices.py (owned by platform). `orchapod.cost` re-exports them, so `orchapod.cost.PRICES` still works, and the provider clients import `orchapod.prices.PRICES`. This lets the clients and the SDK land in parallel.
 - Pending spikes: spike 1 decides tf-deploy (/v0/models vs vllm-serve + lora_adapter vs Dedicated endpoint) and the exact 8B model id (meta-llama/Meta-Llama-3.1-8B-Instruct per TF's fine-tune list); spike 2 decides the thinking switch; spike 4 decides the Lane B student and whether vLLM loads its LoRA.

@@ -49,6 +49,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D1 SDK: cost.json + metrics.json conventions — TODO
 - [ ] P0 D2 Orchapod Agent planner on Nemotron (Claude out of agent/workflow_builder.py) + POST /agent/plan — TODO
 - [ ] P0 D2 executor forwards only Nebius/Tavily/HF keys to containers (no ANTHROPIC/OPENAI); default provider_pref not vastai — TODO
+- [ ] P2 test fixture cancels internal._ttl_tasks (RuntimeWarning: _terminate_after_ttl never awaited) — TODO
 - [ ] P1 D3 checkpoint-resume never fires (looks in a fresh NodeRun's empty outputs); drop the 19 debug log.warning lines in the executor — TODO
 - [ ] P0 D2 remote logs: public ORCHAPOD_CONTROL_URL, WebSocket fan-out verified — TODO
 - [ ] P0 D2 lineage + cost roll-up; GET /runs/{id}/summary — TODO
@@ -64,7 +65,8 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P1 D3 hide Vast.ai/RunPod surfaces from the demo path (one-click deploy, /inference + /endpoints pages); loss chart never receives data — wire it to loss_curve.json — TODO
 - [ ] P0 D6 polish (empty, error, loading states; demo banner) · D7 screenshots — TODO
 ### qa
-- [ ] P0 D1 CI on NebiusHackathon + repo ruff config so `make check` is green; synth-distilabel in the image matrix — REVIEW(hack/qa-check @ 7e77488)
+- [x] P0 D1 CI on NebiusHackathon + repo ruff config so `make check` is green; synth-distilabel in the image matrix — DONE (e11757e)
+- [ ] P2 requirements-dev.txt gets huggingface_hub + ruff==0.17.1 (drop the inline CI install tail); 58 pytest warnings (mostly datetime.utcnow) — TODO
 - [ ] P0 D2 provider contract tests from recorded responses + a $1/day real Token Factory call — TODO
 - [ ] P0 D3 scripts/e2e_demo.py (stub + real with --max-cost), nightly — TODO
 - [ ] P0 D3 scripts/e2e_agent.py for the three canonical intents — TODO
@@ -112,4 +114,4 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 ## Spend to date (per day, per key)
 - 2026-10-20: $0
 ## Golden path status (last real run: id, date, cost, result)
-- Never run end to end. Baseline 2026-10-20: pytest 153 passed; ruff 168 findings (no repo config yet); gitleaks clean (1 triaged false positive).
+- Never run end to end. `make check` green since e11757e (ruff E4/E7/E9/F clean, pytest 153 passed); gitleaks clean (1 triaged false positive).

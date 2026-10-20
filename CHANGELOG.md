@@ -5,6 +5,7 @@ Dated, user-facing changes made during the Nebius × NVIDIA hackathon submission
 ## 2026-10-20
 - Repo hygiene: removed a committed SQLite database, compiled Python files and a stray worktree copy; one workflow-schema package instead of two.
 - Hackathon build harness: operating manual, plan, state board and journal under `hackathon/`; project hooks and seven agent roles under `.claude/`; `make up / check / e2e / agent-e2e / demo / checkpoint`.
+- Quality gate: `make check` is green — ruff pinned to a minimal rule set with 30 lint fixes; CI runs lint and the 153 unit tests on every push.
 - Started the interface contracts (`docs/contracts.md`) and the Orchapod Agent knowledge base (`docs/agent_knowledge.md`).
 
 ## 2026-10-02 – 2026-10-08 (Purva)

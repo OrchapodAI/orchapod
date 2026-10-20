@@ -36,6 +36,7 @@ log = logging.getLogger("api.executor")
 
 # run_id → the task executing it. One API worker (see ORCHAPOD_INTERNAL_SECRET).
 running_tasks: dict[uuid.UUID, asyncio.Task] = {}
+_background: set[asyncio.Task] = set()  # startup-sweep terminations, referenced until done
 
 # SDK-formatted stdout lines already reached the UI through /internal/log or /internal/progress.
 _SDK_LINE = re.compile(r"\[[^\]]+\] \[(INFO|WARN|ERROR|PROGRESS)\] ")
@@ -179,10 +180,7 @@ async def _execute_node(
     except TimeoutError:
         raise NodeFailed(f"timeout after {timeout:g} s")
     finally:
-        try:
-            await provider.terminate(pod)  # cancel/timeout: SIGTERM, 30 s grace, kill; after exit: cleanup
-        except Exception as e:
-            log.warning("terminate %s failed: %s", pod.pod_id, e)
+        await _terminate(provider, pod)  # cancel/timeout: SIGTERM, 30 s grace, kill; after exit: cleanup
         await asyncio.wait({stream}, timeout=5)  # drain the tail of stdout
         stream.cancel()
 
@@ -190,6 +188,13 @@ async def _execute_node(
     if exit_code != 0:
         raise NodeFailed(f"exit {exit_code}: {node_run.error}" if node_run.error else f"exit {exit_code}")
     return node_run.outputs or {}
+
+
+async def _terminate(provider, pod) -> None:
+    try:
+        await provider.terminate(pod)
+    except Exception as e:
+        log.warning("terminate %s failed: %s", pod.pod_id, e)
 
 
 async def _stream_stdout(provider, pod, node_run: NodeRun, broadcast: Broadcast) -> None:
@@ -270,7 +275,7 @@ async def sweep(db: AsyncSession) -> None:
     from packages.providers.base import Pod
 
     orphans = (await db.scalars(select(Run).where(Run.status.in_([RunStatus.PROVISIONING_GPU, RunStatus.RUNNING])))).all()
-    terminations = []
+    pods = []
     now = utcnow()
     for run in orphans:
         rows = {n.node_id: n for n in await db.scalars(select(NodeRun).where(NodeRun.run_id == run.id))}
@@ -281,10 +286,11 @@ async def sweep(db: AsyncSession) -> None:
                 provider = (await pick_local_docker(None))[0] if node_run.gpu_provider == "local-docker" \
                     else get_providers().get(node_run.gpu_provider)
                 if provider:
-                    terminations.append(provider.terminate(Pod(provider=node_run.gpu_provider, pod_id=node_run.gpu_pod_id)))
+                    pods.append((provider, Pod(provider=node_run.gpu_provider, pod_id=node_run.gpu_pod_id)))
             node_run.status, node_run.error, node_run.finished_at = NodeStatus.FAILED, "control plane restarted", now
         run.status, run.finished_at = RunStatus.FAILED, now
     await db.commit()
-    for result in await asyncio.gather(*terminations, return_exceptions=True):
-        if isinstance(result, Exception):
-            log.warning("sweep: terminate failed: %s", result)
+    for provider, pod in pods:  # in the background: the API must be serving when the nodes post their last cost_json
+        task = asyncio.create_task(_terminate(provider, pod))
+        _background.add(task)
+        task.add_done_callback(_background.discard)

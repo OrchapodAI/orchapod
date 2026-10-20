@@ -259,6 +259,8 @@ async def test_startup_sweep_fails_orphaned_runs(db, provider):
     await db.commit()
 
     await ex.sweep(db)  # a workflow that no longer compiles must not stop the API from starting
+    assert provider.terminated == []  # terminations run after startup, once the API can take the nodes' last posts
+    await asyncio.wait(set(ex._background))
 
     for r in (run, between, done, stale):
         await db.refresh(r)

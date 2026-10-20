@@ -34,7 +34,8 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D2 Dockerfiles build from the repo root (synth-distilabel, data-prep: `COPY packages/sdk-py/orchapod`, `COPY containers/<node>/…`); delete synth-distilabel's byte-identical SDK copy — TODO
 - [ ] P0 D2 data-engineering reviews the R19 diffs of its two Dockerfiles (synth-distilabel, data-prep) — TODO (wave 2)
 - [ ] P0 D2 synth-distilabel: remove the Anthropic/OpenAI teacher branches and the openai/anthropic pip deps from its image (Nemotron via packages/providers only) — TODO (wave 2)
-- [ ] P0 D3 data-prep: exact + near dedupe, train/val/test, TF dataset rules (quality filter → wave 2) — REVIEW(hack/data-w1 @ a623fe6; merge after backend-w1)
+- [ ] P0 D3 data-prep: exact + near dedupe, train/val/test, TF dataset rules (quality filter → wave 2) — APPROVED, waits for backend-w1 (hack/data-w1 @ a623fe6)
+- [ ] P1 data-prep minors (review of data-w1): unhashable role crashes instead of dropping (move tf_valid inside the try); CSV keep_default_na=False; small-n test split can be empty; log before near-dedupe; tests for missing dataset, CSV, eval/test composition — TODO (with quality_filter, wave 2)
 ### ml-engineering
 - [ ] P1 D1 spike 4: Unsloth 16-bit LoRA on nvidia/Llama-3.1-Nemotron-Nano-8B-v1, vast.ai A100 (≤ $6 / 3 h) — IN_PROGRESS(ml-engineering, hack/ml-spike4)
 - [x] P0 D2 all 8 Dockerfiles build from the repo root + test_dockerfiles.py; synth's vendored SDK deleted (R19) — DONE (a298ea1)

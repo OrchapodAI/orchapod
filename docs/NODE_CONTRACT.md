@@ -66,6 +66,10 @@ if __name__ == "__main__":
     main()
 ```
 
+## Calling Token Factory and Tavily
+
+Only through `packages.providers`: `TokenFactory(on_usage=cost.add).chat(messages, model, json_schema=schema)` and `Tavily(on_usage=cost.add).extract(urls)`. The clients own retries, the $ of every call (`orchapod.prices.PRICES`; an unpriced model is refused before anything is sent), the rule that `NEBIUS_API_KEY` only goes to `NEBIUS_BASE_URL`, and `STUB=1` (deterministic fakes, no network). Every failure is a `ProviderError`; log `str(e)` as the node's last ERROR line.
+
 ## Adding a new node
 
 1. Create `containers/{node-name}/Dockerfile`

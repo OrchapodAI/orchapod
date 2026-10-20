@@ -1,9 +1,10 @@
 import type {
   Workflow, Run, NodeRun, Artifact, BaseModel, PublicDataset, NodeTypeMeta, NodeType, TrainingMethod,
   DeployRequest, DeployResponse, InferenceEndpoint, ExtendResponse, RegisteredModel, ArtifactListItem,
+  AgentPlan, AgentRunOut, AgentReport, Plan,
 } from "./types";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
@@ -11,10 +12,28 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   });
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`${res.status} ${path}: ${body}`);
+    const text = await res.text();
+    let body: unknown = text;
+    try { body = JSON.parse(text); } catch { /* not JSON: keep the text */ }
+    throw Object.assign(new Error(`${res.status} ${path}: ${text}`), { status: res.status, path, body });
   }
   return res.json() as Promise<T>;
+}
+
+/** One readable sentence for a failed call: the /agent page's error state. */
+export function explainError(err: unknown): string {
+  const { status, path, body } = err as { status?: number; path?: string; body?: unknown };
+  if (status === undefined) {
+    return err instanceof TypeError ? `Can't reach the Orchapod API at ${BASE}. Is it running?` : String((err as Error)?.message ?? err);
+  }
+  const raw = (body as { detail?: unknown } | null)?.detail ?? body;
+  const detail = Array.isArray(raw) ? raw.map((d) => d?.msg ?? JSON.stringify(d)).join("; ")
+    : typeof raw === "string" ? raw : JSON.stringify(raw);
+  if (status === 404 && detail === "Not Found") return `The API at ${BASE} has no ${path} route yet (404).`;
+  if (status === 402) return `Over budget: ${detail}`;
+  if (status === 502) return `Nemotron on Token Factory did not answer after retries (502): ${detail}`;
+  if (status === 503) return `The agent is switched off (503): ${detail}. The kill switch is on or NEBIUS_API_KEY is missing.`;
+  return status === 422 ? detail : `${status} on ${path}: ${detail}`;
 }
 
 // ── Workflows ─────────────────────────────────────────────────────────────────
@@ -119,6 +138,19 @@ export const api = {
           ).toString()
         : "";
       return req(`/artifacts${qs}`);
+    },
+  },
+
+  /** Orchapod Agent (docs/contracts.md "Agent API"). */
+  agent: {
+    plan(intent: string): Promise<AgentPlan> {
+      return req("/agent/plan", { method: "POST", body: JSON.stringify({ intent }) });
+    },
+    run(intent: string, plan: Plan): Promise<AgentRunOut> {
+      return req("/agent/run", { method: "POST", body: JSON.stringify({ intent, plan }) });
+    },
+    report(runId: string): Promise<AgentReport> {
+      return req(`/agent/runs/${runId}/report`);
     },
   },
 

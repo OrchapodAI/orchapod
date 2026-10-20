@@ -3,6 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { yamlValue, buildYamlFromGraph, planYaml } from "../../apps/web/lib/workflowYaml.ts";
+import { api, explainError } from "../../apps/web/lib/api.ts";
 
 const node = (id: string, node_type: string, inputs: Record<string, unknown>) =>
   ({ id, position: { x: 0, y: 0 }, data: { label: id, node_type, inputs, resources: {} } }) as never;
@@ -56,4 +57,22 @@ test("planYaml turns an agent plan into workflow YAML; empty inputs stay a mappi
     "  - id: synth", "    type: synth-distilabel", "    inputs: {}",
     "  - id: prep", "    type: data-prep", "    needs: [synth]", "    inputs:", "      format: structured",
   ].join("\n"));
+});
+
+test("a failed call rejects with its status, path and parsed body", async () => {
+  globalThis.fetch = async () => new Response('{"detail":"Not Found"}', { status: 404 });
+  await assert.rejects(api.agent.plan("movie likes"), (e: { status: number; path: string; body: { detail: string } }) =>
+    e.status === 404 && e.path === "/agent/plan" && e.body.detail === "Not Found");
+});
+
+test("explainError turns each agent failure into a readable sentence", () => {
+  const http = (status: number, path: string, body: unknown) => Object.assign(new Error(String(status)), { status, path, body });
+  assert.equal(explainError(new TypeError("Failed to fetch")), "Can't reach the Orchapod API at http://localhost:8001. Is it running?");
+  assert.equal(explainError(http(404, "/agent/plan", { detail: "Not Found" })), "The API at http://localhost:8001 has no /agent/plan route yet (404).");
+  assert.equal(explainError(http(404, "/agent/runs/r1/report", { detail: "not an agent run" })), "404 on /agent/runs/r1/report: not an agent run");
+  assert.equal(explainError(http(422, "/agent/plan", { detail: [{ msg: "String should have at most 2000 characters" }] })), "String should have at most 2000 characters");
+  assert.match(explainError(http(402, "/agent/run", { detail: "day cap $15 reached" })), /^Over budget: day cap \$15 reached/);
+  assert.match(explainError(http(502, "/agent/plan", { detail: "token_factory server 503" })), /Token Factory/);
+  assert.match(explainError(http(503, "/agent/plan", { detail: "kill switch" })), /kill switch/);
+  assert.equal(explainError(http(500, "/agent/plan", "Internal Server Error")), "500 on /agent/plan: Internal Server Error");
 });

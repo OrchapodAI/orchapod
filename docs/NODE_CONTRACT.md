@@ -78,6 +78,8 @@ Only through `packages.providers`: `TokenFactory(on_usage=cost.add).chat(message
 4. Register in `NODE_REGISTRY` in the same file
 5. Build and push: `bash scripts/build-and-push-containers.sh`
 
+Local runs use `orchapod/<node>:dev` when that image exists (`docker build -t orchapod/<node>:dev -f containers/<node>/Dockerfile .`), else `${ORCHAPOD_IMAGE_PREFIX:-ghcr.io/bangadpurva}/<node>:latest`, which docker pulls. Cancel stops a container with SIGTERM and a 30 s grace before SIGKILL.
+
 That's it. The executor, canvas, and agent pick it up automatically.
 
 ## Key invariants

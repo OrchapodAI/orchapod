@@ -16,9 +16,9 @@ Why this exists:
     workflow finishes locally with no GPU provider configured.
 
 Contract assumptions:
-  - The image is already pulled / built locally (we look for tags named
-    `orchapod/<node-type>:dev` first, then `:latest`, then the executor's
-    default `ghcr.io/orchapod/<node-type>:latest`).
+  - Image: `orchapod/<node-type>:dev` when built locally, else
+    `${ORCHAPOD_IMAGE_PREFIX:-ghcr.io/bangadpurva}/<node-type>:latest`, which
+    docker pulls (contracts "Images, LocalDocker").
   - The control plane and MinIO are reachable from inside the container via
     `host.docker.internal` (Docker Desktop default on macOS/Windows; works
     via `--add-host=host.docker.internal:host-gateway` on Linux).
@@ -68,24 +68,11 @@ def _rewrite_env(env: dict[str, str]) -> dict[str, str]:
 
 
 def _resolve_image(image: str) -> str:
-    """Pick a locally-available image tag for the requested node.
-
-    The executor passes `ghcr.io/orchapod/<node>:latest` by default, which
-    we won't have built locally. We try `orchapod/<node>:dev` first (what
-    `docker build -t ...` produces from each container's Dockerfile), then
-    `orchapod/<node>:latest`, and finally fall back to whatever was passed.
-    """
-    if image.startswith("ghcr.io/orchapod/"):
-        node_type = image[len("ghcr.io/orchapod/"):].split(":", 1)[0]
-        for candidate in (f"orchapod/{node_type}:dev", f"orchapod/{node_type}:latest"):
-            if _image_exists(candidate):
-                return candidate
-        raise ProvisionError(
-            f"No local image found for node type {node_type!r}. Build it with:\n"
-            f"  docker build -t orchapod/{node_type}:dev "
-            f"-f containers/{node_type}/Dockerfile ."
-        )
-    return image
+    """`orchapod/<type>:dev` if built locally, else `${ORCHAPOD_IMAGE_PREFIX:-ghcr.io/bangadpurva}/<type>:latest`."""
+    node_type = image.rsplit("/", 1)[-1].split(":", 1)[0]
+    if _image_exists(f"orchapod/{node_type}:dev"):
+        return f"orchapod/{node_type}:dev"
+    return f"{os.environ.get('ORCHAPOD_IMAGE_PREFIX') or 'ghcr.io/bangadpurva'}/{node_type}:latest"
 
 
 def _image_exists(tag: str) -> bool:
@@ -206,10 +193,10 @@ class LocalDockerProvider:
             return 1
 
     async def terminate(self, pod: Pod) -> None:
-        """Stop + remove. With `--rm` the container should already be gone after
-        exit, but call `docker rm -f` defensively. Best-effort."""
-        proc = await asyncio.create_subprocess_exec(
-            "docker", "rm", "-f", pod.pod_id,
-            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-        )
-        await proc.communicate()  # ignore exit code — best-effort cleanup
+        """SIGTERM, 30 s grace, then SIGKILL (`docker stop -t 30`), then `docker rm -f`. Best-effort: with
+        `--rm` the container may already be gone, so exit codes are ignored."""
+        for argv in (("docker", "stop", "-t", "30", pod.pod_id), ("docker", "rm", "-f", pod.pod_id)):
+            proc = await asyncio.create_subprocess_exec(
+                *argv, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc.communicate()

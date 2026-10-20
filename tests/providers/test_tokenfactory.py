@@ -137,7 +137,8 @@ def test_missing_key_is_auth_error_before_send(replay, monkeypatch):
 
 # --- chat -----------------------------------------------------------------
 
-def test_json_schema_is_parsed_and_billed(replay):
+def test_json_schema_is_parsed_and_billed(replay, monkeypatch):
+    monkeypatch.setenv("NEBIUS_BASE_URL", "")  # blank = the default
     calls, on_usage = recorder()
     http, seen = replay(completion('{"score": 4}'))
     out = TokenFactory(on_usage=on_usage, http=http).chat(MSGS, json_schema=SCORE, thinking=False, seed=7)

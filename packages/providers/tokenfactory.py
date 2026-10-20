@@ -32,7 +32,7 @@ class TokenFactory:
 
     def __init__(self, api_key: str | None = None, *, on_usage=None, http: httpx.Client | None = None):
         self.api_key = os.environ.get("NEBIUS_API_KEY") if api_key is None else api_key
-        self.base_url = os.environ.get("NEBIUS_BASE_URL", TF_BASE).rstrip("/")
+        self.base_url = (os.environ.get("NEBIUS_BASE_URL") or TF_BASE).rstrip("/")
         self.on_usage = on_usage
         self.stub = os.environ.get("STUB") == "1"
         self.http = http or http_client(_stub)

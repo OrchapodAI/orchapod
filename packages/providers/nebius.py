@@ -29,7 +29,7 @@ from typing import AsyncIterator
 
 import httpx
 
-from .base import GPUProvider, GPUSpec, Quote, Pod, ProvisionError
+from .base import GPUSpec, Quote, Pod, ProvisionError
 
 # Nebius Compute REST API (eu-north1 is the primary GPU region)
 _COMPUTE_BASE = "https://compute.api.eu-north1.nebius.cloud/compute/v1"

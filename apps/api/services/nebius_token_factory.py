@@ -161,7 +161,8 @@ async def judge_response(
         temperature=0.0,
         max_tokens=256,
     )
-    import json, re
+    import json
+    import re
     # Extract JSON even if the model wraps it in markdown fences
     m = re.search(r"\{[^}]+\}", raw, re.DOTALL)
     if m:

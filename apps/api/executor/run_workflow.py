@@ -24,7 +24,7 @@ from typing import Any, Callable, Awaitable
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from api.models.db import Run, NodeRun, Artifact, RunStatus, NodeStatus
+from api.models.db import Run, NodeRun, RunStatus, NodeStatus
 from api.executor.dag import compile_dag, DAGNode
 
 Broadcast = Callable[[uuid.UUID, dict], Awaitable[None]]
@@ -136,7 +136,6 @@ async def _execute_node(
 
     # Provision pod
     try:
-        from packages.providers.base import ProvisionError
         pod = await provider.provision(gpu_spec=gpu_spec, image=image, env=env)
     except Exception as e:
         raise NodeFailed(f"Provision failed: {e}")

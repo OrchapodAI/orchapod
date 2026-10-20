@@ -77,6 +77,5 @@ def get_method(method_id: str) -> TrainingMethod | None:
 
 
 if __name__ == "__main__":
-    import json
     for m in TRAINING_METHOD_REGISTRY.values():
         print(f"  {m.method_id:<22}  {m.display_name}  [{m.runtime}]  {m.container}")

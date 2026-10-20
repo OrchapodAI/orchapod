@@ -34,7 +34,7 @@ import shlex
 import shutil
 from typing import AsyncIterator
 
-from packages.providers.base import GPUProvider, GPUSpec, Pod, ProvisionError, Quote
+from packages.providers.base import GPUSpec, Pod, ProvisionError, Quote
 
 
 log = logging.getLogger("orchapod.local_docker")

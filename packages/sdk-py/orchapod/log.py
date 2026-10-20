@@ -8,8 +8,6 @@ Streams log lines to the control plane via webhook → SSE → frontend run view
 from __future__ import annotations
 import json
 import os
-import sys
-import time
 import urllib.request
 from datetime import datetime, timezone
 

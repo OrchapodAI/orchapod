@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import anthropic
 
-from packages.workflow_schema.models import NODE_REGISTRY, NodeType
+from packages.workflow_schema.models import NODE_REGISTRY
 
 
 SYSTEM_PROMPT = """

@@ -5,9 +5,9 @@ WORKDIR /workspace
 RUN pip install --no-cache-dir boto3 openai anthropic
 
 # Copy the SDK directly (not on PyPI)
-COPY sdk/ /workspace/orchapod/
+COPY packages/sdk-py/orchapod /workspace/orchapod/
 
-COPY run.py /workspace/run.py
+COPY containers/synth-distilabel/run.py /workspace/run.py
 
 ENV PYTHONUNBUFFERED=1
 

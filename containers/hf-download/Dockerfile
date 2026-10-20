@@ -12,7 +12,7 @@ RUN pip install --no-cache-dir \
 ENV HF_HUB_ENABLE_HF_TRANSFER=1
 
 # SDK and container entry point
-COPY ../../packages/sdk-py/orchapod /app/orchapod
-COPY run.py /app/run.py
+COPY packages/sdk-py/orchapod /app/orchapod
+COPY containers/hf-download/run.py /app/run.py
 
 CMD ["python3", "run.py"]

@@ -8,6 +8,6 @@ RUN curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/downloa
     && rm /tmp/cloudflared.deb
 
 RUN pip install boto3 --no-cache-dir
-COPY ../../packages/sdk-py/orchapod /app/orchapod
-COPY run.py /app/run.py
+COPY packages/sdk-py/orchapod /app/orchapod
+COPY containers/vllm-serve/run.py /app/run.py
 CMD ["python", "run.py"]

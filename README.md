@@ -163,8 +163,8 @@ cd apps/web && pnpm install && pnpm dev
 CPU nodes run locally via Docker. Build the container once:
 
 ```bash
-docker build -t ghcr.io/orchapod/synth-distilabel:latest \
-  containers/synth-distilabel/
+docker build -t orchapod/synth-distilabel:dev \
+  -f containers/synth-distilabel/Dockerfile .   # context is the repo root
 ```
 
 ### 7. Run the demo workflow

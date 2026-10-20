@@ -68,7 +68,7 @@ if __name__ == "__main__":
 
 ## Adding a new node
 
-1. Create `containers/{node-name}/Dockerfile`
+1. Create `containers/{node-name}/Dockerfile`; the build context is the repo root, so it does `COPY packages/sdk-py/orchapod /app/orchapod` and `COPY containers/{node-name}/run.py /app/run.py` (enforced by `tests/containers/test_dockerfiles.py`)
 2. Create `containers/{node-name}/run.py` (follow template above)
 3. Add input/output schemas to `packages/workflow_schema/models.py`
 4. Register in `NODE_REGISTRY` in the same file

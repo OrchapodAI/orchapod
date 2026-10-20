@@ -15,7 +15,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D1 contracts session → docs/contracts.md merged — IN_PROGRESS(platform, data-engineering, ml-engineering, backend; read-only proposals)
 - [ ] P0 D3+ merge twice a day; nightly real e2e; G2 call D5; freeze D7; submit D9 — TODO
 ### platform
-- [ ] P0 D1 spike 1: 50 rows → TF LoRA fine-tune Llama-3.1-8B → /v0/models deploy → one chat call — BLOCKED(NEBIUS_API_KEY)
+- [ ] P0 D1 spike 1 (now decisive): 50 rows → TF LoRA fine-tune meta-llama/Meta-Llama-3.1-8B-Instruct → try POST /v0/models deploy → one chat call; ALSO dump the raw job + checkpoint JSON and test whether adapter files can be downloaded — BLOCKED(NEBIUS_API_KEY)
 - [ ] P0 D1 TF client: api.tokenfactory.nebius.com, retries, guided JSON, per-call token + $ accounting — TODO
 - [ ] P0 D1 fine-tuning client: files, LoRA job, poll status/events, checkpoints, best by val loss — TODO
 - [ ] P0 D1 LoRA deploy client: POST /v0/models, poll to active, delete on cleanup — TODO
@@ -91,10 +91,12 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 
 ## Blockers
 - NEBIUS_API_KEY and TAVILY_API_KEY missing → spikes 1–3 and all live checks.
+- RISK (P0, Lane A): Token Factory docs (checked 2026-10-20) say Meta fine-tunes deploy "only via Dedicated endpoints"; the serverless-deploy page is 404; custom weights on Dedicated endpoints are "beta, available on request"; Llama-3.3-70B left TF serverless 2026-08-31 (ml-engineering). Fallbacks in order: (a) /v0/models still works → as planned; (b) adapter downloadable → merge + GGUF on a Nebius CPU VM via llama.cpp (no GPU quota) or vLLM + LoRA on an AI Cloud Serverless Endpoint (needs quota); (c) Dedicated-endpoint custom-weights beta via Nebius Support; (d) Lane B serves the tuned model.
 
 ## Human actions
 - [ ] Token Factory key → .env NEBIUS_API_KEY; redeem $25 promo (nebius.com/promo-code, NEBIUS-DEVPOST-GLOBAL26); join the Builders Program (dev.nebius.com/builders) for +$25 TF and +$25 Tavily
 - [ ] Tavily key → .env TAVILY_API_KEY
+- [ ] URGENT: ask Nebius (Discord / Token Factory Support): is per-token LoRA deploy (POST /v0/models) still available for Llama-3.1-8B fine-tunes, and can we join the custom-weights beta for Dedicated endpoints? GPU quota is now critical for both lanes
 - [ ] AI Cloud project + billing; quota request 1× H100 (gpu-h100-sxm), 1× L40S, 1 VM, 1 VPC — file today, post in the Nebius Discord; Object Storage bucket + service account
 - [ ] GHCR packages public (owner bangadpurva → Purva)
 - [ ] Devpost team + draft project (Best Apps and Agents)

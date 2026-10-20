@@ -210,7 +210,7 @@ orchapod/
 │   ├── providers/
 │   │   ├── nebius.py               # ← NEW: Nebius AI Cloud GPU provider
 │   │   └── vastai.py               # Fallback GPU provider
-│   └── workflow-schema/models.py  # Node types + resource specs
+│   └── workflow_schema/models.py  # Node types + resource specs
 │
 ├── containers/                     # One container per node type
 │   ├── lm-eval/run.py              # ← UPDATED: Nemotron Ultra judge via Token Factory

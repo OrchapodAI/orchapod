@@ -1,5 +1,5 @@
 """
-packages/workflow-schema/models.py
+packages/workflow_schema/models.py
 (Canonical location. Python-importable copy lives in packages/workflow_schema/models.py)
 
 Pydantic models for the YAML workflow DSL.

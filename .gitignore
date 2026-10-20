@@ -15,13 +15,18 @@ node_modules/
 *.tsbuildinfo
 next-env.d.ts
 
-# Claude Code
-.claude/
+# Claude Code (settings.json and agents/ are committed)
+.claude/worktrees/
+.claude/settings.local.json
+.claire/
 
 # Env
 .env
 .env.local
 .env.*.local
+
+# Local databases
+*.db
 
 # OS
 .DS_Store

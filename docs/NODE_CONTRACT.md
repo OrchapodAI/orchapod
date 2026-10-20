@@ -70,7 +70,7 @@ if __name__ == "__main__":
 
 1. Create `containers/{node-name}/Dockerfile`
 2. Create `containers/{node-name}/run.py` (follow template above)
-3. Add input/output schemas to `packages/workflow-schema/models.py`
+3. Add input/output schemas to `packages/workflow_schema/models.py`
 4. Register in `NODE_REGISTRY` in the same file
 5. Build and push: `bash scripts/build-and-push-containers.sh`
 

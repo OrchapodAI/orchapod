@@ -11,7 +11,7 @@ The canvas auto-generates config forms from these models.
 from __future__ import annotations
 from enum import Enum
 from typing import Any, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -41,6 +41,8 @@ class DataFormat(str, Enum):
     CHATML    = "chatml"
     ALPACA    = "alpaca"
     SHAREGPT  = "sharegpt"
+    QA        = "qa"
+    STRUCTURED = "structured"
 
 
 class QuantizeMethod(str, Enum):
@@ -71,14 +73,25 @@ class ResourceSpec(BaseModel):
 # ---------------------------------------------------------------------------
 
 class DataPrepInputs(BaseModel):
-    dataset: str = Field(description="URI to JSONL/CSV or HuggingFace dataset name")
-    format: DataFormat = Field(default=DataFormat.CHATML)
+    dataset: str = Field(description="r2:// URI (JSONL unless the name ends in .csv), hf://<id> or <org>/<name>")
+    hf_config: str | None = Field(default=None, description="Hugging Face config, e.g. 'main' for openai/gsm8k")
+    hf_split: str = Field(default="train", description="Hugging Face split; slices work, e.g. 'test[:50]'")
+    format: DataFormat = Field(default=DataFormat.CHATML,
+                               description="qa: question → user, answer → assistant; structured: rows kept as they are")
     train_split: float = Field(default=0.9, ge=0.5, le=0.99)
+    test_split: float = Field(default=0.0, ge=0.0, description="Held out as test_jsonl; eval gets 1 - train - test")
+
+    @model_validator(mode="after")
+    def _splits_fit(self):
+        if self.train_split + self.test_split > 1 + 1e-9:
+            raise ValueError("train_split + test_split must be <= 1")
+        return self
 
 class DataPrepOutputs(BaseModel):
-    train_jsonl: str
+    dataset: str      # every cleaned row, extra keys kept
+    train_jsonl: str  # chat rows reduced to {"messages"}; structured rows unchanged
     eval_jsonl: str
-    stats_json: str
+    test_jsonl: str   # held out; keeps context and source_url
 
 
 class HFImportInputs(BaseModel):
@@ -310,7 +323,8 @@ NODE_REGISTRY: dict[NodeType, dict] = {
         "runtime": "cpu",
     },
     NodeType.DATA_PREP: {
-        "description": "Load, validate, split, and reformat a dataset to ChatML.",
+        "description": "Load (r2 or Hugging Face), convert to chat or keep structured rows, dedupe, "
+                       "split train/eval/test (seed 42, stratified by source_url).",
         "inputs_schema": DataPrepInputs,
         "outputs_schema": DataPrepOutputs,
         "runtime": "cpu",

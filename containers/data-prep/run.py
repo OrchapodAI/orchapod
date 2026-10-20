@@ -1,136 +1,208 @@
 """
-containers/data-prep/run.py
+containers/data-prep/run.py — node data-prep (cpu). Contract: docs/contracts.md "Data nodes → data-prep".
 
-Node: data-prep
-Runtime: CPU only (runs on control-plane host, no GPU pod needed)
-Base image: python:3.12-slim + datasets, pandas, pyyaml
-
-Inputs:
-  dataset     — URI to JSONL/CSV or HuggingFace dataset name
-  format      — "chatml" | "alpaca" | "sharegpt"
-  train_split — float (default 0.9)
-
-Outputs:
-  train_jsonl — R2 URI to training JSONL (ChatML format)
-  eval_jsonl  — R2 URI to eval JSONL
-  stats_json  — R2 URI to dataset statistics JSON
-
-Logic: load → validate → split → reformat to ChatML → write JSONL
-
-Demo dataset: argilla/databricks-dolly-15k-curated-en (5K rows, public)
+load (r2:// JSONL or CSV, hf://<id> or <org>/<name>) → convert + validate → exact dedupe → near dedupe (chat)
+→ deterministic split (seed 42, stratified by source_url) → outputs dataset, train_jsonl, eval_jsonl, test_jsonl
+(always written) + io.write_metrics. STUB=1 swaps Hugging Face loads for fixed rows, so no network.
 """
 
 import json
+import os
+import random
+import sys
+from collections import Counter, defaultdict
+from datetime import UTC, datetime
 from pathlib import Path
 
 from orchapod import io, log
 
-
-def load_dataset(uri: str):
-    if uri.startswith("hf://") or "/" in uri and not uri.startswith("/"):
-        # HuggingFace dataset
-        from datasets import load_dataset as hf_load
-        dataset_name = uri.replace("hf://", "")
-        log.info(f"Loading HuggingFace dataset: {dataset_name}")
-        return hf_load(dataset_name, split="train")
-    elif uri.startswith("r2://"):
-        # Download from R2 first
-        local = io.download_input(uri)
-        return _load_local(local)
-    else:
-        return _load_local(Path(uri))
+FORMATS = ("chatml", "alpaca", "sharegpt", "qa", "structured")
+ROLES = {"system", "user", "assistant"}
+SHAREGPT_ROLES = {"human": "user", "user": "user", "system": "system"}  # gpt and the rest → assistant
+NEAR = 0.9  # char 5-gram Jaccard on the normalised first user turn
+SEED = 42
 
 
-def _load_local(path: Path):
-    import pandas as pd
-    if path.suffix == ".csv":
+def dumps(obj, **kw) -> str:
+    return json.dumps(obj, ensure_ascii=False, default=str, **kw)
+
+
+def fail(reason: str):
+    log.error(reason)
+    sys.exit(1)
+
+
+def load_rows(uri: str, fmt: str, hf_config: str | None = None, hf_split: str = "train") -> list:
+    if uri.startswith("r2://"):
+        return read_file(io.download_input(uri))
+    if uri.startswith("hf://") or ("/" in uri and not uri.startswith("/")):
+        repo = uri.removeprefix("hf://")
+        if os.environ.get("STUB") == "1":
+            return stub_rows(fmt)
+        from datasets import load_dataset
+        log.info(f"Loading Hugging Face dataset {repo} (config={hf_config}, split={hf_split})")
+        return list(load_dataset(repo, name=hf_config, split=hf_split))
+    return read_file(Path(uri))
+
+
+def read_file(path: Path) -> list:
+    if path.name.endswith(".csv"):
+        import pandas as pd
         return pd.read_csv(path).to_dict("records")
-    elif path.suffix in (".jsonl", ".json"):
-        with open(path) as f:
-            return [json.loads(line) for line in f if line.strip()]
-    raise ValueError(f"Unsupported file format: {path.suffix}")
+    rows = []
+    with open(path, encoding="utf-8-sig") as f:
+        for line in filter(str.strip, f):
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                rows.append(None)  # counted as skipped
+    return rows
 
 
-def to_chatml(example: dict, fmt: str) -> dict | None:
-    """Convert an example from any format to ChatML messages list."""
-    if fmt == "chatml":
-        return example  # already in format
-    elif fmt == "alpaca":
-        messages = [{"role": "user", "content": example.get("instruction", "") + "\n" + example.get("input", "")}]
-        if example.get("output"):
-            messages.append({"role": "assistant", "content": example["output"]})
-        return {"messages": messages}
-    elif fmt == "sharegpt":
-        msgs = []
-        for turn in example.get("conversations", []):
-            role = "user" if turn["from"] in ("human", "user") else "assistant"
-            msgs.append({"role": role, "content": turn["value"]})
-        return {"messages": msgs}
-    return None
+def stub_rows(fmt: str) -> list[dict]:
+    rows = []
+    for i in range(20):
+        q, a = f"Stub question {i}: what is {i} plus {i * 7}?", f"{i} plus {i * 7} is {i * 8}."
+        rows.append({
+            "chatml": {"messages": [{"role": "user", "content": q}, {"role": "assistant", "content": a}]},
+            "alpaca": {"instruction": q, "input": "", "output": a},
+            "sharegpt": {"conversations": [{"from": "human", "value": q}, {"from": "gpt", "value": a}]},
+        }.get(fmt, {"question": q, "answer": a}))
+    return rows
+
+
+def tf_valid(msgs) -> bool:
+    """Token Factory chat rules: roles in ROLES, system only first, a user turn, last turn assistant, no empty content."""
+    return (
+        isinstance(msgs, list) and len(msgs) > 0
+        and all(isinstance(m, dict) and m.get("role") in ROLES
+                and isinstance(m.get("content"), str) and m["content"].strip() != "" for m in msgs)
+        and all(m["role"] != "system" for m in msgs[1:])
+        and any(m["role"] == "user" for m in msgs)
+        and msgs[-1]["role"] == "assistant"
+    )
+
+
+def convert(row, fmt: str) -> dict | None:
+    """A cleaned row, or None for a bad one. Chat formats → {"messages": [...], **other keys}; structured as is."""
+    if not isinstance(row, dict):
+        return None
+    if fmt == "structured":
+        return row
+    rest = dict(row)
+    msgs = rest.pop("messages", None)
+    try:
+        if fmt == "alpaca":
+            prompt = "\n".join(s for s in (rest.pop("instruction", None), rest.pop("input", None)) if s)
+            msgs = [{"role": "user", "content": prompt}, {"role": "assistant", "content": rest.pop("output", None)}]
+        elif fmt == "sharegpt":
+            msgs = [{"role": SHAREGPT_ROLES.get(t.get("from"), "assistant"), "content": t.get("value")}
+                    for t in rest.pop("conversations", None) or []]
+        elif fmt == "qa":
+            msgs = [{"role": "user", "content": rest.pop("question", None)},
+                    {"role": "assistant", "content": rest.pop("answer", None)}]
+    except (AttributeError, TypeError):  # malformed turns
+        return None
+    return {"messages": msgs, **rest} if tf_valid(msgs) else None
+
+
+def grams(text: str) -> set[str]:
+    s = " ".join(text.lower().split())
+    return {s[i:i + 5] for i in range(max(1, len(s) - 4))}
+
+
+def near_dedupe(rows: list[dict]) -> list[dict]:
+    kept, kept_grams = [], []
+    for r in rows:
+        g = grams(next(m["content"] for m in r["messages"] if m["role"] == "user"))
+        # ponytail: O(n²) over kept rows: 1k rows 1 s, 15k rows ~2.5 min; prefix filtering or MinHash LSH if inputs grow
+        if not any((i := len(g & k)) >= NEAR * (len(g) + len(k) - i)
+                   for k in kept_grams if NEAR * len(k) <= len(g) <= len(k) / NEAR):
+            kept.append(r)
+            kept_grams.append(g)
+    return kept
+
+
+def split(rows: list[dict], train: float, test: float) -> tuple[list, list, list]:
+    """Seed-42 split stratified by source_url: each source's shuffled rows spread evenly over one order cut train|eval|test."""
+    rng = random.Random(SEED)
+    groups = defaultdict(list)
+    for r in rows:
+        groups[str(r.get("source_url", ""))].append(r)
+    keyed = []
+    for g in groups.values():
+        rng.shuffle(g)
+        keyed += [((i + 0.5) / len(g), rng.random(), r) for i, r in enumerate(g)]
+    ordered = [r for *_, r in sorted(keyed, key=lambda x: x[:2])]
+    n = len(ordered)
+    n_train = round(n * train)
+    n_test = min(round(n * test), n - n_train)
+    return ordered[:n_train], ordered[n_train:n - n_test], ordered[n - n_test:]
+
+
+def _iso(v):
+    try:
+        d = datetime.fromisoformat(v)
+    except (TypeError, ValueError):
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=UTC)
+
+
+def field_stats(rows: list[dict]) -> dict:
+    stats = {}
+    for f in dict.fromkeys(k for r in rows for k in r):
+        present = [r[f] for r in rows if r.get(f) is not None]
+        counts = Counter(v if isinstance(v, str | int | float) else dumps(v, sort_keys=True) for v in present)
+        s = {"distinct": len(counts), "nulls": len(rows) - len(present),
+             "top": [[v, c] for v, c in counts.most_common(10)]}
+        if present and all(type(v) in (int, float) for v in present):
+            s |= {"min": min(present), "max": max(present)}
+        elif present and all(map(_iso, present)):
+            s |= {"min": min(present, key=_iso), "max": max(present, key=_iso)}
+        stats[f] = s
+    return stats
+
+
+def write_jsonl(name: str, rows: list) -> None:
+    path = io.local_path(name)
+    with open(path, "w", encoding="utf-8") as f:
+        f.writelines(dumps(r) + "\n" for r in rows)
+    io.write_output(name, path, kind="dataset")
 
 
 def main():
     inputs = io.read_inputs()
-    log.info(f"data-prep starting with inputs: {list(inputs.keys())}")
+    fmt = inputs.get("format") or "chatml"
+    if fmt not in FORMATS:
+        fail(f"unknown format {fmt!r}: use one of {', '.join(FORMATS)}")
+    if not inputs.get("dataset"):
+        fail("input dataset is required")
 
-    dataset_uri  = inputs["dataset"]
-    fmt          = inputs.get("format", "chatml")
-    train_split  = float(inputs.get("train_split", 0.9))
+    raw = load_rows(inputs["dataset"], fmt, inputs.get("hf_config") or None, inputs.get("hf_split") or "train")
+    converted = [c for c in (convert(r, fmt) for r in raw) if c is not None]
+    unique = list({dumps(r, sort_keys=True): r for r in converted}.values())  # exact dupes: canonical JSON
+    rows = unique if fmt == "structured" else near_dedupe(unique)
+    log.info(f"{len(raw)} rows loaded, {len(rows)} kept")
+    if not rows:
+        fail(f"0 rows after cleaning {inputs['dataset']} as {fmt}")
 
-    # 1. Load
-    data = load_dataset(dataset_uri)
-    log.info(f"Loaded {len(data)} examples")
+    train, ev, test = split(rows, float(inputs.get("train_split") or 0.9), float(inputs.get("test_split") or 0))
+    write_jsonl("dataset", rows)
+    write_jsonl("test_jsonl", test)
+    if fmt != "structured":  # training files carry only the turns
+        train, ev = ([{"messages": r["messages"]} for r in part] for part in (train, ev))
+    write_jsonl("train_jsonl", train)
+    write_jsonl("eval_jsonl", ev)
 
-    # 2. Validate + convert to ChatML
-    converted, skipped = [], 0
-    for ex in data:
-        result = to_chatml(ex, fmt)
-        if result and result.get("messages"):
-            converted.append(result)
-        else:
-            skipped += 1
-    log.info(f"Converted {len(converted)} examples ({skipped} skipped)")
-
-    # 3. Split
-    split_idx   = int(len(converted) * train_split)
-    train_data  = converted[:split_idx]
-    eval_data   = converted[split_idx:]
-    log.info(f"Split: {len(train_data)} train / {len(eval_data)} eval")
-
-    # 4. Write JSONL
-    train_path = io.local_path("train.jsonl")
-    eval_path  = io.local_path("eval.jsonl")
-    stats_path = io.local_path("stats.json")
-
-    with open(train_path, "w") as f:
-        for ex in train_data:
-            f.write(json.dumps(ex) + "\n")
-
-    with open(eval_path, "w") as f:
-        for ex in eval_data:
-            f.write(json.dumps(ex) + "\n")
-
-    # 5. Compute stats
-    msg_lengths = [len(json.dumps(ex)) for ex in converted]
-    stats = {
-        "total": len(converted),
-        "train": len(train_data),
-        "eval": len(eval_data),
-        "skipped": skipped,
-        "avg_length_chars": sum(msg_lengths) / len(msg_lengths) if msg_lengths else 0,
-        "max_length_chars": max(msg_lengths) if msg_lengths else 0,
-    }
-    with open(stats_path, "w") as f:
-        json.dump(stats, f, indent=2)
-
-    log.info(f"Stats: {stats}")
-
-    # 6. Upload outputs to R2
-    io.write_output("train_jsonl", train_path, kind="dataset")
-    io.write_output("eval_jsonl",  eval_path,  kind="dataset")
-    io.write_output("stats_json",  stats_path, kind="metrics")
-
-    log.info("data-prep complete")
+    lengths = [len(dumps(r)) for r in rows]
+    io.write_metrics({
+        "total": len(rows), "train": len(train), "eval": len(ev), "test": len(test),
+        "skipped": len(raw) - len(converted), "exact_dupes": len(converted) - len(unique),
+        "near_dupes": len(unique) - len(rows), "quality_dropped": 0,  # quality_filter lands in wave 2
+        "avg_length_chars": sum(lengths) / len(lengths), "max_length_chars": max(lengths),
+        "fields": field_stats(rows) if fmt == "structured" else None,
+    })
+    log.info(f"data-prep complete: {len(train)} train / {len(ev)} eval / {len(test)} test")
 
 
 if __name__ == "__main__":

@@ -17,9 +17,9 @@ Outputs:
   eval_report_html    — rendered comparison report
   comparison_table_md — markdown summary table
 
-Judge: NVIDIA Nemotron Ultra via Nebius Token Factory (replaces Claude).
+Judge: NVIDIA Nemotron Ultra via Nebius Token Factory.
        Falls back to Nemotron Super if NEBIUS_API_KEY is set but Ultra is slow.
-       Falls back to Claude if ANTHROPIC_API_KEY is set and NEBIUS_API_KEY is not.
+       Without NEBIUS_API_KEY the LLM judge is skipped; there is no other judge provider.
 """
 
 import json
@@ -123,40 +123,16 @@ def _judge_via_nebius(prompt: str, model_output: str, reference: str, judge_mode
     return {"score": 3, "reason": raw[:200]}
 
 
-def _judge_via_anthropic(prompt: str, model_output: str, reference: str) -> dict:
-    """Fallback judge using Claude if NEBIUS_API_KEY is not available."""
-    import anthropic
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-    judge_prompt = (
-        f"Rate this response 1-5 for quality, helpfulness, and accuracy.\n"
-        f"Reference answer: {reference}\nModel response: {model_output}\n"
-        'Respond with JSON: {"score": <1-5>, "reason": "<one sentence>"}'
-    )
-    resp = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=200,
-        messages=[{"role": "user", "content": judge_prompt}],
-    )
-    try:
-        return json.loads(resp.content[0].text)
-    except Exception:
-        return {"score": 3, "reason": "parse error"}
-
-
 def run_llm_judge(model_path: Path, eval_set: list[dict], judge_model: str) -> dict:
     """
-    Score model outputs using an LLM judge.
-    Priority: Nemotron (Nebius Token Factory) → Claude (fallback).
+    Score model outputs using Nemotron on Nebius Token Factory (skipped without NEBIUS_API_KEY).
     Returns per-prompt scores and aggregate win-rate.
     """
-    use_nebius = bool(os.environ.get("NEBIUS_API_KEY"))
-    use_claude = bool(os.environ.get("ANTHROPIC_API_KEY")) and not use_nebius
-
-    if not use_nebius and not use_claude:
-        log.info("No judge API key set — skipping LLM judge")
+    if not os.environ.get("NEBIUS_API_KEY"):
+        log.info("NEBIUS_API_KEY not set — skipping LLM judge")
         return {"scores": [], "avg_score": 0, "n_prompts": 0, "judge": "none"}
 
-    judge_name = f"nemotron:{judge_model.split('/')[-1]}" if use_nebius else "claude"
+    judge_name = f"nemotron:{judge_model.split('/')[-1]}"
     log.info(f"LLM judge: {judge_name}")
 
     # Start vLLM for the model being evaluated
@@ -185,10 +161,7 @@ def run_llm_judge(model_path: Path, eval_set: list[dict], judge_model: str) -> d
         model_output = resp["choices"][0]["message"]["content"]
 
         try:
-            if use_nebius:
-                score_data = _judge_via_nebius(prompt, model_output, reference, judge_model)
-            else:
-                score_data = _judge_via_anthropic(prompt, model_output, reference)
+            score_data = _judge_via_nebius(prompt, model_output, reference, judge_model)
         except Exception as e:
             log.info(f"Judge error (skipping): {e}")
             score_data = {"score": 3, "reason": "error"}

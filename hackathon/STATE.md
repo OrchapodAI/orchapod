@@ -4,7 +4,7 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 ## Next actions (in order)
 1. Hari: NEBIUS_API_KEY and TAVILY_API_KEY into ~/src/orchapod-hack/.env — both lines still empty on disk (2026-10-21T02:37Z); the hidden-input command is in chat. Unblocks spikes 1–3 and every live check.
 2. Spikes 1–3 (hackathon/briefs/2026-10-22-spikes.md; worktrees spike1–3 at c164e4e) — dispatch the moment the key lands.
-3. Wave 3: ALL MERGED except qa-w3 (REVIEW). Wave 4 (hackathon/briefs/2026-10-23-wave4.md): MERGED frontend-w4, platform-w4, data-w4; REVIEW backend-w4 (opus); IN_PROGRESS ml-w4; queued qa-w4 (after qa-w3).
+3. Wave 3: COMPLETE. Wave 4 (hackathon/briefs/2026-10-23-wave4.md): MERGED frontend-w4, platform-w4, data-w4; RE-REVIEW backend-w4 (security); IN_PROGRESS ml-w4; next qa-w4 (failure drills, fresh-clone dry run).
 4. After wave 3: shared fence() (platform), apps/api/config.py (platform), vllm-serve rewrite (ml), `make check E2E=1` + Playwright smoke on the merged branch, D6 hardening (anonymous budget ceiling).
 5. G1 Oct 24: golden path green from the UI (needs spike 1's deploy answer) + intent #2 from the agent chat (STUB green 2026-10-21; live waits on the key).
 
@@ -80,8 +80,8 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P2 pytest warnings now 126 (sqlmodel session.exec deprecations; datetime.utcnow) — TODO
 - [ ] P0 D2 provider contract tests from recorded responses + a $1/day real Token Factory call — TODO
 - [ ] P0 D3 scripts/e2e_demo.py: --stub DONE (qa-w2; green 2026-10-21); real with --max-cost + nightly — TODO (needs the key)
-- [ ] P0 D3 scripts/e2e_agent.py --stub for the three canonical intents — IN_PROGRESS(qa-w3)
-- [ ] P0 D4 Playwright smoke: template → run → eval → playground; /agent intent #2 (STUB) — IN_PROGRESS(qa-w3)
+- [x] P0 D3 scripts/e2e_agent.py --stub for the three canonical intents (+ plan-shape rules) — DONE (qa-w3); `--strict` returns with ml-w4's vllm-serve
+- [x] P0 D4 Playwright smoke (`make ui-smoke`, orchestrator-only): template → run → eval → playground; /agent intent #2 — DONE (qa-w3); golden path SKIPs until ml-w4
 - [ ] P0 D5 failure drills · D7 fresh-clone test < 20 min · D8 three rehearsals — TODO
 ### devrel
 - [x] P0 D2 README skeleton — DONE

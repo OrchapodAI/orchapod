@@ -200,3 +200,4 @@ worktrees:
   - Env: ORCHAPOD_TRUSTED_PROXIES removed; ORCHAPOD_CORS_ORIGINS already in .env.example + prod compose.
   - Open per its report: canvas 'save a copy' on 409 (frontend); RunOut.workflow_name so the golden-run link doesn't depend on the newest 500 workflows (backend/frontend); other owners' hf_token schema fields.
   - Scoped security re-review (opus) dispatched.
+- 2026-10-21T14:04Z qa-w3 re-review (sonnet): I1–I3, M1–M8 and ponytail ADDRESSED (marker-test and M8 mutations confirm teeth). New Important N1: the marker test grepped the whole repo, and this report quotes the tag, so make check would go red once briefs are committed. Fixed by the orchestrator in 3b11a07 (grep skips hackathon/; N2 `t[-1:]` so an empty plan fails cleanly; N3 skipif without .git). Ledger: qa-w3 fix rounds 1/5, 0 open. Merged; make check green (675 + web 27). Wave 3 complete. Next: `make check E2E=1` on the merged tree (no --strict until ml-w4).

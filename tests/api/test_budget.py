@@ -201,3 +201,15 @@ async def test_a_grant_counts_against_the_whole_day_and_only_its_own_scales_shar
     budget.release(admin.id)
     assert await budget.reserve(db, a2, 0.5) == (pytest.approx(1.0), "day", 2.0)  # anonymous grants fill the share
     assert await budget.left(db, admin2, 1.0) == (pytest.approx(2.0), "day", 4.0)  # an admin counts every grant
+
+
+async def test_the_kill_switch_is_read_on_every_request(client, monkeypatch):
+    """Nothing caches it, so the next request on the same process sees a flip. A container sees a new value only when it
+    is recreated, which restarts the API and fails the runs in flight (contracts "Budget guard")."""
+    monkeypatch.setenv("STUB", "1")
+    compare = {"messages": [{"role": "user", "content": "hi"}],
+               "refs": [{"base_url": "https://evil.example/v1", "model": "m", "api_key_env": "NEBIUS_API_KEY"}] * 2}
+    for value, plan_code, compare_code in (("1", 503, 503), ("0", 200, 422), ("true", 503, 503), ("", 200, 422)):
+        monkeypatch.setenv("ORCHAPOD_KILL_SWITCH", value)
+        assert (await client.post("/agent/plan", json={"intent": "movie likes"})).status_code == plan_code
+        assert (await client.post("/compare", json=compare)).status_code == compare_code  # 422: the refs are refused

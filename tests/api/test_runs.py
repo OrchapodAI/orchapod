@@ -101,3 +101,17 @@ async def test_get_run_not_found_returns_404(client):
     resp = await client.get(f"/runs/{uuid.uuid4()}")
 
     assert resp.status_code == 404
+
+
+async def test_public_lists_cap_limit_at_500(client, db):
+    from api.models.db import Run, Workflow
+    db.add_all(Run(user_id=uuid.uuid4()) for _ in range(51))
+    db.add_all(Workflow(user_id=uuid.uuid4(), name="w", yaml="", graph_json={}) for _ in range(51))
+    await db.commit()
+
+    for path in ("/runs", "/workflows"):
+        assert len((await client.get(path)).json()) == 50
+        assert len((await client.get(path, params={"limit": 500})).json()) == 51  # the golden-run filter asks for 500
+        for bad in (0, 501):  # a public caller cannot ask for every row
+            assert (await client.get(path, params={"limit": bad})).status_code == 422
+    assert (await client.get("/artifacts", params={"limit": -1})).status_code == 422  # SQLite reads -1 as no limit

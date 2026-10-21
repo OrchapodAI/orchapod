@@ -19,7 +19,7 @@ from datetime import datetime
 from typing import Annotated
 
 import yaml
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -28,8 +28,7 @@ from api.agent.planner import Intent, make_plan
 from api.database import get_session
 from api.models.db import Workflow, utcnow
 from api.executor.dag import workflow_to_graph_json
-from api.services import budget
-from api.services.ratelimit import limit
+from api.services import budget, ratelimit
 
 router = APIRouter()
 
@@ -90,8 +89,8 @@ async def create_workflow(body: WorkflowCreate, db: Session):
 
 
 @router.get("", response_model=list[WorkflowOut])
-async def list_workflows(db: Session, user_id: uuid.UUID | None = None):
-    stmt = select(Workflow).order_by(Workflow.created_at.desc())
+async def list_workflows(db: Session, user_id: uuid.UUID | None = None, limit: int = Query(50, ge=1, le=500)):
+    stmt = select(Workflow).order_by(Workflow.created_at.desc()).limit(limit)  # a public caller never gets every row
     if user_id:
         stmt = stmt.where(Workflow.user_id == user_id)
     result = await db.execute(stmt)
@@ -140,7 +139,7 @@ async def delete_workflow(workflow_id: uuid.UUID, db: Session):
 
 
 @router.post("/from-prompt", response_model=WorkflowOut, status_code=status.HTTP_201_CREATED,
-             dependencies=[Depends(limit("plan"))])
+             dependencies=[Depends(ratelimit.limit("plan"))])
 async def create_workflow_from_prompt(body: PromptRequest, db: Session,
                                       scale: float = Depends(budget.scale)):
     """The Orchapod Agent's planner drafts the workflow (same rules as POST /agent/plan); the canvas opens it,

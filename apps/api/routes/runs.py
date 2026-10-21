@@ -25,7 +25,7 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,9 +34,8 @@ from sqlmodel import select
 from api.database import get_session
 from api.executor import run_workflow as executor
 from api.models.db import AgentRun, Run, NodeRun, RunStatus, NodeStatus, Workflow, Artifact, ArtifactKind, utcnow
-from api.services import budget
+from api.services import budget, ratelimit
 from api.services.events import event_bus
-from api.services.ratelimit import limit
 from api.services.redact import redact
 
 router = APIRouter()
@@ -116,7 +115,7 @@ async def create_run(body: RunCreate, db: Session):
     return _run_out(run)
 
 
-@router.post("/{run_id}/start", response_model=RunOut, dependencies=[Depends(limit("run"))])
+@router.post("/{run_id}/start", response_model=RunOut, dependencies=[Depends(ratelimit.limit("run"))])
 async def start_run(run_id: uuid.UUID, db: Session, scale: Scale):
     """409 unless pending; 503 kill switch; 402 when no budget is left (caps × the caller's scale)."""
     run = await db.get(Run, run_id)
@@ -154,7 +153,7 @@ async def cancel_run(run_id: uuid.UUID, db: Session):
 
 
 @router.post("/{run_id}/nodes/{node_id}/retry", response_model=RunOut, status_code=status.HTTP_202_ACCEPTED,
-             dependencies=[Depends(limit("run"))])
+             dependencies=[Depends(ratelimit.limit("run"))])
 async def retry_node(run_id: uuid.UUID, node_id: str, db: Session, scale: Scale):
     """Re-run the run's failed node (same row, outputs kept), then continue downstream."""
     run = await db.get(Run, run_id)
@@ -197,7 +196,7 @@ async def list_runs(
     db: Session,
     workflow_id: uuid.UUID | None = None,
     user_id: uuid.UUID | None = None,
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=500),  # a public caller never asks for every row
 ):
     stmt = select(Run).order_by(Run.created_at.desc()).limit(limit)
     if workflow_id:

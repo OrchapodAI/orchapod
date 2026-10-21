@@ -26,8 +26,7 @@ from api import config
 from api.agent.planner import tf_base
 from api.database import get_session
 from api.models.db import Artifact, ArtifactKind
-from api.services import budget
-from api.services.ratelimit import limit
+from api.services import budget, ratelimit
 from packages.providers.base import ProviderError
 from packages.providers.tokenfactory import TokenFactory
 
@@ -73,7 +72,7 @@ class CompareRequest(BaseModel):
         return self
 
 
-@router.post("", dependencies=[Depends(limit("compare"))])
+@router.post("", dependencies=[Depends(ratelimit.limit("compare"))])
 async def compare(body: CompareRequest, db: Session, scale: Scale):
     """Both answers start before the 200, so a refusal is an HTTP error, never a broken stream: 422 for a ref outside the
     key↔URL pairs or a request Token Factory rejects (an unpriced model, an unknown one); 502 when a model call fails;

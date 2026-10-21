@@ -49,7 +49,7 @@ class ArtifactListItem(BaseModel):
 async def list_artifacts(
     db: Session,
     kind: str | None = Query(None, description="Filter by artifact kind"),
-    limit: int = Query(100, le=500),
+    limit: int = Query(100, ge=1, le=500),
 ):
     """Return artifacts across all runs, newest first."""
     stmt = (

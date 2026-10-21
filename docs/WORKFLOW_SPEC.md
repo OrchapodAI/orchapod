@@ -55,7 +55,7 @@ GGUF on CPU with llama.cpp: `model` (a Hugging Face id or hf-download's `hf_mode
 Benchmark evaluation with lm-evaluation-harness + LLM-as-judge comparison.
 
 ### `vllm-serve`
-Deploy as OpenAI-compatible endpoint via vLLM. Pod stays alive after training.
+`model` (a Hugging Face id, or an r2 model dir such as unsloth-train's `merged_model`) and optionally `lora_adapter` (an r2 PEFT dir ← `${{ nodes.<finetune>.outputs.lora_adapter }}`) → a Nebius Serverless Endpoint (vLLM v0.18.0, `platform` gpu-l40s-a, `preset` 1gpu-8vcpu-32gb) that serves the base and the adapter as `tuned` side by side → `model_ref` (tuned) and `base_model_ref` for judge-eval and /compare: ModelRefs whose key is the env var ORCHAPOD_ENDPOINT_TOKEN, never the token. Runtime `api`: it waits up to 15 min for Running, proves the model with one completion, registers the expiry (`keep_alive_min`, 30, at most 120; the API deletes the endpoint then) and exits; a failure or cancel before that deletes the endpoint. GPU time is billed from creation to expiry. `STUB=1` registers `http://stub.invalid` with no Nebius call.
 
 ### `tf-finetune`
 LoRA fine-tune on Token Factory (`model`, `train_data`/`eval_data` ← data-prep's `train_jsonl`/`eval_jsonl`, `n_epochs`, `hyperparameters`, `timeout_min`) → `job` (ids, best checkpoint by validation loss, losses) and `lora_adapter` (PEFT), plus `loss_curve` in metrics. Runtime `api`; a failure, timeout or cancel cancels the Token Factory job, and a retry adopts this node's running or succeeded job instead of paying for a new one.

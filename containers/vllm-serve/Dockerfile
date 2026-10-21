@@ -1,13 +1,8 @@
-FROM vllm/vllm-openai:latest
+FROM python:3.12-slim
 WORKDIR /app
-
-# Install cloudflared for Cloudflare Tunnel support (KAN-28)
-RUN curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb \
-      -o /tmp/cloudflared.deb \
-    && dpkg -i /tmp/cloudflared.deb \
-    && rm /tmp/cloudflared.deb
-
-RUN pip install boto3 --no-cache-dir
+# API node: it creates a Nebius Serverless Endpoint running vllm/vllm-openai (packages/providers) and calls it once.
+RUN pip install --no-cache-dir boto3==1.35.71 httpx==0.28.0
 COPY packages/sdk-py/orchapod /app/orchapod
+COPY packages/providers /app/packages/providers
 COPY containers/vllm-serve/run.py /app/run.py
 CMD ["python", "run.py"]

@@ -1,140 +1,210 @@
-"""
-Unit tests for containers/vllm-serve/run.py
-"""
+"""Unit tests for containers/vllm-serve/run.py (docs/contracts.md "ML nodes → vllm-serve", "ModelRef", R10, R11)."""
 
-import os
+import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock
 
+import httpx
 import pytest
+
+from packages.providers.tokenfactory import TokenFactory
+from packages.workflow_schema.models import NODE_REGISTRY, NodeType, VLLMServeInputs, VLLMServeOutputs
 
 from .conftest import load_container
 
-v = load_container("vllm-serve")
+vs = load_container("vllm-serve")
+
+BASE = "meta-llama/Llama-3.1-8B-Instruct"
+ADAPTER = "r2://orchapod-artifacts/runs/r1/finetune/lora_adapter"
+MERGED = "r2://orchapod-artifacts/runs/r1/train/merged_model"
+URL = "https://ep-1.serverless.example"
+TOKEN = "endpoint-token"
 
 
-# ---------------------------------------------------------------------------
-# detect_raw_url  (renamed from detect_public_url in KAN-28)
-# Note: detect_raw_url returns a base URL without /v1 suffix.
-#       main() appends /v1 to produce openai_base_url.
-# ---------------------------------------------------------------------------
+class Endpoints:
+    """A fake NebiusServerless().endpoints: create records its call; get walks `states`, then stays on the last."""
 
-def test_detect_raw_url_uses_explicit_override(monkeypatch):
-    monkeypatch.setenv("ORCHAPOD_PUBLIC_URL", "https://custom.orchapod.dev")
-    assert v.detect_raw_url() == "https://custom.orchapod.dev"
+    def __init__(self, states=("PROVISIONING", "STARTING", "RUNNING")):
+        self.states, self.created, self.deleted = list(states), [], []
 
+    def create(self, name, image, **kw):
+        self.created.append({"name": name, "image": image, **kw})
+        return "ep-1"
 
-def test_detect_raw_url_runpod(monkeypatch):
-    monkeypatch.delenv("ORCHAPOD_PUBLIC_URL", raising=False)
-    monkeypatch.setenv("RUNPOD_POD_ID", "abc123")
-    assert v.detect_raw_url() == "https://abc123-8000.proxy.runpod.net"
+    def get(self, eid):
+        state = self.states.pop(0) if len(self.states) > 1 else self.states[0]
+        return {"id": eid, "state": state, "url": URL if state == "RUNNING" else None, "code": "", "message": ""}
 
-
-def test_detect_raw_url_vastai(monkeypatch):
-    monkeypatch.delenv("ORCHAPOD_PUBLIC_URL", raising=False)
-    monkeypatch.delenv("RUNPOD_POD_ID", raising=False)
-    monkeypatch.setenv("PUBLIC_IPADDR", "1.2.3.4")
-    monkeypatch.setenv("VAST_TCP_PORT_8000", "40001")
-    assert v.detect_raw_url() == "http://1.2.3.4:40001"
+    def delete(self, eid):
+        self.deleted.append(eid)
 
 
-def test_detect_raw_url_vastai_default_port(monkeypatch):
-    monkeypatch.delenv("ORCHAPOD_PUBLIC_URL", raising=False)
-    monkeypatch.delenv("RUNPOD_POD_ID", raising=False)
-    monkeypatch.setenv("PUBLIC_IPADDR", "1.2.3.4")
-    monkeypatch.delenv("VAST_TCP_PORT_8000", raising=False)
-    assert v.detect_raw_url() == "http://1.2.3.4:8000"
+@pytest.fixture
+def node(mock_orchapod_io, monkeypatch, tmp_path, clock):
+    """node(**inputs) runs main() against fake endpoints and a fake vLLM; returns {output: (ref, metadata)}.
+    node.eps is the fake client, node.seen the requests vLLM got, node.answers the replies it gives in turn."""
+    for k in ("STUB", "ORCHAPOD_MAX_COST_USD", "HF_TOKEN", "ORCHAPOD_R2_BUCKET"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("ORCHAPOD_ENDPOINT_TOKEN", TOKEN)
+    monkeypatch.setenv("ORCHAPOD_CONTROL_URL", "http://api:8001")
+    monkeypatch.setenv("ORCHAPOD_RUN_ID", "1234567890ab")
+    monkeypatch.setenv("ORCHAPOD_NODE_ID", "serve_8b")
+    monkeypatch.setattr(vs, "cost", MagicMock(BudgetExceeded=RuntimeError))
+    mock_orchapod_io.local_path.side_effect = lambda name: tmp_path / name
+    eps, seen, answers = Endpoints(), [], []
+
+    def vllm(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if answers:
+            return answers.pop(0)
+        return httpx.Response(200, json={"choices": [{"index": 0, "finish_reason": "stop",
+                                                      "message": {"role": "assistant", "content": "I can help."}}]})
+
+    http = httpx.Client(transport=httpx.MockTransport(vllm))
+    monkeypatch.setattr(vs, "TokenFactory", lambda **kw: TokenFactory(http=http, **kw))
+    monkeypatch.setattr(vs, "endpoints", lambda: run.eps)
+
+    def run(**inputs):
+        mock_orchapod_io.read_inputs.return_value = {"model": BASE, "lora_adapter": ADAPTER, **inputs}
+        vs.main()
+        return {c.args[0]: (json.loads(Path(c.args[1]).read_text()), c.kwargs["metadata"])
+                for c in mock_orchapod_io.write_output.call_args_list}
+
+    run.eps, run.seen, run.answers = eps, seen, answers
+    return run
 
 
-def test_detect_raw_url_localhost_fallback(monkeypatch):
-    monkeypatch.delenv("ORCHAPOD_PUBLIC_URL", raising=False)
-    monkeypatch.delenv("RUNPOD_POD_ID", raising=False)
-    monkeypatch.delenv("PUBLIC_IPADDR", raising=False)
-    assert v.detect_raw_url() == "http://localhost:8000"
+def ttl_posts():
+    return [c.args for c in vs.log.post.call_args_list if c.args[0] == "/internal/ttl"]
 
 
-# ---------------------------------------------------------------------------
-# resolve_model
-# ---------------------------------------------------------------------------
-
-def test_resolve_model_hf_passthrough():
-    result = v.resolve_model("Qwen/Qwen3-4B-Instruct", hf_token=None)
-    assert result == "Qwen/Qwen3-4B-Instruct"
-
-
-def test_resolve_model_strips_hf_prefix():
-    result = v.resolve_model("hf://Qwen/Qwen3-4B-Instruct", hf_token=None)
-    assert result == "Qwen/Qwen3-4B-Instruct"
-
-
-def test_resolve_model_r2_uri_downloads(mock_orchapod_io):
-    mock_orchapod_io.download_input.return_value = Path("/workspace/model")
-    result = v.resolve_model("r2://orchapod-artifacts/runs/abc/model", hf_token=None)
-    mock_orchapod_io.download_input.assert_called_once()
-    assert result == "/workspace/model"
+def test_registry_row_is_an_api_node_with_model_refs():
+    meta = NODE_REGISTRY[NodeType.VLLM_SERVE]
+    assert (meta["runtime"], meta.get("long_running")) == ("api", None)
+    assert set(VLLMServeInputs.model_fields) == {"model", "lora_adapter", "max_model_len", "keep_alive_min",
+                                                 "served_model_name", "gpu_memory_utilization", "dtype", "platform",
+                                                 "preset"}  # no hf_token: HF_TOKEN is env only
+    i = VLLMServeInputs(model=BASE)
+    assert (i.keep_alive_min, i.platform, i.preset, i.lora_adapter) == (30, "gpu-l40s-a", "1gpu-8vcpu-32gb", None)
+    with pytest.raises(ValueError):
+        VLLMServeInputs(model=BASE, keep_alive_min=121)
+    assert set(VLLMServeOutputs.model_fields) == {"model_ref", "base_model_ref"}
 
 
-# ---------------------------------------------------------------------------
-# main()
-# ---------------------------------------------------------------------------
-
-def _make_mock_proc():
-    proc = MagicMock()
-    proc.wait.return_value = 0
-    proc.kill.return_value = None
-    return proc
-
-
-def test_main_writes_two_outputs_and_registers_ttl(mock_orchapod_io, monkeypatch):
-    monkeypatch.setenv("ORCHAPOD_RUN_ID",  "run-1")
-    monkeypatch.setenv("ORCHAPOD_NODE_ID", "node")
-    monkeypatch.delenv("ORCHAPOD_PUBLIC_URL", raising=False)
-    monkeypatch.delenv("RUNPOD_POD_ID", raising=False)
-    monkeypatch.delenv("PUBLIC_IPADDR", raising=False)
-
-    mock_orchapod_io.read_inputs.return_value = {
-        "model": "Qwen/Qwen3-4B-Instruct",
-        "keep_alive_min": 30,
-    }
-
-    proc = _make_mock_proc()
-    # Patch start_cloudflare_tunnel to skip real cloudflared (not available in CI)
-    with patch.object(v, "start_cloudflare_tunnel", return_value=(None, None)), \
-         patch("subprocess.Popen", return_value=proc), \
-         patch("urllib.request.urlopen") as mock_urlopen:
-        v.main()
-
-    assert mock_orchapod_io.write_output.call_count == 2
-    output_names = [c.args[0] for c in mock_orchapod_io.write_output.call_args_list]
-    assert "endpoint_url"   in output_names
-    assert "openai_api_key" in output_names
-
-    # TTL alarm + health check both call urlopen
-    assert mock_urlopen.call_count >= 1
+def test_base_and_adapter_share_one_endpoint_and_the_refs_name_the_token_env_var(node, mock_orchapod_io):
+    out = node()
+    (create,) = node.eps.created
+    assert (create["name"], create["image"], create["platform"], create["preset"], create["port"]) == (
+        "orchapod-12345678-serve-8b", "vllm/vllm-openai:v0.18.0-cu130", "gpu-l40s-a", "1gpu-8vcpu-32gb", 8000)
+    assert create["args"].split() == [
+        BASE, "--served-model-name", BASE, "--port", "8000", "--max-model-len", "8192", "--dtype", "bfloat16",
+        "--gpu-memory-utilization", "0.9", "--enable-lora", "--lora-modules",
+        "tuned=/mnt/artifacts/runs/r1/finetune/lora_adapter", "--max-lora-rank", "64"]
+    assert create["auth_token"] == TOKEN and create["volumes"] == ("s3://orchapod-artifacts:/mnt/artifacts:ro",)
+    (smoke,) = node.seen  # one completion proves the adapter loaded
+    assert str(smoke.url) == f"{URL}/v1/chat/completions" and smoke.headers["authorization"] == f"Bearer {TOKEN}"
+    assert json.loads(smoke.content)["model"] == "tuned"
+    assert ttl_posts() == [("/internal/ttl", {"action": "register_ttl", "keep_alive_min": 30, "endpoint_url": URL,
+                                              "endpoint_id": "ep-1"})]
+    ref, meta = out["model_ref"]
+    assert ref == {"base_url": f"{URL}/v1", "model": "tuned", "api_key_env": "ORCHAPOD_ENDPOINT_TOKEN", "base_model": BASE}
+    assert meta["endpoint_id"] == "ep-1" and meta["expires_at"] and meta["proof"] == "I can help."
+    assert out["base_model_ref"][0] == {**ref, "model": BASE, "base_model": None}
+    written = json.dumps([out, mock_orchapod_io.write_metrics.call_args.args])
+    assert TOKEN not in written  # R10/R21: the env var's name, never its value
+    assert node.eps.deleted == []  # registered: the backend deletes it at expiry
+    (bill,) = vs.cost.add.call_args_list
+    assert bill.args == ("nebius_serverless", "gpu-l40s-a/1gpu-8vcpu-32gb")
+    assert bill.kwargs["gpu_hours"] == pytest.approx(30 / 3600 + 0.5, abs=1e-3)  # 2 polls of 15 s, then 30 min
 
 
-def test_main_injects_hf_token_into_subprocess_env(mock_orchapod_io, monkeypatch):
-    monkeypatch.setenv("ORCHAPOD_RUN_ID",  "run-2")
-    monkeypatch.setenv("ORCHAPOD_NODE_ID", "node")
-    monkeypatch.delenv("ORCHAPOD_PUBLIC_URL", raising=False)
-    monkeypatch.delenv("RUNPOD_POD_ID", raising=False)
-    monkeypatch.delenv("PUBLIC_IPADDR", raising=False)
+def test_a_merged_model_dir_is_served_from_the_bucket_as_tuned(node, monkeypatch):
+    monkeypatch.setenv("HF_TOKEN", "hf-secret")
+    out = node(model=MERGED, lora_adapter=None)
+    (create,) = node.eps.created
+    assert create["args"].split()[:3] == ["/mnt/artifacts/runs/r1/train/merged_model", "--served-model-name", "tuned"]
+    assert "--enable-lora" not in create["args"] and create["env"] == {}  # no Hub download, so no HF_TOKEN
+    assert set(out) == {"model_ref"} and out["model_ref"][0]["base_model"] is None
 
-    mock_orchapod_io.read_inputs.return_value = {
-        "model": "Qwen/Qwen3-4B-Instruct",
-        "hf_token": "hf-secret-token",
-    }
 
-    proc = _make_mock_proc()
-    captured_env = {}
-    def fake_popen(cmd, env=None, **kwargs):
-        if env is not None:
-            captured_env.update(env)
-        return proc
+def test_a_gated_hf_base_gets_hf_token_in_the_endpoint_env(node, monkeypatch):
+    monkeypatch.setenv("HF_TOKEN", "hf-secret")
+    node(lora_adapter=None, keep_alive_min=10)
+    (create,) = node.eps.created
+    assert create["env"] == {"HF_TOKEN": "hf-secret"} and create["volumes"] == ()
 
-    with patch.object(v, "start_cloudflare_tunnel", return_value=(None, None)), \
-         patch("subprocess.Popen", side_effect=fake_popen), \
-         patch("urllib.request.urlopen"):
-        v.main()
 
-    assert captured_env.get("HF_TOKEN") == "hf-secret-token"
+@pytest.mark.parametrize("break_it, error", [
+    (lambda n: setattr(n.eps, "states", ["PROVISIONING", "ERROR"]), "endpoint ep-1 is ERROR after 15 s"),  # at once
+    (lambda n: setattr(n.eps, "states", ["STARTING"]), "endpoint ep-1 is STARTING after"),  # never Running in 15 min
+    (lambda n: n.answers.append(httpx.Response(404, json={"error": "model tuned not found"})), "did not answer"),
+    (lambda n: setattr(vs.log.post, "side_effect", OSError("connection refused")), "could not register"),
+], ids=["error-state", "timeout", "adapter-not-loaded", "ttl-refused"])
+def test_a_failure_before_registration_deletes_the_endpoint(node, break_it, error):
+    break_it(node)
+    with pytest.raises(SystemExit) as e:
+        node()
+    assert e.value.code == 1 and error in vs.log.error.call_args_list[0].args[0]
+    assert node.eps.deleted == ["ep-1"]
+    assert vs.cost.add.call_args.kwargs["gpu_hours"] < 0.3  # the time it ran, not keep_alive_min
+
+
+def test_a_cancel_while_starting_deletes_the_endpoint(node, monkeypatch):
+    def sigterm(*a, **k):
+        raise SystemExit(143)  # the SDK's SIGTERM handler
+
+    monkeypatch.setattr(vs.log, "progress", sigterm)
+    with pytest.raises(SystemExit) as e:
+        node()
+    assert e.value.code == 143 and node.eps.deleted == ["ep-1"] and ttl_posts() == []
+
+
+def test_vllm_still_loading_behind_a_running_endpoint_is_retried(node):
+    node.answers += [httpx.Response(503, json={"error": "loading"})] * 4  # the client retries 3 times per call
+    node()
+    assert len(node.seen) == 5 and node.eps.deleted == []
+
+
+@pytest.mark.parametrize("inputs, env, error", [
+    ({"lora_adapter": "${{ nodes.finetune.outputs.lora_adapter }}"}, {}, "unresolved ref lora_adapter"),
+    ({"keep_alive_min": 121}, {}, "keep_alive_min is 121"),
+    ({}, {"ORCHAPOD_ENDPOINT_TOKEN": ""}, "set ORCHAPOD_ENDPOINT_TOKEN"),
+    ({}, {"ORCHAPOD_CONTROL_URL": ""}, "ORCHAPOD_CONTROL_URL is required"),
+    ({}, {"ORCHAPOD_MAX_COST_USD": "0.5"}, "costs about $0.78, above this node's budget $0.50"),
+    ({"platform": "gpu-b200"}, {}, "no price for gpu-b200"),
+    ({"lora_adapter": "r2://someone-else/runs/r1/x/lora_adapter"}, {}, "the bucket the endpoint mounts"),
+], ids=["unresolved", "keep-alive-cap", "no-token", "no-control-plane", "over-budget", "unpriced", "other-bucket"])
+def test_refused_before_any_endpoint_is_created(node, monkeypatch, inputs, env, error):
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    with pytest.raises(SystemExit) as e:
+        node(**inputs)
+    assert e.value.code == 1 and error in vs.log.error.call_args.args[0]
+    assert node.eps.created == [] and node.seen == []
+
+
+def test_stub_registers_a_stub_endpoint_offline_so_compare_accepts_its_refs(node, monkeypatch):
+    monkeypatch.setenv("STUB", "1")
+    monkeypatch.delenv("ORCHAPOD_ENDPOINT_TOKEN")
+    monkeypatch.setattr(vs, "endpoints", MagicMock(side_effect=AssertionError("no Nebius call under STUB")))
+    out = node()
+    assert ttl_posts() == [("/internal/ttl", {"action": "register_ttl", "keep_alive_min": 30,
+                                              "endpoint_url": "http://stub.invalid",
+                                              "endpoint_id": "stub-orchapod-12345678-serve-8b"})]
+    assert out["model_ref"][0] == {"base_url": "http://stub.invalid/v1", "model": "tuned",
+                                   "api_key_env": "ORCHAPOD_ENDPOINT_TOKEN", "base_model": BASE}
+    assert out["base_model_ref"][0]["model"] == BASE and node.seen == [] and not vs.cost.add.called
+
+
+def test_judge_eval_takes_its_model_ref_as_the_tuned_model_with_the_endpoint_token(node, mock_orchapod_io, tmp_path):
+    """Lane B wiring (PLAN A2 D6): the artifact as vllm-serve writes it passes judge-eval's pairing rule."""
+    je = load_container("judge-eval")
+    ref, _ = node()["model_ref"]
+
+    def download(uri, local_dir=None):
+        (tmp_path / "dl").mkdir(exist_ok=True)
+        (tmp_path / "dl" / "model_ref").write_text(json.dumps(ref))
+        return tmp_path / "dl" / "model_ref"
+
+    mock_orchapod_io.download_input.side_effect = download
+    assert je.model_ref("tuned_model_ref", "r2://orchapod-artifacts/runs/r1/serve/model_ref") == ref

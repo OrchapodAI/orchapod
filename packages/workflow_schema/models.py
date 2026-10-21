@@ -243,17 +243,23 @@ class LMEvalOutputs(BaseModel):
 
 
 class VLLMServeInputs(BaseModel):
-    model: str = Field(description="HF model ID or R2 URI to AWQ model")
+    model: str = Field(description="Hugging Face id (the base; a gated one needs HF_TOKEN in the env), or an r2 model "
+                                   "dir such as unsloth-train's merged_model")
+    lora_adapter: str | None = Field(default=None, description="r2 PEFT dir (tf-finetune or unsloth-train lora_adapter), "
+                                                               "served as 'tuned' beside the base on one endpoint")
     max_model_len: int = Field(default=8192)
-    keep_alive_min: int = Field(default=60, ge=1)
-    served_model_name: str | None = Field(default=None, description="Override name in /v1/models")
+    keep_alive_min: int = Field(default=30, ge=1, le=120, description="The backend deletes the endpoint after this; "
+                                                                      "GPU time bills until then")
+    served_model_name: str | None = Field(default=None, description="The base's name in /v1/models (default: the HF "
+                                                                    "id; 'tuned' for an r2 dir)")
     gpu_memory_utilization: float = Field(default=0.90)
     dtype: str = Field(default="bfloat16")
-    hf_token: str | None = Field(default=None, description="HuggingFace token for private models")
+    platform: str = Field(default="gpu-l40s-a", description="Nebius GPU platform (priced in orchapod.prices)")
+    preset: str = Field(default="1gpu-8vcpu-32gb")
 
 class VLLMServeOutputs(BaseModel):
-    endpoint_url: str
-    openai_api_key: str
+    model_ref: str                      # ModelRef JSON (api_key_env ORCHAPOD_ENDPOINT_TOKEN); metadata adds endpoint_id, expires_at
+    base_model_ref: str | None = None   # with lora_adapter: the same endpoint, model = the base
 
 
 # ---------------------------------------------------------------------------
@@ -390,11 +396,11 @@ NODE_REGISTRY: dict[NodeType, dict] = {
         "hidden": True,  # the agent never plans it: off the demo path
     },
     NodeType.VLLM_SERVE: {
-        "description": "Deploy a model as an OpenAI-compatible endpoint via vLLM.",
+        "description": "Serve a model (and optionally a LoRA adapter beside it) from a Nebius Serverless Endpoint with "
+                       "vLLM for keep_alive_min minutes: model_ref (tuned) and base_model_ref for judge-eval and compare.",
         "inputs_schema": VLLMServeInputs,
         "outputs_schema": VLLMServeOutputs,
-        "runtime": "gpu",
-        "long_running": True,  # pod stays alive after container exits
+        "runtime": "api",  # it creates the endpoint and exits after POST /internal/ttl
     },
 }
 

@@ -1,263 +1,170 @@
 """
-containers/vllm-serve/run.py
+containers/vllm-serve/run.py — node vllm-serve (api). Contract: docs/contracts.md "ML nodes → vllm-serve", "ModelRef",
+R10, R11.
 
-Node: vllm-serve
-Base image: vllm/vllm-openai:latest
-GPU: 1x H100 80GB
-LONG-RUNNING: pod stays alive for keep_alive_min minutes after server is ready.
-
-Inputs:
-  model                  — HF model ID or R2 URI to AWQ model dir
-  max_model_len          — context length (default: 8192)
-  keep_alive_min         — how long to keep pod alive (default: 60)
-  served_model_name      — override name returned in /v1/models (optional)
-  gpu_memory_utilization — fraction of GPU VRAM to use (default: 0.90)
-  dtype                  — "bfloat16" | "float16" | "auto" (default: bfloat16)
-  hf_token               — HuggingFace token for private models (optional)
-
-Outputs (registered via /internal/ttl):
-  endpoint_url   — public OpenAI-compatible base URL (https://... /v1)
-  openai_api_key — bearer token
-
-Cloudflare Tunnel (KAN-28):
-  If CLOUDFLARE_TUNNEL_TOKEN is set  → named tunnel → https://{run_id}.endpoints.orchapod.dev
-  Otherwise                          → quick tunnel → https://<random>.trycloudflare.com
-  Falls back to raw IP/RunPod URL if cloudflared is not installed or times out.
+Creates a Nebius Serverless Endpoint running vLLM for `model` (a Hugging Face id, or an r2 model dir such as
+unsloth-train's merged_model). With `lora_adapter` (an r2 PEFT dir, from tf-finetune or unsloth-train) it serves the base
+and the adapter side by side (`--enable-lora`, the adapter as "tuned"), so judge-eval and /compare get both from one
+serving stack. r2 inputs are read from our bucket, mounted read-only at /mnt/artifacts. The node waits up to 15 min for
+Running, proves the served model with one completion, registers the expiry with the control plane (POST /internal/ttl
+with endpoint_id; the backend deletes the endpoint then) and exits 0 with `model_ref` (and `base_model_ref`): ModelRefs
+that name the env var ORCHAPOD_ENDPOINT_TOKEN, never the token. A failure or cancel before registration deletes the
+endpoint. STUB=1 makes no Nebius call: the endpoint is http://stub.invalid, still registered, so /compare accepts it.
 """
 
-from __future__ import annotations
-
+import contextlib
 import json
 import os
 import re
-import secrets
-import subprocess
-import threading
+import sys
 import time
-import urllib.request
-from pathlib import Path
-from subprocess import PIPE, STDOUT
-from typing import Optional
+from datetime import datetime, timedelta, timezone
 
-from orchapod import io, log
+from orchapod import cost, io, log
+from orchapod.prices import PRICES
+from packages.providers.base import ProviderError
+from packages.providers.tokenfactory import TokenFactory
 
-_PORT = 8000
-_TUNNEL_TIMEOUT = 90  # seconds to wait for tunnel URL
-
-
-def generate_api_key() -> str:
-    return f"orchapod-{secrets.token_urlsafe(32)}"
-
-
-# ── Cloudflare Tunnel ─────────────────────────────────────────────────────────
-
-def start_cloudflare_tunnel(port: int) -> tuple[Optional[str], Optional[subprocess.Popen]]:
-    """
-    Start a Cloudflare Tunnel and return (public_url, process).
-
-    Quick tunnel  (no account):  cloudflared tunnel --url http://localhost:<port>
-    Named tunnel  (with token):  cloudflared tunnel run --token <token>
-
-    Returns (None, None) if cloudflared is not available or URL cannot be found.
-    """
-    # Check cloudflared is installed
-    try:
-        subprocess.run(["cloudflared", "--version"], check=True,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        log.info("cloudflared not found — skipping Cloudflare Tunnel")
-        return None, None
-
-    tunnel_token = os.environ.get("CLOUDFLARE_TUNNEL_TOKEN")
-    if tunnel_token:
-        # Named tunnel — token already encodes which tunnel to run
-        cmd = ["cloudflared", "tunnel", "--no-autoupdate", "run", "--token", tunnel_token]
-        log.info("Starting Cloudflare named tunnel")
-    else:
-        # Quick tunnel — free *.trycloudflare.com URL
-        cmd = ["cloudflared", "tunnel", "--no-autoupdate", "--url", f"http://localhost:{port}"]
-        log.info("Starting Cloudflare quick tunnel (*.trycloudflare.com)")
-
-    proc = subprocess.Popen(cmd, stdout=PIPE, stderr=STDOUT, text=True, bufsize=1)
-
-    found_url: list[str] = []
-
-    def _reader():
-        # Patterns to detect the public URL in cloudflared output
-        quick_re = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
-        named_ready_re = re.compile(r"Registered tunnel connection|INF.*connection.*registered", re.IGNORECASE)
-
-        run_id = os.environ.get("ORCHAPOD_RUN_ID", "")
-
-        for line in proc.stdout:  # type: ignore[union-attr]
-            line = line.rstrip()
-            if line:
-                log.info(f"[cloudflared] {line}")
-
-            if not found_url:
-                # Quick tunnel: URL printed directly
-                m = quick_re.search(line)
-                if m:
-                    found_url.append(m.group(0))
-                    return
-
-                # Named tunnel: URL is deterministic once connection is registered
-                if tunnel_token and named_ready_re.search(line):
-                    if run_id:
-                        found_url.append(f"https://{run_id}.endpoints.orchapod.dev")
-                    else:
-                        # Fallback: extract from token if possible
-                        found_url.append("https://endpoints.orchapod.dev")
-                    return
-
-    reader_thread = threading.Thread(target=_reader, daemon=True)
-    reader_thread.start()
-    reader_thread.join(timeout=_TUNNEL_TIMEOUT)
-
-    if found_url:
-        log.info(f"Cloudflare Tunnel URL: {found_url[0]}")
-        return found_url[0], proc
-    else:
-        log.info("Timed out waiting for Cloudflare Tunnel URL — falling back to raw URL")
-        proc.terminate()
-        return None, None
+IMAGE = "vllm/vllm-openai:v0.18.0-cu130"
+MOUNT = "/mnt/artifacts"
+POLL_S, WAIT_S = 15, 15 * 60
+MAX_LORA_RANK = 64  # vLLM's default is 16; Token Factory and unsloth-train adapters go up to 64
+PROMPT = [{"role": "user", "content": "In one short sentence, what can you help me with?"}]
+STUB_URL = "http://stub.invalid"
 
 
-# ── Raw / provider URL fallback ───────────────────────────────────────────────
-
-def detect_raw_url(port: int = _PORT) -> str:
-    """Detect the raw (non-tunnel) public URL for this pod across providers."""
-    # Explicit override (CI, custom domains)
-    if os.environ.get("ORCHAPOD_PUBLIC_URL"):
-        return os.environ["ORCHAPOD_PUBLIC_URL"]
-    # RunPod: stable proxy URL
-    pod_id = os.environ.get("RUNPOD_POD_ID")
-    if pod_id:
-        return f"https://{pod_id}-{port}.proxy.runpod.net"
-    # Vast.ai: exposes PUBLIC_IPADDR + VAST_TCP_PORT_{port}
-    public_ip   = os.environ.get("PUBLIC_IPADDR")
-    public_port = os.environ.get(f"VAST_TCP_PORT_{port}", str(port))
-    if public_ip:
-        return f"http://{public_ip}:{public_port}"
-    # Local / unknown
-    return f"http://localhost:{port}"
+def fail(reason: str):
+    log.error(reason)
+    sys.exit(1)
 
 
-# ── Model resolution ──────────────────────────────────────────────────────────
+def endpoints():
+    from packages.providers.nebius import NebiusServerless  # platform's client (contracts "NebiusServerless")
 
-def resolve_model(model_input: str, hf_token: str | None) -> str:
-    """Return a vLLM-compatible model path or HF ID."""
-    if model_input.startswith("r2://"):
-        log.info(f"Downloading model from R2: {model_input}")
-        dest = io.download_input(model_input, Path("/workspace/model"))
-        return str(dest)
-    return model_input.removeprefix("hf://")
+    return NebiusServerless().endpoints
 
 
-# ── TTL registration ──────────────────────────────────────────────────────────
-
-def register_ttl_alarm(endpoint_url: str, keep_alive_min: int) -> None:
-    """Notify control plane to terminate this pod after keep_alive_min minutes."""
-    control_url = os.environ.get("ORCHAPOD_CONTROL_URL")
-    if not control_url:
-        log.info("ORCHAPOD_CONTROL_URL not set — skipping TTL registration")
-        return
-    run_id  = os.environ["ORCHAPOD_RUN_ID"]
-    node_id = os.environ["ORCHAPOD_NODE_ID"]
-    payload = json.dumps({
-        "run_id":         run_id,
-        "node_id":        node_id,
-        "action":         "register_ttl",
-        "keep_alive_min": keep_alive_min,
-        "endpoint_url":   endpoint_url,
-    }).encode()
-    req = urllib.request.Request(
-        f"{control_url}/internal/ttl",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    urllib.request.urlopen(req, timeout=10)
+def mounted(name: str, uri: str, bucket: str) -> str:
+    """An r2 URI in our bucket → its path on the endpoint's read-only mount."""
+    if not uri.startswith(f"r2://{bucket}/"):
+        fail(f"{name} must be an r2:// dir in {bucket}, the bucket the endpoint mounts, not {uri}")
+    return f"{MOUNT}/{uri.removeprefix(f'r2://{bucket}/')}"
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+def running(eps, eid: str, created: float) -> str:
+    """Poll until Running with a URL; another end state, or 15 min, exits 1 (the caller deletes the endpoint)."""
+    while True:
+        ep, waited = eps.get(eid), time.monotonic() - created
+        if ep.get("state") == "RUNNING" and ep.get("url"):
+            return ep["url"]
+        if ep.get("state") in ("ERROR", "STOPPING", "STOPPED", "DELETING") or waited > WAIT_S:
+            why = " ".join(x for x in (ep.get("code"), ep.get("message")) if x)
+            fail(f"endpoint {eid} is {ep.get('state')} after {waited:.0f} s" + (f": {why}" if why else ""))
+        log.progress(int(waited), WAIT_S, extra={"phase": ep.get("state")})
+        time.sleep(POLL_S)
+
+
+def smoke(base_url: str, served: str, token: str, created: float) -> str:
+    """One short completion; while vLLM still loads behind a Running endpoint (5xx), retry until the 15-min deadline."""
+    tf = TokenFactory()
+    while True:
+        try:
+            return tf.chat(PROMPT, served, base_url=base_url, api_key=token, max_tokens=16)["text"]
+        except ProviderError as e:
+            if e.kind not in ("server", "rate_limit") or time.monotonic() - created > WAIT_S:
+                fail(f"the endpoint did not answer: {e}")
+            time.sleep(POLL_S)
+
+
+def write(name: str, ref: dict, metadata: dict) -> None:
+    path = io.local_path(name)
+    path.write_text(json.dumps(ref))
+    io.write_output(name, path, kind="model", metadata=metadata)
+
 
 def main():
     inputs = io.read_inputs()
-    log.info("vllm-serve starting")
+    stub = os.environ.get("STUB") == "1"
+    model, adapter = str(inputs.get("model") or ""), str(inputs.get("lora_adapter") or "")
+    for name, value in (("model", model), ("lora_adapter", adapter)):
+        if "${{" in value:
+            fail(f"unresolved ref {name}: {value}")
+    if not model:
+        fail("model is required: a Hugging Face id or an r2 model dir")
+    keep = int(inputs.get("keep_alive_min") or 30)
+    if not 1 <= keep <= 120:
+        fail(f"keep_alive_min is {keep}: 1 to 120 (an L40S costs $1.55 an hour against the $3 run cap)")
+    platform, preset = inputs.get("platform") or "gpu-l40s-a", inputs.get("preset") or "1gpu-8vcpu-32gb"
+    price = PRICES["nebius_serverless"].get(platform)
+    if price is None and not stub:
+        fail(f"no price for {platform} in orchapod.prices.PRICES, so no endpoint is created")
+    cap = os.environ.get("ORCHAPOD_MAX_COST_USD")
+    if cap and price and keep / 60 * price > float(cap):
+        fail(f"{keep} min of {platform} costs about ${keep / 60 * price:.2f}, above this node's budget ${float(cap):.2f}")
+    token = os.environ.get("ORCHAPOD_ENDPOINT_TOKEN", "").strip()
+    if not stub and not token:
+        fail("set ORCHAPOD_ENDPOINT_TOKEN (openssl rand -hex 32): the endpoints' bearer token")
+    if not stub and not os.environ.get("ORCHAPOD_CONTROL_URL"):
+        fail("ORCHAPOD_CONTROL_URL is required: the control plane deletes the endpoint at its expiry")
 
-    model_input            = inputs["model"]
-    max_model_len          = int(inputs.get("max_model_len", 8192))
-    keep_alive_min         = int(inputs.get("keep_alive_min", 60))
-    served_model_name      = inputs.get("served_model_name")
-    gpu_memory_utilization = float(inputs.get("gpu_memory_utilization", 0.90))
-    dtype                  = inputs.get("dtype", "bfloat16")
-    hf_token               = inputs.get("hf_token") or os.environ.get("HF_TOKEN")
+    bucket = os.environ.get("ORCHAPOD_R2_BUCKET") or "orchapod-artifacts"
+    hf_id = None if model.startswith("r2://") else model.removeprefix("hf://")
+    base_name = inputs.get("served_model_name") or hf_id or ("base" if adapter else "tuned")
+    served = "tuned" if adapter else base_name
+    args = [hf_id or mounted("model", model, bucket), "--served-model-name", base_name, "--port", "8000",
+            "--max-model-len", str(int(inputs.get("max_model_len") or 8192)), "--dtype", inputs.get("dtype") or "bfloat16",
+            "--gpu-memory-utilization", str(float(inputs.get("gpu_memory_utilization") or 0.90))]
+    if adapter:
+        args += ["--enable-lora", "--lora-modules", f"tuned={mounted('lora_adapter', adapter, bucket)}",
+                 "--max-lora-rank", str(MAX_LORA_RANK)]
+    run_id, node_id = os.environ.get("ORCHAPOD_RUN_ID", "local"), os.environ.get("ORCHAPOD_NODE_ID", "serve")
+    name = re.sub(r"[^a-z0-9-]+", "-", f"orchapod-{run_id[:8]}-{node_id}".lower())[:63].strip("-")
 
-    model_arg = resolve_model(model_input, hf_token)
-    api_key   = generate_api_key()
+    eps, eid, created, registered = None, None, time.monotonic(), False
+    try:
+        if stub:
+            eid, url = f"stub-{name}", STUB_URL
+        else:
+            eps = endpoints()
+            eid = eps.create(name, IMAGE, args=" ".join(args), platform=platform, preset=preset, port=8000,
+                             env={"HF_TOKEN": os.environ["HF_TOKEN"]} if hf_id and os.environ.get("HF_TOKEN") else {},
+                             auth_token=token, volumes=(f"s3://{bucket}:{MOUNT}:ro",) if not hf_id or adapter else ())
+            created = time.monotonic()
+            log.info(f"endpoint {eid} ({name}) on {platform}/{preset}: {IMAGE} {' '.join(args)}")
+            url = running(eps, eid, created)
+        base_url = url.rstrip("/") + "/v1"
+        proof = smoke(base_url, served, token, created)
+        startup_s = round(time.monotonic() - created)
+        try:  # from here the backend owns the endpoint and deletes it at expiry
+            log.post("/internal/ttl", {"action": "register_ttl", "keep_alive_min": keep, "endpoint_url": url,
+                                       "endpoint_id": eid})
+        except Exception as e:
+            fail(f"could not register the endpoint's expiry, so it is deleted: {e}")
+        registered = True
+        expires_at = (datetime.now(timezone.utc) + timedelta(minutes=keep)).isoformat()
 
-    cmd = [
-        "python", "-m", "vllm.entrypoints.openai.api_server",
-        "--model", model_arg,
-        "--port", str(_PORT),
-        "--host", "0.0.0.0",
-        "--max-model-len", str(max_model_len),
-        "--api-key", api_key,
-        "--dtype", dtype,
-        "--gpu-memory-utilization", str(gpu_memory_utilization),
-    ]
-    if served_model_name:
-        cmd += ["--served-model-name", served_model_name]
-
-    env = dict(os.environ)
-    if hf_token:
-        env["HF_TOKEN"] = hf_token
-
-    log.info(f"Starting vLLM server (model={model_arg}, max_model_len={max_model_len})")
-    vllm_proc = subprocess.Popen(cmd, env=env)
-
-    # Wait for server ready (up to 240 s)
-    for _ in range(120):
-        try:
-            urllib.request.urlopen(f"http://localhost:{_PORT}/health", timeout=2)
-            log.info("vLLM server is ready")
-            break
-        except Exception:
-            time.sleep(2)
-    else:
-        vllm_proc.kill()
-        raise RuntimeError("vLLM server failed to start after 240 seconds")
-
-    # ── Establish public URL ──────────────────────────────────────────────────
-    tunnel_url, tunnel_proc = start_cloudflare_tunnel(_PORT)
-
-    if tunnel_url:
-        public_base = tunnel_url.rstrip("/")
-    else:
-        public_base = detect_raw_url(_PORT)
-
-    openai_base_url = public_base + "/v1"
-    log.info(f"Public endpoint base URL: {openai_base_url}")
-
-    # Write outputs so they appear in the run viewer immediately
-    io.write_output("endpoint_url",   openai_base_url, kind="endpoint",
-                    metadata={"url": openai_base_url, "model": model_arg})
-    io.write_output("openai_api_key", api_key,          kind="endpoint",
-                    metadata={"api_key": api_key})
-
-    # Register TTL alarm — control plane will terminate pod after N minutes
-    register_ttl_alarm(openai_base_url, keep_alive_min)
-    log.info(f"Pod will auto-terminate in {keep_alive_min} minutes")
-
-    # Wait for vLLM to exit (pod terminated by TTL or external signal)
-    vllm_proc.wait()
-
-    # Clean up tunnel
-    if tunnel_proc and tunnel_proc.poll() is None:
-        tunnel_proc.terminate()
-
-    log.info("vllm-serve exiting")
+        ref = {"base_url": base_url, "model": served, "api_key_env": "ORCHAPOD_ENDPOINT_TOKEN", "base_model": hf_id}
+        extra = {"endpoint_id": eid, "expires_at": expires_at}
+        write("model_ref", ref, {**ref, **extra, "proof": proof})
+        if adapter:  # the same endpoint: base and tuned share one serving stack (R11)
+            base_ref = {**ref, "model": base_name, "base_model": None}
+            write("base_model_ref", base_ref, {**base_ref, **extra})
+        io.write_metrics({"endpoint_id": eid, "served_model": served, "platform": platform, "preset": preset,
+                          "keep_alive_min": keep, "startup_s": startup_s, "expires_at": expires_at})
+        log.info(f"vllm-serve complete: {served} at {base_url} answered {proof!r}; deleted at {expires_at}")
+    except ProviderError as e:  # create or poll: the node's last line is the provider's
+        fail(str(e))
+    finally:
+        if eid and not stub:
+            if not registered:
+                try:
+                    eps.delete(eid)
+                    log.warn(f"deleted endpoint {eid}")
+                except Exception as e:  # it keeps billing GPU time: say so loudly
+                    log.error(f"could not delete endpoint {eid}: {e}; delete it in the Nebius console")
+            hours = (time.monotonic() - created) / 3600 + (keep / 60 if registered else 0)
+            with contextlib.suppress(cost.BudgetExceeded):  # recorded either way; the next node boundary stops the run
+                cost.add("nebius_serverless", f"{platform}/{preset}", gpu_hours=round(hours, 4))
 
 
 if __name__ == "__main__":

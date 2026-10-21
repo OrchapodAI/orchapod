@@ -36,6 +36,7 @@ class NodeType(str, Enum):
     QUANTIZE             = "quantize"
     LM_EVAL              = "lm-eval"
     VLLM_SERVE           = "vllm-serve"
+    TF_DEPLOY            = "tf-deploy"
 
 
 class DataFormat(str, Enum):
@@ -401,5 +402,22 @@ NODE_REGISTRY[NodeType.TF_FINETUNE] = {
                    "the checkpoint with the lowest validation loss as a PEFT adapter and reports the loss curve.",
     "inputs_schema": TFFinetuneInputs,
     "outputs_schema": TFFinetuneOutputs,
+    "runtime": "api",
+}
+
+
+class TFDeployInputs(BaseModel):
+    job: dict[str, Any] | str = Field(description="tf-finetune's job output (r2:// URI), or the same JSON inline")
+    name: str | None = Field(default=None, description="Deployment name; empty = orchapod-<run_id[:8]>")
+
+class TFDeployOutputs(BaseModel):
+    model_ref: str  # ModelRef JSON {base_url, model, api_key_env, base_model}; its metadata adds `proof`
+
+NODE_REGISTRY[NodeType.TF_DEPLOY] = {
+    "description": "Serve a tf-finetune checkpoint as a per-token LoRA model on Token Factory and prove it with one "
+                   "completion. If Token Factory has no per-token LoRA for the base, it fails: serve tf-finetune's "
+                   "lora_adapter with vllm-serve instead.",
+    "inputs_schema": TFDeployInputs,
+    "outputs_schema": TFDeployOutputs,
     "runtime": "api",
 }

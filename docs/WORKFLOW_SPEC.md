@@ -51,6 +51,9 @@ Deploy as OpenAI-compatible endpoint via vLLM. Pod stays alive after training.
 ### `tf-finetune`
 LoRA fine-tune on Token Factory (`model`, `train_data`/`eval_data` ← data-prep's `train_jsonl`/`eval_jsonl`, `n_epochs`, `hyperparameters`, `timeout_min`) → `job` (ids, best checkpoint by validation loss, losses) and `lora_adapter` (PEFT), plus `loss_curve` in metrics. Runtime `api`; a failure, timeout or cancel cancels the Token Factory job.
 
+### `tf-deploy`
+`job` ← `${{ nodes.<finetune>.outputs.job }}` → `model_ref` for judge-eval and /compare, proven with one completion. Runtime `api`. If Token Factory has no per-token LoRA for the base, it fails with "serve it with vllm-serve + lora_adapter": wire tf-finetune's `lora_adapter` into vllm-serve instead.
+
 ## Input reference syntax
 
 | Syntax | Resolves to |

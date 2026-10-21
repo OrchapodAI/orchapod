@@ -84,7 +84,7 @@ class DataPrepInputs(BaseModel):
                                description="qa: question → user, answer → assistant; structured: rows kept as they are")
     train_split: float = Field(default=0.9, ge=0.5, le=0.99)
     test_split: float = Field(default=0.0, ge=0.0, description="Held out as test_jsonl; eval gets 1 - train - test. "
-                              "Each split is rounded, so few rows can leave it empty (5 rows at 0.1 → 0)")
+                              "Each split is rounded; from 3 rows on, a requested test split and an eval share above 0 keep at least one row each")
     quality_filter: bool = Field(default=False, description="Chat formats only: Nemotron 3.5 Lightning scores each "
                                  "row 1-5 and rows under 3 are dropped (about $0.01 per 300 rows); skipped under STUB")
 

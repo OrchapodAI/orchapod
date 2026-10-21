@@ -52,13 +52,13 @@ def test_ci_builds_the_prod_images_on_nebiushackathon_and_pushes_neither():
 
 
 def test_ci_frees_disk_before_building_the_20gb_images():
-    """unsloth-train (~20 GB, CUDA, amd64) does not fit a standard runner's disk: a free-disk-space step, pinned to a commit and
-    run for that node only, comes before the build. The matrix itself stays whole (test_ci_builds_every_container)."""
+    """unsloth-train (~20 GB, CUDA, amd64) does not fit a standard runner's disk: an inline free-disk-space step (this job holds
+    packages: write, so no third-party action), run for those nodes only, comes before the build. The matrix itself stays whole (test_ci_builds_every_container)."""
     steps = CI["jobs"]["containers"]["steps"]
-    free = next((i for i, s in enumerate(steps) if s.get("uses", "").startswith("jlumbroso/free-disk-space@")), None)
+    free = next((i for i, s in enumerate(steps) if s.get("name") == "Free disk space"), None)
     build = next(i for i, s in enumerate(steps) if s.get("uses", "").startswith("docker/build-push-action"))
     assert free is not None and free < build, [s.get("uses") for s in steps]
-    assert re.fullmatch(r"jlumbroso/free-disk-space@[0-9a-f]{40}", steps[free]["uses"]), "pin the action to a commit, not a tag"
+    assert "uses" not in steps[free] and "rm -rf /usr/local/lib/android" in steps[free]["run"]  # inline: no third-party code here
     assert "unsloth-train" in steps[free].get("if", ""), steps[free]  # an `if` on the node: the small images skip the clean-up
 
 

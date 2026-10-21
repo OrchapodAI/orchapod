@@ -494,3 +494,15 @@ async def test_from_prompt_drafts_with_the_same_planner(client, monkeypatch):
     assert yaml.safe_load(r.json()["yaml"]) == planner.templates()[1]["plan"]
     assert r.json()["name"] == "movie-engagement-synthetic-data"
     assert (await client.post("/workflows/from-prompt", json={"prompt": " "})).status_code == 422
+
+
+def test_every_shipped_template_plans_without_errors_at_both_scales(monkeypatch):
+    """make check guards every template (not only the Docker e2e): an edit that breaks validation fails here."""
+    from api.agent import planner
+    monkeypatch.setattr(planner, "get_providers", lambda: {"nebius": object()})  # a gpu node needs a configured provider
+    shipped = planner.templates()
+    assert len(shipped) >= 4
+    for t in shipped:
+        for plan in (t["plan"], planner.reduced(t)["plan"]):
+            errors, _, _ = planner.review(plan)
+            assert errors == [], (t["slug"], errors)

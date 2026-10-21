@@ -12,7 +12,7 @@ export default defineConfig({
   expect: { timeout: 30_000 },
   workers: 1, // the tests share one API, its database and its day budget
   retries: 0,
-  reporter: "list", // it prints the passes and the skips
+  reporter: "list", // it prints each test and its result
   outputDir: "test-results",
   use: {
     baseURL: process.env.E2E_WEB_URL,

@@ -89,14 +89,23 @@ async def guard(db: AsyncSession, scale: float, run: Run | None = None, need: fl
                                                      + (f", the plan needs ${need:.2f}" if need else ""))
 
 
+def meter(usage: list[float]) -> Callable:
+    """An on_usage hook that appends each call's $ to `usage`; it runs on worker threads, and list.append is atomic."""
+    return lambda *_, usd=None, **__: usage.append(usd or 0.0)
+
+
+async def record(db: AsyncSession, source: str, usd: float) -> None:
+    """One row of control-plane spend in today's ledger (R6)."""
+    db.add(Spend(source=source, usd=Decimal(str(round(usd, 6)))))
+    await db.commit()
+
+
 async def control_plane(db: AsyncSession, source: str, call: Callable[[TokenFactory], dict]) -> dict:
     """Run one sync Token Factory call in a worker thread; whatever it bills goes into today's ledger,
     also when the call then fails (TF bills before the reply is parsed)."""
-    usage: list[float] = []  # on_usage runs on the worker thread; list.append is atomic
-    tf = TokenFactory(on_usage=lambda *_, usd=None, **__: usage.append(usd or 0.0))
+    usage: list[float] = []
     try:
-        return await asyncio.to_thread(call, tf)
+        return await asyncio.to_thread(call, TokenFactory(on_usage=meter(usage)))
     finally:
         if usage:
-            db.add(Spend(source=source, usd=Decimal(str(round(sum(usage), 6)))))
-            await db.commit()
+            await record(db, source, sum(usage))

@@ -2,8 +2,11 @@
 // (Node >= 22.18 strips the types itself, so there is nothing to install.)
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
 import { yamlValue, buildYamlFromGraph, planYaml } from "../../apps/web/lib/workflowYaml.ts";
-import { api, explainError } from "../../apps/web/lib/api.ts";
+import { api, apiDate, explainError } from "../../apps/web/lib/api.ts";
+import { applyRunEvent, canRetry } from "../../apps/web/lib/runEvents.ts";
+import { defaultInputs } from "../../apps/web/lib/nodeForms.ts";
 
 const node = (id: string, node_type: string, inputs: Record<string, unknown>) =>
   ({ id, position: { x: 0, y: 0 }, data: { label: id, node_type, inputs, resources: {} } }) as never;
@@ -16,10 +19,12 @@ test("object and list inputs are written as JSON (R13)", () => {
 });
 
 test("strings a plain YAML scalar would misread are JSON-quoted; the rest stay plain", () => {
-  for (const s of ["", "Audience: brokers", "see #3", "two\nlines", " padded", "*bold*", "- item"]) {
+  // Plain YAML cannot start with a flow indicator or a quote: LLM text such as "[draft] …" reaches planYaml.
+  for (const s of ["", "Audience: brokers", "see #3", "two\nlines", " padded", "*bold*", "- item",
+    "[draft] notes", "{x} y", '"quoted" lead', "'single' lead", ", comma", "] x", "} x"]) {
     assert.equal(yamlValue(s), JSON.stringify(s), s);
   }
-  for (const s of ["16", "meta-llama/Llama-3.1-8B-Instruct", "${{ nodes.prep.outputs.train_jsonl }}", "https://a.io/x#y"]) {
+  for (const s of ["16", "meta-llama/Llama-3.1-8B-Instruct", "${{ nodes.prep.outputs.train_jsonl }}", "https://a.io/x#y", "test[:50]", "a, b"]) {
     assert.equal(yamlValue(s), s, s);
   }
   assert.equal(yamlValue(0.9), "0.9");
@@ -75,4 +80,55 @@ test("explainError turns each agent failure into a readable sentence", () => {
   assert.match(explainError(http(502, "/agent/plan", { detail: "token_factory server 503" })), /Token Factory/);
   assert.match(explainError(http(503, "/agent/plan", { detail: "kill switch" })), /kill switch/);
   assert.equal(explainError(http(500, "/agent/plan", "Internal Server Error")), "500 on /agent/plan: Internal Server Error");
+});
+
+test("the run page reads GET /runs/{id}/summary and retries with POST /runs/{id}/nodes/{node_id}/retry", async () => {
+  const calls: string[] = [];
+  globalThis.fetch = async (url: string, init?: RequestInit) => {
+    calls.push(`${init?.method ?? "GET"} ${url}`);
+    return new Response("{}");
+  };
+  await api.runs.summary("r1");
+  await api.runs.retry("r1", "prep");
+  assert.deepEqual(calls, ["GET http://localhost:8001/runs/r1/summary", "POST http://localhost:8001/runs/r1/nodes/prep/retry"]);
+});
+
+test("run events drive the cost meter, the run status and each node's status and verbatim error", () => {
+  const view = {
+    run: { status: "running", cost_usd: null },
+    summary: { nodes: [{ node_id: "prep", status: "running", error: null }, { node_id: "train", status: "pending", error: null }] },
+  } as never;
+  assert.equal(applyRunEvent(view, { type: "run_cost", cost_usd: 0.0123 }).run.cost_usd, 0.0123);
+  assert.equal(applyRunEvent(view, { type: "run_status", status: "failed", error: "x" }).run.status, "failed");
+  const error = 'exit 1: token_factory bad_request 400: {"detail": "no price"}\n  second line';
+  const failed = applyRunEvent(view, { type: "node_status", node_id: "prep", status: "failed", error });
+  assert.deepEqual(failed.summary.nodes.map((n) => [n.status, n.error]), [["failed", error], ["pending", null]]);
+  assert.equal(applyRunEvent(failed, { type: "node_status", node_id: "prep", status: "running" }).summary.nodes[0].error, null);
+  assert.equal(applyRunEvent(view, { type: "log", node_id: "prep", ts: "", level: "INFO", message: "hi" }), view);
+});
+
+test("Retry node is enabled only once the run has stopped (failed or cancelled)", () => {
+  const statuses = ["pending", "provisioning_gpu", "running", "succeeded", "failed", "cancelled"] as const;
+  assert.deepEqual(statuses.filter(canRetry), ["failed", "cancelled"]);
+});
+
+test("dropped nodes start from contract defaults: no teacher_kind, vllm-serve keep-alive 30 min", () => {
+  assert.equal("teacher_kind" in defaultInputs("synth-distilabel"), false);
+  assert.equal(defaultInputs("vllm-serve").keep_alive_min, 30);
+  assert.equal(defaultInputs("judge-eval").max_samples, 60);
+});
+
+test("nothing made up on screen (team, owner, counts, budget) and no links to the Vast.ai/RunPod pages", () => {
+  const read = (path: string) => readFileSync(new URL(`../../apps/web/${path}`, import.meta.url), "utf8");
+  const pages = readdirSync(new URL("../../apps/web/app/", import.meta.url), { recursive: true }).map(String);
+  for (const page of pages.filter((p) => p.endsWith(".tsx"))) assert.doesNotMatch(read(`app/${page}`), /orbital-research|>EM</, page);
+  const sidebar = read("components/Sidebar.tsx");
+  for (const fake of [/count: "\d+"/, /orbital|Elena|\$250/, /href: "\/(inference|endpoints)"/]) assert.doesNotMatch(sidebar, fake);
+});
+
+test("API datetimes are UTC: a naive one gets Z, one with a zone is kept", () => {
+  const t = Date.UTC(2026, 9, 21, 0, 32, 20, 222);
+  assert.equal(apiDate("2026-10-21T00:32:20.222824").getTime(), t);
+  assert.equal(apiDate("2026-10-21T00:32:20.222Z").getTime(), t);
+  assert.equal(apiDate("2026-10-21T02:32:20.222+02:00").getTime(), t);
 });

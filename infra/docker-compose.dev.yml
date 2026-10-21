@@ -1,15 +1,13 @@
 # Local development environment — Nebius x NVIDIA Hackathon edition
-# Runs Postgres, Redis, and MinIO locally. GPU pods run on Nebius AI Cloud.
-# CPU nodes (hf-import, data-prep, synth-distilabel, etc.) run via LocalDockerProvider.
+# Runs Postgres, Redis, and MinIO locally. GPU nodes run on Nebius AI Cloud.
+# cpu and api nodes run via LocalDockerProvider.
 #
-# Usage: docker compose -f infra/docker-compose.dev.yml up -d
+# Usage: make up (postgres, redis, minio in the compose project orchapod-hack)
 #
-# Required .env keys for hackathon demo:
-#   NEBIUS_API_KEY       — Token Factory (Nemotron inference, teacher LLM, judge)
-#   NEBIUS_IAM_TOKEN     — AI Cloud compute (GPU jobs for training/serving)
-#   NEBIUS_FOLDER_ID     — Nebius project folder ID
-
-version: "3.9"
+# Keys for the demo (.env; every variable and where to get it: .env.example):
+#   NEBIUS_API_KEY       — Token Factory (Nemotron inference, teacher, judge, fine-tuning)
+#   TAVILY_API_KEY       — web-research
+#   NEBIUS_PROJECT_ID    — AI Cloud Serverless Jobs and Endpoints (gpu nodes)
 
 services:
   postgres:
@@ -62,30 +60,37 @@ services:
       context: ..
       dockerfile: apps/api/Dockerfile.dev
     ports:
-      - "8000:8000"
+      - "8001:8000"   # host 8000 belongs to another project
     environment:
-      DATABASE_URL: postgresql+asyncpg://orchapod:orchapod_dev@postgres:5432/orchapod
-      REDIS_URL: redis://redis:6379
+      # docs/contracts.md "Config", with its defaults; storage, database and redis are the services above
+      NEBIUS_API_KEY: ${NEBIUS_API_KEY:-}
+      NEBIUS_BASE_URL: ${NEBIUS_BASE_URL:-https://api.tokenfactory.nebius.com/v1}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      NEBIUS_PROJECT_ID: ${NEBIUS_PROJECT_ID:-}
+      NEBIUS_IAM_TOKEN: ${NEBIUS_IAM_TOKEN:-}
+      ORCHAPOD_ENDPOINT_TOKEN: ${ORCHAPOD_ENDPOINT_TOKEN:-}
       ORCHAPOD_R2_ENDPOINT: http://minio:9000
+      ORCHAPOD_R2_REGION: auto
       ORCHAPOD_R2_ACCESS_KEY: orchapod
       ORCHAPOD_R2_SECRET_KEY: orchapod_dev
       ORCHAPOD_R2_BUCKET: orchapod-artifacts
+      ORCHAPOD_IMAGE_PREFIX: ${ORCHAPOD_IMAGE_PREFIX:-ghcr.io/bangadpurva}
+      DATABASE_URL: postgresql+asyncpg://orchapod:orchapod_dev@postgres:5432/orchapod
+      REDIS_URL: redis://redis:6379
       ORCHAPOD_CONTROL_URL: http://api:8000
-      # Nebius AI Cloud — GPU compute (primary for hackathon)
-      NEBIUS_IAM_TOKEN: ${NEBIUS_IAM_TOKEN:-}
-      NEBIUS_FOLDER_ID: ${NEBIUS_FOLDER_ID:-}
-      NEBIUS_SUBNET_ID: ${NEBIUS_SUBNET_ID:-}
-      # Nebius Token Factory — Nemotron inference (teacher LLM + judge)
-      NEBIUS_API_KEY: ${NEBIUS_API_KEY:-}
-      JUDGE_MODEL: ${JUDGE_MODEL:-nvidia/Llama-3.1-Nemotron-Ultra-253B-v1}
-      # Fallback GPU provider
-      VASTAI_API_KEY: ${VASTAI_API_KEY:-}
-      # Fallback judge / optional features
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      # HuggingFace token for private/gated models
+      ORCHAPOD_INTERNAL_SECRET: ${ORCHAPOD_INTERNAL_SECRET:-}
+      ORCHAPOD_MAX_RUN_USD: ${ORCHAPOD_MAX_RUN_USD:-3}
+      ORCHAPOD_MAX_DAY_USD: ${ORCHAPOD_MAX_DAY_USD:-15}
+      ORCHAPOD_KILL_SWITCH: ${ORCHAPOD_KILL_SWITCH:-0}
+      ORCHAPOD_ANON_SCALE: ${ORCHAPOD_ANON_SCALE:-0.1}
+      ORCHAPOD_ADMIN_TOKEN: ${ORCHAPOD_ADMIN_TOKEN:-}
+      ORCHAPOD_NODE_TIMEOUT_S: ${ORCHAPOD_NODE_TIMEOUT_S:-5400}
+      STUB: ${STUB:-}
       HF_TOKEN: ${HF_TOKEN:-}
-      # Cloudflare Tunnel token (optional — see .env.example for setup)
-      CLOUDFLARE_TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+      VASTAI_API_KEY: ${VASTAI_API_KEY:-}   # spikes only; used only by nodes whose provider_pref names vastai
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      ORCHAPOD_FROM_EMAIL: ${ORCHAPOD_FROM_EMAIL:-noreply@orchapod.ai}
+      ORCHAPOD_ALERT_EMAIL: ${ORCHAPOD_ALERT_EMAIL:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -102,8 +107,8 @@ services:
     ports:
       - "3000:3000"
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
-      NEXT_PUBLIC_WS_URL: ws://localhost:8000
+      NEXT_PUBLIC_API_URL: http://localhost:8001
+      NEXT_PUBLIC_WS_URL: ws://localhost:8001
     volumes:
       - ../apps/web:/app
       - web_node_modules:/app/node_modules

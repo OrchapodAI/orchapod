@@ -23,8 +23,6 @@ export default function RegistryPage() {
       {/* Topbar */}
       <div className="op-topbar">
         <div className="op-crumbs">
-          <span>orbital-research</span>
-          <span className="sep">/</span>
           <span className="here">Registry</span>
         </div>
         <div className="spacer" />

@@ -42,6 +42,8 @@ STALE = [
     "Super 49B",
     "Ultra 253B",
     "localhost:8000",  # our API is on 8001; 8000 belongs to another project
+    "ANTHROPIC_API_KEY",  # stage one: no other model provider on the demo path
+    "OPENAI_API_KEY",
 ]
 
 
@@ -75,6 +77,13 @@ def test_no_stale_strings():
 
 def test_every_todo_names_its_day():
     assert not re.search(r"TODO(?!\(D8\))", README)
+
+
+def test_unbuilt_make_targets_are_marked_todo():
+    # Their scripts are not written yet; drop this test when scripts/e2e_demo.py, e2e_agent.py and seed-golden-run.py land.
+    for line in README.splitlines():
+        if re.search(r"\bmake (e2e|agent-e2e|demo)\b", line):
+            assert "TODO(D8)" in line, f"the target has no script yet: {line[:70]}"
 
 
 def test_make_targets_and_env_vars_exist():

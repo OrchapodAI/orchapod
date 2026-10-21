@@ -1,15 +1,16 @@
 import type {
-  Workflow, Run, NodeRun, Artifact, BaseModel, PublicDataset, NodeTypeMeta, NodeType, TrainingMethod,
+  Workflow, Run, BaseModel, PublicDataset, NodeTypeMeta, NodeType, TrainingMethod,
   DeployRequest, DeployResponse, InferenceEndpoint, ExtendResponse, RegisteredModel, ArtifactListItem,
-  AgentPlan, AgentRunOut, AgentReport, Plan,
+  AgentPlan, AgentRunOut, AgentReport, Plan, RunSummary,
 } from "./types";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
+export const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  // headers last: spreading init after them would drop Content-Type whenever a caller passes headers
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...init?.headers },
     ...init,
+    headers: { "Content-Type": "application/json", ...init?.headers },
   });
   if (!res.ok) {
     const text = await res.text();
@@ -19,6 +20,9 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   }
   return res.json() as Promise<T>;
 }
+
+/** The API sends naive UTC datetimes (no zone); new Date() would read them as local time. */
+export const apiDate = (iso: string) => new Date(/(Z|[+-]\d\d:\d\d)$/i.test(iso) ? iso : `${iso}Z`);
 
 /** One readable sentence for a failed call: the /agent page's error state. */
 export function explainError(err: unknown): string {
@@ -80,11 +84,12 @@ export const api = {
     cancel(id: string): Promise<Run> {
       return req(`/runs/${id}/cancel`, { method: "POST" });
     },
-    nodes(id: string): Promise<NodeRun[]> {
-      return req(`/runs/${id}/nodes`);
+    /** Re-runs the failed node of a failed or cancelled run, then continues downstream (202). */
+    retry(id: string, nodeId: string): Promise<Run> {
+      return req(`/runs/${id}/nodes/${encodeURIComponent(nodeId)}/retry`, { method: "POST" });
     },
-    artifacts(id: string): Promise<Artifact[]> {
-      return req(`/runs/${id}/artifacts`);
+    summary(id: string): Promise<RunSummary> {
+      return req(`/runs/${id}/summary`);
     },
     costEstimate(id: string): Promise<{ nodes: { node_id: string; node_type: NodeType; quotes: unknown[] }[] }> {
       return req(`/runs/${id}/cost-estimate`);

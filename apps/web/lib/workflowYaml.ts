@@ -3,8 +3,8 @@ import type { OrchaNodeData } from "../components/canvas/OrchaNode";
 import type { Plan, PlanNode } from "./types";
 
 // Strings a plain YAML scalar would lose or misread: empty, multi-line, "key: value", " #comment",
-// edge spaces, a leading indicator. Flow syntax ("[a, b]", "{...}") stays plain on purpose.
-const NEEDS_QUOTES = /^$|^\s|\s$|\n|:\s|:$|\s#|^[#&*!|>%@`]|^[-?:](\s|$)/;
+// edge spaces, a leading indicator, flow bracket, comma or quote (LLM text such as "[draft] …").
+const NEEDS_QUOTES = /^$|^\s|\s$|\n|:\s|:$|\s#|^[#&*!|>%@`[\]{},'"]|^[-?:](\s|$)/;
 
 /** A YAML value. JSON is YAML flow syntax, so objects and lists (R13) and risky strings go out as JSON. */
 export function yamlValue(v: unknown): string {

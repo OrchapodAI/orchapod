@@ -25,7 +25,7 @@ nodes:
       key: ${{ nodes.other_id.outputs.name }} # reference to another node's output
     resources:
       gpu: "1xH100"            # GPU spec (omit for CPU-only nodes like data-prep)
-      provider_pref: ["runpod", "vastai"]    # provider preference order
+      provider_pref: ["nebius"]              # provider preference order (default); vastai only when named here
 ```
 
 ## The 7 node types

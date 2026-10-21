@@ -33,21 +33,23 @@ function parseLoose(text: string): unknown {
 }
 
 // Uncontrolled on purpose (defaultValue), so parsing never moves the caret; the panel is keyed by node.
+// One panel is open at a time, so help-<key> ids are unique.
 function FormInput({ field: f, value, onChange }: { field: FormField; value: unknown; onChange: (v: unknown) => void }) {
+  const help = { "aria-describedby": `help-${f.key}` };
   switch (f.kind) {
     case "bool":
-      return <input type="checkbox" defaultChecked={Boolean(value)} onChange={(e) => onChange(e.target.checked)} />;
+      return <input type="checkbox" {...help} defaultChecked={Boolean(value)} onChange={(e) => onChange(e.target.checked)} />;
     case "number":
-      return <input type="number" step="any" defaultValue={asText(value)} placeholder={f.placeholder} className={INPUT_CLASS}
+      return <input type="number" step="any" {...help} defaultValue={asText(value)} placeholder={f.placeholder} className={INPUT_CLASS}
         onChange={(e) => onChange(e.target.value === "" ? undefined : e.target.valueAsNumber)} />;
     case "list":
-      return <textarea rows={3} defaultValue={Array.isArray(value) ? value.join("\n") : asText(value)} className={INPUT_CLASS}
+      return <textarea rows={3} {...help} defaultValue={Array.isArray(value) ? value.join("\n") : asText(value)} className={INPUT_CLASS}
         onChange={(e) => onChange(e.target.value.split("\n").map((l) => l.trim()).filter(Boolean))} />;
     case "json":
-      return <textarea rows={typeof value === "object" ? 4 : 2} defaultValue={asText(value)} className={`${INPUT_CLASS} font-mono`}
+      return <textarea rows={typeof value === "object" ? 4 : 2} {...help} defaultValue={asText(value)} className={`${INPUT_CLASS} font-mono`}
         onChange={(e) => onChange(parseLoose(e.target.value))} />;
     default:
-      return <input defaultValue={asText(value)} placeholder={f.placeholder} className={INPUT_CLASS}
+      return <input {...help} defaultValue={asText(value)} placeholder={f.placeholder} className={INPUT_CLASS}
         onChange={(e) => onChange(e.target.value === "" && f.default === undefined ? undefined : e.target.value)} />;
   }
 }
@@ -73,7 +75,7 @@ export function NodePanel({ node, onClose, onUpdate }: Props) {
               </span>
               <FormInput field={f} value={inputs[f.key]} onChange={(v) => setInput(f.key, v)} />
             </label>
-            <p className="text-[10.5px] text-[#6B778C] mt-1 leading-snug">{f.help}</p>
+            <p id={`help-${f.key}`} className="text-[10.5px] text-[#6B778C] mt-1 leading-snug">{f.help}</p>
           </div>
         ))}
       </div>

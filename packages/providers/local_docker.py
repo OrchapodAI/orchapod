@@ -122,11 +122,10 @@ class LocalDockerProvider:
         resolved_image = _resolve_image(image)
         rewritten_env = _rewrite_env(env)
 
-        # Compose `docker run -d --rm --add-host ... -e K=V ... <image>`. We use
-        # `--rm` so the container is auto-removed on exit (matches GPU pods'
-        # ephemeral semantics) and `-d` so we get the id back synchronously.
+        # `-d` returns the id at once. No `--rm`: a container that exits fast would be gone before `docker wait`
+        # reads its code; `terminate` (which the executor also runs after `wait`) removes it.
         argv = [
-            "docker", "run", "-d", "--rm",
+            "docker", "run", "-d",
             "--add-host=host.docker.internal:host-gateway",
         ]
         for k, v in rewritten_env.items():
@@ -178,23 +177,16 @@ class LocalDockerProvider:
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await proc.communicate()
-        if proc.returncode != 0:
-            # The container may have already been --rm'd by docker (race after
-            # exit). In that case `docker wait` exits non-zero but the run did
-            # finish. Return 0 in that case so we don't spuriously fail.
-            err = (stderr or b'').decode("utf-8", errors="replace").lower()
-            if "no such container" in err:
-                log.info("LocalDockerProvider: wait found no container (already gone) — assuming success")
-                return 0
-            raise ProvisionError(f"docker wait failed: {err.strip()}")
+        if proc.returncode != 0:  # an unread exit code is a failure, never a success
+            raise ProvisionError(f"docker wait failed: {(stderr or b'').decode('utf-8', errors='replace').strip()}")
         try:
             return int(stdout.decode("utf-8").strip())
         except ValueError:
             return 1
 
     async def terminate(self, pod: Pod) -> None:
-        """SIGTERM, 30 s grace, then SIGKILL (`docker stop -t 30`), then `docker rm -f`. Best-effort: with
-        `--rm` the container may already be gone, so exit codes are ignored."""
+        """SIGTERM, 30 s grace, then SIGKILL (`docker stop -t 30`), then `docker rm -f`; after `wait` it only removes
+        the exited container. Best-effort: exit codes are ignored."""
         for argv in (("docker", "stop", "-t", "30", pod.pod_id), ("docker", "rm", "-f", pod.pod_id)):
             proc = await asyncio.create_subprocess_exec(
                 *argv, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,

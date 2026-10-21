@@ -7,7 +7,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 3. Spike 4 — DONE: Lane B student = nvidia/Llama-3.1-Nemotron-Nano-8B-v1 (DECISION below).
 4. Ponytail audit — DONE; triaged into the board below (audit: hackathon/briefs/2026-10-20-ponytail-audit-report.md).
 5. Spikes 1–3 once keys land: platform (TF train → deploy → chat; Tavily extract), backend (Nemotron Super guided-JSON plan).
-6. Wave 1 (hackathon/briefs/2026-10-20-wave1.md) — IN_PROGRESS: platform-w1, backend-w1, data-w1, ml-w1, frontend-w1, qa-w1, devrel-w1. Wave 2 after platform's clients merge: synth grounded/structured + web-research (data), tf-finetune/tf-deploy/judge-eval (ml), Agent API + budget + /compare (backend), quality_filter, config.py migration.
+6. Wave 1 fully merged. Wave 2 (hackathon/briefs/2026-10-21-wave2.md) — IN_PROGRESS: platform-w2, backend-w2, data-w2, ml-w2, frontend-w2, devrel-w2; qa-w2 after qa-w1 merges. G1 Oct 24: golden path green from the UI + intent #2 from the agent chat.
 
 ## Board (status ∈ TODO | IN_PROGRESS(<agent>, <branch>) | REVIEW | DONE | BLOCKED(<why>))
 ### orchestrator
@@ -22,7 +22,8 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D2 spike 3 + Tavily client: search, extract, credit accounting, page cap — BLOCKED(TAVILY_API_KEY)
 - [ ] P0 D2 ORCHAPOD_IMAGE_PREFIX (executor, CI, local provider agree) — TODO
 - [x] P0 D1 one Token Factory client in packages/providers; zero-caller service deleted — DONE (e0fa9a2; synth and lm-eval switch in their tasks)
-- [ ] P0 D2 LocalDocker: a fast-failing container can be removed before `docker wait` sees it → node reads as succeeded (pre-existing; found by platform-w1) — TODO (wave 2)
+- [x] P0 D2 SPEND SAFETY: provider_selector defaults gpu nodes to ["runpod", "vastai"] (apps/api/services/provider_selector.py:74), so a set VASTAI_API_KEY rents a vast.ai GPU silently — default must be ["nebius"] and vastai only when named — DONE (platform-w2)
+- [x] P0 D2 LocalDocker: a fast-failing container can be removed before `docker wait` sees it → node reads as succeeded (pre-existing; found by platform-w1) — DONE (platform-w2)
 - [ ] P1 D2 nebius_serverless provider: Jobs, Endpoints, IAM refresh, Object Storage — TODO
 - [ ] P0 D2 setup gaps from devrel-w1 + ml-w1 review: compose (platform) still publishes 8000, names the 253B judge and passes ANTHROPIC_API_KEY; scripts/build-and-push-containers.sh builds 6 of 8 nodes (qa); storage bucket never auto-created (call ensure_bucket_exists at API start — backend); web app defaults to localhost:8000 (→ 8001 — frontend) — TODO (wave 2)
 - [ ] P0 D3 .env.example complete (every var + where to get it) + budget-guard settings — TODO
@@ -50,7 +51,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P1 D3 vllm-serve spec (vllm/vllm-openai:v0.18.0-cu130, token auth) + smoke script — TODO
 - [ ] P1 D5 after G2: real Serverless Job + Endpoint; D6 eval vs base; D7 judging-window plan — TODO
 ### backend
-- [ ] P0 D1 spike 2: Nemotron 3 Super guided-JSON plan for intent #2 — BLOCKED(NEBIUS_API_KEY)
+- [ ] P0 D1 spike 2: Nemotron 3 Super plan for intent #2 — test `response_format` json_schema (TF's OpenAPI says only json_object|text; its docs page documents json_schema; fallback json_object + schema in prompt + jsonschema validation) and the thinking switch (reasoning_effort vs chat_template_kwargs) — BLOCKED(NEBIUS_API_KEY)
 - [x] P0 D1 run/node state machine for long-polling nodes: cancel, timeouts, retry-node — DONE (bc5c59f)
 - [x] P0 D1 SDK: cost_json + metrics_json, progress, internal secret — DONE (bc5c59f)
 - [ ] P0 D2 Orchapod Agent planner on Nemotron (Claude out of agent/workflow_builder.py) + POST /agent/plan — TODO
@@ -73,7 +74,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D6 polish (empty, error, loading states; demo banner) · D7 screenshots — TODO
 ### qa
 - [x] P0 D1 CI on NebiusHackathon + repo ruff config so `make check` is green; synth-distilabel in the image matrix — DONE (e11757e)
-- [ ] P0 D2 CI pushes `:latest` on NebiusHackathon (R4); pins in requirements-dev.txt; never-awaited warning fixed — APPROVED; rebase after backend-w1 and fold in review minors (loosen test_harness pins, delete _clear_ttl_tasks + order-coupled tests, conftest utcnow) (hack/qa-w1)
+- [ ] P0 D2 CI pushes `:latest` on NebiusHackathon (R4); pins in requirements-dev.txt; never-awaited warning fixed — DONE (merged; 299 passed, 54 warnings, 0 never-awaited)
 - [ ] P2 56 remaining pytest warnings (mostly datetime.utcnow; list by owner in qa-w1 report) — TODO
 - [ ] P0 D2 provider contract tests from recorded responses + a $1/day real Token Factory call — TODO
 - [ ] P0 D3 scripts/e2e_demo.py (stub + real with --max-cost), nightly — TODO
@@ -103,7 +104,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 
 ## Blockers
 - NEBIUS_API_KEY and TAVILY_API_KEY missing → spikes 1–3 and all live checks.
-- RISK (P0, Lane A): Token Factory docs (checked 2026-10-20) say Meta fine-tunes deploy "only via Dedicated endpoints"; the serverless-deploy page is 404; custom weights on Dedicated endpoints are "beta, available on request"; Llama-3.3-70B left TF serverless 2026-08-31 (ml-engineering). Fallbacks in order: (a) /v0/models still works → as planned; (b) adapter downloadable → merge + GGUF on a Nebius CPU VM via llama.cpp (no GPU quota) or vLLM + LoRA on an AI Cloud Serverless Endpoint (needs quota); (c) Dedicated-endpoint custom-weights beta via Nebius Support; (d) Lane B serves the tuned model.
+- RISK (P0, Lane A): Token Factory docs (checked 2026-10-20) say Meta fine-tunes deploy "only via Dedicated endpoints"; the serverless-deploy page is 404; custom weights on Dedicated endpoints are "beta, available on request"; Llama-3.3-70B left TF serverless 2026-08-31 (ml-engineering). Fallbacks in order: (a) /v0/models still works → as planned; (b) adapter download IS documented (checkpoint `result_files` + GET /v1/files/<id>/content, per /post-training/how-to-fine-tune; corrected 2026-10-21) → merge + GGUF on a Nebius CPU VM via llama.cpp (no GPU quota) or vLLM + LoRA on an AI Cloud Serverless Endpoint (needs quota) — untested whether the files load as PEFT; (c) Dedicated-endpoint custom-weights beta via Nebius Support; (d) Lane B serves the tuned model.
 
 ## Human actions
 - [ ] Token Factory key → .env NEBIUS_API_KEY; redeem $25 promo (nebius.com/promo-code, NEBIUS-DEVPOST-GLOBAL26); join the Builders Program (dev.nebius.com/builders) for +$25 TF and +$25 Tavily
@@ -114,6 +115,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] Devpost team + draft project (Best Apps and Agents)
 - [ ] vast.ai: two stopped instances from other projects (54041703 rec-l2-bench-2, 54062531 esci-bench-v2), stopped since 2026-10-03, still billing storage (~$0.20/h per the spike agent) — destroy them? Hari's call; agents leave them alone
 - [ ] DECISION: disclose in the README/Devpost that the build used AI coding agents? (Hari's call)
+- [ ] Before submission: GitHub's default branch is `main` (pre-hackathon code) — set it to NebiusHackathon, or link the branch explicitly in Devpost (repo admin: Purva)
 - [ ] Before the repo goes public (G3): gitleaks clean, keys rotated, docs/Jira.csv reviewed for personal data
 
 ## Tooling (installed skills/plugins/MCP, with install command)
@@ -122,6 +124,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - ruff 0.17.1 (`uv tool install ruff`) · gitleaks 8.30.1 (`brew install gitleaks`)
 - Playwright MCP (`claude mcp add -s project playwright -- npx @playwright/mcp@latest`, in .mcp.json)
 - Plugins: superpowers 6.3.0, ponytail, episodic-memory (already installed) · nebius CLI: deferred to G2
+- jsonschema in the shared venv (data-w2; also pinned in requirements-dev.txt) · images to rebuild after data-w2 merges: orchapod/synth-distilabel:dev (5 months stale), orchapod/web-research:dev (new), orchapod/data-prep:dev
 ## Spend to date (per day, per key)
 - 2026-10-20: $1.29 (vast.ai A100 SXM4 80 GB at $1.2485/h, 48 min, spike 4; instance destroyed)
 ## Golden path status (last real run: id, date, cost, result)

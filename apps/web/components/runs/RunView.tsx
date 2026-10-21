@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { api } from "@/lib/api";
-import type { Run, NodeRun, Artifact } from "@/lib/types";
+import { api, apiDate, explainError } from "@/lib/api";
+import { applyRunEvent, canRetry, type RunViewState } from "@/lib/runEvents";
 import { useRunStream } from "@/lib/ws";
 import { StatusBadge } from "@/components/StatusBadge";
 import { LogStream, type LogLine } from "@/components/runs/LogStream";
@@ -17,62 +17,52 @@ type Tab = "logs" | "chart" | "artifacts" | "endpoint";
 
 /** The live run view: /runs/[id], and embedded on /agent (where the back link opens the run page). */
 export function RunView({ id, embedded = false }: { id: string; embedded?: boolean }) {
-  const [run,          setRun]          = useState<Run | null>(null);
-  const [nodeRuns,     setNodeRuns]     = useState<NodeRun[]>([]);
-  const [artifacts,    setArtifacts]    = useState<Artifact[]>([]);
+  const [view,         setView]         = useState<RunViewState | null>(null);
   const [activeNodeId, setActiveNodeId] = useState<string | undefined>();
   const [tab,          setTab]          = useState<Tab>("logs");
   const [cancelling,   setCancelling]   = useState(false);
-  const [error,        setError]        = useState("");
+  const [retrying,     setRetrying]     = useState<string | null>(null);
+  const [attempt,      setAttempt]      = useState(0);   // bumped by a retry to reconnect the socket
+  const [error,        setError]        = useState("");  // a failed cancel or retry
+  const [loadError,    setLoadError]    = useState("");  // a failed snapshot
   const [copied,       setCopied]       = useState(false);
 
   // Tracks the live expiry time — updated by WS endpoint_expiry events and Extend button
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
 
-  const { events, connected } = useRunStream(id);
+  const { events, connected } = useRunStream(id, attempt);
 
-  useEffect(() => {
-    api.runs.get(id).then(setRun);
-    api.runs.nodes(id).then(setNodeRuns);
-    api.runs.artifacts(id).then((arts) => {
-      setArtifacts(arts);
-      // Seed initial expiresAt from the endpoint artifact meta
-      const ep = arts.find((a) => a.kind === "endpoint");
-      if (ep?.meta?.expires_at) setExpiresAt(String(ep.meta.expires_at));
-    });
+  // Snapshot = GET /runs/{id} + GET /runs/{id}/summary. Events have no replay, so the page snapshots on mount,
+  // whenever the socket opens or closes (a retry's reconnect, the end of the run) and when an artifact lands.
+  const loads = useRef(0);
+  const load = useCallback(() => {
+    const n = ++loads.current;
+    Promise.all([api.runs.get(id), api.runs.summary(id)])
+      .then(([run, summary]) => {
+        if (n !== loads.current) return; // a newer snapshot is on its way
+        setView({ run, summary });
+        setLoadError("");
+        const ep = summary.artifacts.find((a) => a.kind === "endpoint");
+        if (ep?.meta?.expires_at) setExpiresAt(String(ep.meta.expires_at));
+      })
+      .catch((err) => { if (n === loads.current) setLoadError(explainError(err)); });
   }, [id]);
+  useEffect(load, [load, connected]);
 
+  // Apply each event once: `events` only grows, across reconnects.
+  const applied = useRef(0);
   useEffect(() => {
-    for (const event of events) {
-      if (event.type === "run_status") {
-        setRun((prev) => prev ? { ...prev, status: event.status } : prev);
-      }
-      if (event.type === "run_cost") {
-        setRun((prev) => prev ? { ...prev, cost_usd: event.cost_usd } : prev);
-      }
-      if (event.type === "node_status") {
-        setNodeRuns((prev) =>
-          prev.map((n) =>
-            n.node_id === event.node_id ? { ...n, status: event.status } : n
-          )
-        );
-        if (event.status === "running") setActiveNodeId(event.node_id);
-      }
-      if (event.type === "artifact") {
-        // Refresh artifact list; also update expiresAt if the new artifact has it
-        api.runs.artifacts(id).then((arts) => {
-          setArtifacts(arts);
-          const ep = arts.find((a) => a.kind === "endpoint");
-          if (ep?.meta?.expires_at) setExpiresAt(String(ep.meta.expires_at));
-        });
-        // Endpoint is ready — jump to endpoint tab
-        if (event.kind === "endpoint") setTab("endpoint");
-      }
-      if (event.type === "endpoint_expiry" && event.expires_at) {
-        setExpiresAt(event.expires_at);
-      }
+    for (const event of events.slice(applied.current)) {
+      setView((v) => v && applyRunEvent(v, event));
+      if (event.type === "node_status" && event.status === "running") setActiveNodeId(event.node_id);
+      // The executor commits before it broadcasts, so a snapshot now also has what the page missed (NodeRun rows
+      // created after it opened); an artifact brings the node's usd once its cost_json lands.
+      if (event.type === "run_status" || event.type === "node_status" || event.type === "artifact") load();
+      if (event.type === "artifact" && event.kind === "endpoint") setTab("endpoint"); // Endpoint is ready — jump to endpoint tab
+      if (event.type === "endpoint_expiry" && event.expires_at) setExpiresAt(event.expires_at);
     }
-  }, [events, id]);
+    applied.current = events.length;
+  }, [events, load]);
 
   const logLines = useMemo<LogLine[]>(() => {
     return events
@@ -96,32 +86,31 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
   }, [events]);
 
   async function handleCancel() {
-    setCancelling(true);
+    setCancelling(true); setError("");
     try {
-      const updated = await api.runs.cancel(id);
-      setRun(updated);
+      const run = await api.runs.cancel(id);
+      setView((v) => v && { ...v, run });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to cancel");
+      setError(explainError(err));
     } finally {
       setCancelling(false);
     }
   }
 
-  // --- Endpoint data --------------------------------------------------------
-  // The endpoint URL lives in artifact.uri (not meta.url — that was a bug).
-  // Model comes from the vllm-serve node's inputs.
-  const endpointArtifact = artifacts.find((a) => a.kind === "endpoint");
-  const endpointUrl      = endpointArtifact?.uri ?? null;
-  const endpointApiKey   = endpointArtifact?.meta?.api_key
-    ? String(endpointArtifact.meta.api_key)
-    : null;
-
-  const vllmNode    = nodeRuns.find((n) => n.node_type === "vllm-serve");
-  const endpointModel = vllmNode
-    ? String((vllmNode.inputs as Record<string, unknown>)?.model ?? "model")
-    : "model";
-
-  const canCancel = run && ["provisioning_gpu", "running"].includes(run.status);
+  async function handleRetry(nodeId: string) {
+    setRetrying(nodeId); setError("");
+    try {
+      const run = await api.runs.retry(id, nodeId);
+      // The API reset the node to pending; the server closed the socket at the terminal status, so reconnect.
+      setView((v) => v && applyRunEvent({ ...v, run }, { type: "node_status", node_id: nodeId, status: "pending" }));
+      setAttempt((a) => a + 1);
+    } catch (err) {
+      setError(explainError(err));
+      load(); // a 409 (retried elsewhere, still stopping) means the node and button state are stale
+    } finally {
+      setRetrying(null);
+    }
+  }
 
   function copyToClipboard(text: string) {
     navigator.clipboard.writeText(text).then(() => {
@@ -130,13 +119,30 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
     });
   }
 
-  if (!run) {
+  if (!view) {
     return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%" }}>
-        <span className="muted">Loading…</span>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", padding: 16 }}>
+        {loadError
+          ? <span role="alert" style={{ fontSize: 13, color: "var(--rose-ink)" }}>{loadError}</span>
+          : <span className="muted">Loading…</span>}
       </div>
     );
   }
+  const { run, summary } = view;
+  const artifacts = summary.artifacts;
+
+  // --- Endpoint data --------------------------------------------------------
+  // The endpoint URL lives in artifact.uri (not meta.url — that was a bug).
+  // The served model name is in the same node's model_ref (docs/contracts.md "vllm-serve").
+  const endpointArtifact = artifacts.find((a) => a.kind === "endpoint");
+  const endpointUrl      = endpointArtifact?.uri ?? null;
+  const endpointApiKey   = endpointArtifact?.meta?.api_key
+    ? String(endpointArtifact.meta.api_key)
+    : null;
+  const endpointModel = String(artifacts.find((a) =>
+    a.node_id === endpointArtifact?.node_id && a.name === "model_ref")?.meta?.model ?? "model");
+
+  const canCancel = ["provisioning_gpu", "running"].includes(run.status);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -151,13 +157,15 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
             <StatusBadge status={run.status} />
           </div>
           <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>
-            {run.gpu_provider ? `GPU: ${run.gpu_provider}` : ""}
-            {run.cost_usd != null ? `  ·  $${run.cost_usd.toFixed(3)}` : ""}
-            {run.started_at ? `  ·  Started ${new Date(run.started_at).toLocaleTimeString()}` : ""}
+            {[run.gpu_provider && `GPU: ${run.gpu_provider}`,
+              run.started_at && `Started ${apiDate(run.started_at).toLocaleTimeString()}`].filter(Boolean).join("  ·  ")}
           </div>
         </div>
         <div className="spacer" />
-        {error && <span className="muted" style={{ fontSize: 12, color: "var(--rose)" }}>{error}</span>}
+        {(error || loadError) && <span role="alert" style={{ fontSize: 12, color: "var(--rose-ink)" }}>{error || loadError}</span>}
+        <span className="pill mono tnum" title="Spent so far: Run.cost_usd, updated live by run_cost events">
+          Cost ${(run.cost_usd ?? 0).toFixed(3)}
+        </span>
         {endpointUrl && (
           <a
             href={endpointUrl.replace(/\/v1\/?$/, "")}
@@ -194,10 +202,11 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
             <span className="muted mono" style={{ fontSize: 10.5, letterSpacing: "0.06em", textTransform: "uppercase" }}>Nodes</span>
           </div>
           <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
-            {nodeRuns.length === 0 ? (
+            {summary.nodes.length === 0 ? (
               <p className="muted" style={{ fontSize: 12, fontStyle: "italic", padding: "8px 0" }}>Waiting for nodes…</p>
             ) : (
-              <NodeTimeline nodes={nodeRuns} activeNodeId={activeNodeId} onSelect={setActiveNodeId} />
+              <NodeTimeline nodes={summary.nodes} activeNodeId={activeNodeId} onSelect={setActiveNodeId}
+                canRetry={canRetry(run.status)} retrying={retrying} onRetry={handleRetry} />
             )}
           </div>
         </div>

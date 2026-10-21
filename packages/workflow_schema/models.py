@@ -63,8 +63,8 @@ class GGUFPrecision(str, Enum):
 class ResourceSpec(BaseModel):
     gpu: str = Field(default="1xH100", description="GPU spec string, e.g. '1xH100', '1xA100'")
     provider_pref: list[str] = Field(
-        default=["nebius", "vastai"],
-        description="Ordered list of preferred providers (nebius first for hackathon)"
+        default=["nebius"],
+        description="Ordered list of preferred providers; vastai only when named here"
     )
 
 

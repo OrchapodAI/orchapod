@@ -218,3 +218,13 @@ worktrees:
   - platform-w5 (id afe7cf5b02abce878): NebiusServerless rewrite (jobs + endpoints, IAM CLI fallback, s3 volumes) and NebiusProvider on Jobs, replacing the legacy Compute code that never provisioned. It is on the critical path for the vllm-serve fallback if spike 1 refuses per-token LoRA; ml-w4 told to code against the contract signatures.
   - backend-w5 (id ae3dca2e95263a331): STUB stopwords, tf-finetune priced from tokens, SDK cost_json without thread joins, RunOut.workflow_name, anonymous cancel needs the run's cancel token, executor-level gpu refusal, R22 acronym keys.
   - Queued: frontend-w5, platform-w6 (shared fence), devrel-w5.
+- 2026-10-21T14:20Z ml-w4 reported DONE: 6 commits d474c0e..433c984 on 5d64ed1; make check 584 + web 22; $0, no GPU.
+  - G1 FINDING: on arm64 (this Mac) llama.cpp's fp16-arithmetic kernels made the f16 GGUF answer garbage, so intent #3's baseline would score 0. 3840ad2 drops those kernels from the judge-eval image (rebuild judge-eval:dev after merge).
+  - Measured after the fix: 50 rows on both GGUFs in 18 min 01 s, 0 failures, exact match f16 0.78 / q4 0.84; ~20–22 min with judging, so the template keeps test[:50].
+  - Item 0 done; a real docker stop exits 143 in 9.9 s with cost_json.
+  - vllm-serve rewritten to the contract (STUB registers via /internal/ttl); its live path needs platform-w5's NebiusServerless.endpoints. endpoints.list (lost-create recovery) asked of platform-w5.
+  - unsloth-train rewritten on spike 4's lock (not built here: ~20 GB amd64+CUDA; CI disk concern).
+  - Merge conflicts with backend-w4: budget.gpu_nodes must read the new `rents_gpu` key, or anonymous callers could start a paid endpoint (vllm-serve's runtime is api); a hardening test's 201 → 422. Orchestrator applies both at merge.
+  - Its DECISIONs: the arm64 image fix; test[:50]; vllm-serve bills GPU time from endpoint creation; rents_gpu.
+  - Review dispatched (opus).
+  - Housekeeping: removed the :ml-w3 leftover images. ml-w3's ~10 GB of artifacts in the local MinIO are left for Hari's call.

@@ -434,8 +434,12 @@ DOCKER_PS_TIMEOUT_S = 10
 async def _containers_left(db: AsyncSession, terminating: set[str]) -> list[tuple]:
     """(run id, provider, pod) of each LocalDocker container labelled with this API's ORCHAPOD_CONTROL_URL whose run is over
     or unknown to this database: a teardown in flight dies with the process (a cancel mid-provision, then a shutdown), and
-    a stub e2e's database is thrown away. A container without the labels, or another API's on this host (another port),
-    is never listed. Never raises: an API without docker, or with its daemon down, starts all the same."""
+    a stub e2e's database is thrown away. A container without the labels is never listed; one labelled with another
+    control URL is listed, then left alone (two APIs must not share one URL). Never raises: an API without docker, or with
+    its daemon down, starts all the same.
+    ponytail: startup only, so a container a dying API's in-flight `docker run` creates after this `docker ps` leaks until
+    the next start; and plain uvicorn runs the lifespan before it binds, so a second API misconfigured onto the same URL
+    sweeps the live one's containers before its bind fails (--reload, the e2e scripts and the prod container bind first)."""
     from api.services.provider_selector import pick_local_docker
     from packages.providers.base import Pod
 
@@ -452,6 +456,9 @@ async def _containers_left(db: AsyncSession, terminating: set[str]) -> list[tupl
         ps.kill()
         await ps.wait()
         log.warning("container sweep skipped: docker ps took over %g s", DOCKER_PS_TIMEOUT_S)
+        return []
+    if ps.returncode:
+        log.warning("container sweep skipped: docker ps exited %s", ps.returncode)
         return []
     ours, left = {}, []
     for line in out.decode(errors="replace").splitlines():

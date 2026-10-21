@@ -33,6 +33,8 @@ apps/web/pnpm-workspace.yaml
 
 # Local databases
 *.db
+*.db-wal
+*.db-shm
 
 # OS
 .DS_Store

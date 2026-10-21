@@ -1118,3 +1118,11 @@ def test_a_launch_without_the_callers_scale_fails_loudly():
     import inspect
     for fn in (ex.launch, ex.run_workflow):  # never a silent default to the full caps
         assert inspect.signature(fn).parameters["scale"].default is inspect.Parameter.empty
+
+
+def test_sqlite_runs_in_wal_mode():
+    """WAL keeps a read a cancel cut off from failing the commits after it (backend-w6); the race test attaches it itself."""
+    from sqlalchemy import event
+    from api import database
+    if database.engine.url.get_backend_name() == "sqlite":
+        assert event.contains(database.engine.sync_engine, "connect", database.sqlite_wal)

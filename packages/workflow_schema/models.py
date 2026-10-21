@@ -38,6 +38,7 @@ class NodeType(str, Enum):
     LM_EVAL              = "lm-eval"
     VLLM_SERVE           = "vllm-serve"
     TF_DEPLOY            = "tf-deploy"
+    JUDGE_EVAL           = "judge-eval"
 
 
 class DataFormat(str, Enum):
@@ -208,25 +209,26 @@ class DistillSFTOutputs(BaseModel):
 
 
 class HFDownloadInputs(BaseModel):
-    model_id:        str            = Field(description="HuggingFace model ID, e.g. 'Qwen/Qwen3-4B-Instruct'")
-    hf_token:        str | None     = Field(default=None, description="HuggingFace token for private/gated models")
-    revision:        str | None     = Field(default=None, description="Branch, tag, or commit SHA (default: main)")
+    model_id: str = Field(description="Hugging Face model id, e.g. 'Qwen/Qwen2.5-Math-1.5B-Instruct'; a gated model "
+                                      "needs HF_TOKEN in the env and its licence accepted")
+    revision: str = Field(default="main", description="Branch, tag or commit SHA")
     ignore_patterns: list[str] | None = Field(default=None, description="Glob patterns to skip (default: non-PyTorch formats)")
 
 class HFDownloadOutputs(BaseModel):
-    hf_model: str   # R2 URI to the downloaded HF model directory
+    hf_model: str   # r2 dir of the snapshot; metadata {format: hf, model_id, revision}
 
 
 class QuantizeInputs(BaseModel):
-    model: str = Field(description="HF model ID (e.g. Qwen/Qwen3-4B-Instruct) or R2 URI")
-    method: QuantizeMethod
+    model: str = Field(description="Hugging Face id, or hf-download's hf_model (r2 dir)")
+    method: QuantizeMethod = Field(description="gguf runs on CPU; awq needs a GPU job (exits 1 here)")
     precision: GGUFPrecision = Field(default=GGUFPrecision.Q4_K_M, description="GGUF only")
     bits: int = Field(default=4, description="AWQ only")
-    hf_token: str | None = Field(default=None, description="HuggingFace token for private models")
+    keep_f16: bool = Field(default=False, description="Also write the f16 GGUF as gguf_f16, judge-eval's honest baseline")
 
 class QuantizeOutputs(BaseModel):
-    gguf_file: str | None = None    # set when method=gguf
-    awq_model: str | None = None    # set when method=awq
+    gguf_file: str | None = None    # method=gguf: the quantized file; metadata {format, precision, base_model, size_bytes}
+    gguf_f16: str | None = None     # method=gguf with keep_f16: the f16 file it was quantized from
+    awq_model: str | None = None    # method=awq (a GPU job; not built yet)
 
 
 class LMEvalInputs(BaseModel):
@@ -469,5 +471,39 @@ NODE_REGISTRY[NodeType.TF_DEPLOY] = {
                    "lora_adapter with vllm-serve instead.",
     "inputs_schema": TFDeployInputs,
     "outputs_schema": TFDeployOutputs,
+    "runtime": "api",
+}
+
+
+# ---------------------------------------------------------------------------
+# judge-eval: base vs tuned, judged by Nemotron 3 Ultra (ml-engineering; docs/contracts.md "ML nodes → judge-eval")
+# ---------------------------------------------------------------------------
+
+class JudgeEvalInputs(BaseModel):
+    test_data: str = Field(description="r2:// JSONL of chat rows ending in the reference answer: data-prep's test_jsonl "
+                                       "(or dataset); context and source_url are kept")
+    base_model_ref: dict[str, Any] | str = Field(
+        description="ModelRef JSON {base_url, model, api_key_env, base_model}, a Token Factory model id, or a ref to "
+                    "vllm-serve base_model_ref, tf-deploy model_ref or quantize gguf_f16 (served with llama-server)")
+    tuned_model_ref: dict[str, Any] | str = Field(
+        description="Same forms as base_model_ref: vllm-serve model_ref, tf-deploy model_ref or quantize gguf_file")
+    judge_model: str = Field(default="nvidia/Nemotron-3-Ultra-550b-a55b", description="Nemotron on Token Factory")
+    max_samples: int = Field(default=60, ge=1, description="Both models answer the first max_samples rows")
+    n_judge: int | None = Field(default=None, ge=0, description="The judge sees the first n rows; empty = max_samples")
+    temperature: float = Field(default=0.0, ge=0.0, le=2.0, description="Decoding for both models (identical)")
+    max_tokens: int = Field(default=512, ge=16, le=8192, description="Decoding for both models (identical)")
+    exact_match: bool = Field(default=False, description="Also compare the last number of each answer with the "
+                                                         "reference's final number (GSM8K '#### n')")
+
+class JudgeEvalOutputs(BaseModel):
+    eval_summary: str  # {n, judged, wins, ties, losses, errors, win_rate, consistency, exact_match, base, tuned, ..., samples}
+
+NODE_REGISTRY[NodeType.JUDGE_EVAL] = {
+    "description": "Evaluate base vs tuned on held-out rows: both answer with identical decoding, then Nemotron 3 Ultra "
+                   "compares each pair against the reference in both orders (win/tie/loss for the tuned model, win "
+                   "rate, consistency); exact_match adds GSM8K-style final-number accuracy. GGUF inputs from quantize "
+                   "are served locally with llama.cpp. Fails when more than 10% of rows error.",
+    "inputs_schema": JudgeEvalInputs,
+    "outputs_schema": JudgeEvalOutputs,
     "runtime": "api",
 }

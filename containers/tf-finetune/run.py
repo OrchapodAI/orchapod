@@ -110,7 +110,7 @@ def main():
                 if not job:
                     raise
                 log.warn(f"create failed ({e}), but {job['id']} carries our suffix {suffix}: continuing with it")
-            if not job.get("id"):
+            if not isinstance(job, dict) or not job.get("id"):
                 fail(f"Token Factory answered create without a job id: {str(job)[:200]}")
             log.info(f"Token Factory job {job['id']}: {model}, hyperparameters {hp}, validation file {val_id}")
         poll(tf, job, deadline)
@@ -142,6 +142,7 @@ def main():
     except ProviderError as e:
         fail(str(e))
     finally:
+        job = job if isinstance(job, dict) else {}  # a reply that is not an object names no job: look it up instead
         if sent and not job.get("id"):  # SIGTERM mid-POST, a bad or lost reply: a job may still have started
             try:
                 job = find(tf, suffix)

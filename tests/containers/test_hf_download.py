@@ -1,214 +1,115 @@
-"""
-Unit tests for containers/hf-download/run.py
-"""
+"""Unit tests for containers/hf-download/run.py (docs/contracts.md "ML nodes → hf-download")."""
 
 import hashlib
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+import json
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
+from huggingface_hub.errors import GatedRepoError
+
+from packages.workflow_schema.models import HFDownloadInputs
 
 from .conftest import load_container
 
 d = load_container("hf-download")
 
-
-# ---------------------------------------------------------------------------
-# download_model
-# ---------------------------------------------------------------------------
-
-def test_download_model_calls_snapshot_download(tmp_path):
-    with patch.object(d, "WORKSPACE_DIR", tmp_path), \
-         patch("huggingface_hub.snapshot_download") as mock_dl:
-        d.download_model("Qwen/Qwen3-4B-Instruct", hf_token=None)
-    mock_dl.assert_called_once()
-    kw = mock_dl.call_args.kwargs
-    assert kw["repo_id"]         == "Qwen/Qwen3-4B-Instruct"
-    assert kw["resume_download"] is True
-    assert kw["token"]           is None
+MODEL = "Qwen/Qwen2.5-Math-1.5B-Instruct"
+WEIGHTS = b"real weights"
 
 
-def test_download_model_passes_token(tmp_path):
-    with patch.object(d, "WORKSPACE_DIR", tmp_path), \
-         patch("huggingface_hub.snapshot_download") as mock_dl:
-        d.download_model("meta-llama/Llama-3.1-8B-Instruct", hf_token="hf_tok123")
-    assert mock_dl.call_args.kwargs["token"] == "hf_tok123"
+def sibling(name, sha=None):
+    return SimpleNamespace(rfilename=name, lfs=SimpleNamespace(sha256=sha) if sha else None)
 
 
-def test_download_model_passes_revision(tmp_path):
-    with patch.object(d, "WORKSPACE_DIR", tmp_path), \
-         patch("huggingface_hub.snapshot_download") as mock_dl:
-        d.download_model("Qwen/Qwen3-4B-Instruct", hf_token=None, revision="abc123def")
-    assert mock_dl.call_args.kwargs["revision"] == "abc123def"
+@pytest.fixture
+def node(mock_orchapod_io, monkeypatch, tmp_path):
+    """node(**inputs) runs main() into tmp_path; returns ({name: (dir, kind, metadata)}, metrics)."""
+    monkeypatch.setattr(d, "WORKSPACE_DIR", tmp_path)
+    monkeypatch.delenv("STUB", raising=False)
+
+    def run(**inputs):
+        mock_orchapod_io.read_inputs.return_value = {"model_id": MODEL, **inputs}
+        d.main()
+        outs = {c.args[0]: (c.args[1], c.kwargs["kind"], c.kwargs["metadata"])
+                for c in mock_orchapod_io.write_output.call_args_list}
+        return outs, mock_orchapod_io.write_metrics.call_args.args[0]
+
+    return run
 
 
-def test_download_model_passes_custom_ignore_patterns(tmp_path):
-    with patch.object(d, "WORKSPACE_DIR", tmp_path), \
-         patch("huggingface_hub.snapshot_download") as mock_dl:
-        d.download_model("Qwen/Qwen3-4B-Instruct", hf_token=None, ignore_patterns=["*.bin"])
-    assert mock_dl.call_args.kwargs["ignore_patterns"] == ["*.bin"]
+@pytest.fixture
+def hub():
+    """A fake Hub: snapshot_download (checked against the real signature) writes the repo's files its ignore_patterns
+    let through; model_info lists the SHA-256 of the LFS ones (the flax file is ignored by default)."""
+    from huggingface_hub.utils import filter_repo_objects
+
+    files = {"config.json": b"{}", "model.safetensors": WEIGHTS, "flax_model.msgpack": b"flax"}
+
+    def download(repo_id, *, local_dir, ignore_patterns, **_):
+        (local_dir / ".cache" / "huggingface").mkdir(parents=True)
+        (local_dir / ".cache" / "huggingface" / "x.metadata").write_text("bookkeeping")
+        for name in filter_repo_objects(files, ignore_patterns=ignore_patterns):
+            (local_dir / name).write_bytes(files[name])
+
+    siblings = [sibling("config.json")] + [sibling(n, hashlib.sha256(files[n]).hexdigest())
+                                           for n in ("model.safetensors", "flax_model.msgpack")]
+    with patch("huggingface_hub.snapshot_download", autospec=True, side_effect=download) as dl, \
+         patch("huggingface_hub.HfApi") as api:
+        api.return_value.model_info.return_value = SimpleNamespace(siblings=siblings)
+        yield SimpleNamespace(download=dl, info=api.return_value.model_info, siblings=siblings)
 
 
-def test_download_model_uses_default_ignore_when_none(tmp_path):
-    with patch.object(d, "WORKSPACE_DIR", tmp_path), \
-         patch("huggingface_hub.snapshot_download") as mock_dl:
-        d.download_model("Qwen/Qwen3-4B-Instruct", hf_token=None)
-    patterns = mock_dl.call_args.kwargs["ignore_patterns"]
-    assert "*.msgpack" in patterns
-    assert "flax_model*" in patterns
+def test_inputs_carry_no_token():
+    assert set(HFDownloadInputs.model_fields) == {"model_id", "revision", "ignore_patterns"}  # HF_TOKEN is env only
+    assert HFDownloadInputs(model_id=MODEL).revision == "main"
 
 
-# ---------------------------------------------------------------------------
-# _sha256_file
-# ---------------------------------------------------------------------------
-
-def test_sha256_file_matches_hashlib(tmp_path):
-    f = tmp_path / "weights.bin"
-    content = b"fake model weights " * 1000
-    f.write_bytes(content)
-    expected = hashlib.sha256(content).hexdigest()
-    assert d._sha256_file(f) == expected
+def test_downloads_verifies_and_writes_hf_model_with_metrics(node, hub, tmp_path):
+    outs, metrics = node()
+    path, kind, meta = outs["hf_model"]
+    assert (path, kind, meta) == (tmp_path / "hf_model", "model", {"format": "hf", "model_id": MODEL, "revision": "main"})
+    assert hub.download.call_args.kwargs == {"revision": "main", "local_dir": path, "ignore_patterns": d.DEFAULT_IGNORE}
+    hub.info.assert_called_once_with(MODEL, revision="main", files_metadata=True)
+    assert not (path / ".cache").exists()  # download bookkeeping is not uploaded
+    assert metrics == {"files": 2, "bytes": 2 + len(WEIGHTS), "sha256_verified": True}  # the ignored flax file is not missing
 
 
-# ---------------------------------------------------------------------------
-# verify_sha256
-# ---------------------------------------------------------------------------
+def test_revision_and_json_ignore_patterns_reach_the_hub(node, hub):
+    node(revision="v1.0", ignore_patterns='["*.bin", "*.pt"]')
+    assert hub.download.call_args.kwargs["ignore_patterns"] == ["*.bin", "*.pt"]
+    assert hub.download.call_args.kwargs["revision"] == hub.info.call_args.kwargs["revision"] == "v1.0"
 
-def _make_sibling(rfilename: str, sha256: str | None):
-    s = MagicMock()
-    s.rfilename = rfilename
-    if sha256 is not None:
-        s.lfs = MagicMock()
-        s.lfs.sha256 = sha256
+
+@pytest.mark.parametrize("bad", ["mismatch", "missing"])
+def test_a_file_that_does_not_match_the_hub_exits_1(node, hub, bad):
+    if bad == "mismatch":
+        hub.siblings[1].lfs.sha256 = "0" * 64
     else:
-        s.lfs = None
-    return s
+        hub.siblings.append(sibling("model-00002.safetensors", "a" * 64))
+    with pytest.raises(SystemExit) as e:
+        node()
+    assert e.value.code == 1 and "sha256" in d.log.error.call_args.args[0]
 
 
-def test_verify_sha256_passes_when_all_match(tmp_path):
-    content = b"real weights"
-    (tmp_path / "model.safetensors").write_bytes(content)
-    expected = hashlib.sha256(content).hexdigest()
-
-    sibling = _make_sibling("model.safetensors", expected)
-    with patch("huggingface_hub.HfApi") as MockApi:
-        MockApi.return_value.model_info.return_value = MagicMock(siblings=[sibling])
-        d.verify_sha256(tmp_path, "Qwen/Qwen3-4B-Instruct", hf_token=None)  # no exception
+def test_no_hub_metadata_skips_the_check_with_a_warning(node, hub):
+    hub.info.side_effect = OSError("connection refused")
+    assert node()[1]["sha256_verified"] is False
+    d.log.warn.assert_called_once()
 
 
-def test_verify_sha256_raises_on_hash_mismatch(tmp_path):
-    (tmp_path / "model.safetensors").write_bytes(b"corrupted data")
-    sibling = _make_sibling("model.safetensors", "0" * 64)  # wrong hash
-
-    with patch("huggingface_hub.HfApi") as MockApi:
-        MockApi.return_value.model_info.return_value = MagicMock(siblings=[sibling])
-        with pytest.raises(RuntimeError, match="SHA256 verification failed"):
-            d.verify_sha256(tmp_path, "Qwen/Qwen3-4B-Instruct", hf_token=None)
+def test_a_gated_model_without_access_says_set_hf_token(node, hub):
+    hub.download.side_effect = GatedRepoError("401 gated", response=SimpleNamespace(headers={}, request=None))
+    with pytest.raises(SystemExit) as e:
+        node()
+    assert e.value.code == 1 and "set HF_TOKEN and accept the licence" in d.log.error.call_args.args[0]
 
 
-def test_verify_sha256_raises_on_missing_file(tmp_path):
-    sibling = _make_sibling("model.safetensors", "a" * 64)
-    # Do NOT create the file
-
-    with patch("huggingface_hub.HfApi") as MockApi:
-        MockApi.return_value.model_info.return_value = MagicMock(siblings=[sibling])
-        with pytest.raises(RuntimeError, match="SHA256 verification failed"):
-            d.verify_sha256(tmp_path, "Qwen/Qwen3-4B-Instruct", hf_token=None)
-
-
-def test_verify_sha256_skips_non_lfs_files(tmp_path):
-    """Config / tokenizer files have no LFS metadata — should be silently skipped."""
-    sibling = _make_sibling("config.json", sha256=None)
-
-    with patch("huggingface_hub.HfApi") as MockApi:
-        MockApi.return_value.model_info.return_value = MagicMock(siblings=[sibling])
-        d.verify_sha256(tmp_path, "Qwen/Qwen3-4B-Instruct", hf_token=None)  # no exception
-
-
-def test_verify_sha256_skips_gracefully_on_api_error(tmp_path):
-    """If HF Hub is unreachable, verification is skipped with a warning — not a crash."""
-    with patch("huggingface_hub.HfApi") as MockApi:
-        MockApi.return_value.model_info.side_effect = Exception("connection refused")
-        d.verify_sha256(tmp_path, "Qwen/Qwen3-4B-Instruct", hf_token=None)  # no exception
-
-
-def test_verify_sha256_handles_no_lfs_files(tmp_path):
-    """Model with no LFS files (rare) should not crash."""
-    sibling = _make_sibling("config.json", sha256=None)  # non-LFS only
-
-    with patch("huggingface_hub.HfApi") as MockApi:
-        MockApi.return_value.model_info.return_value = MagicMock(siblings=[sibling])
-        d.verify_sha256(tmp_path, "some/tiny-model", hf_token=None)  # no exception
-
-
-# ---------------------------------------------------------------------------
-# main()
-# ---------------------------------------------------------------------------
-
-def test_main_calls_download_and_verify_and_writes_output(mock_orchapod_io, tmp_path):
-    mock_orchapod_io.read_inputs.return_value = {
-        "model_id": "Qwen/Qwen3-4B-Instruct",
-    }
-    fake_dir = tmp_path / "hf_model"
-    fake_dir.mkdir()
-
-    with patch.object(d, "download_model", return_value=fake_dir) as mock_dl, \
-         patch.object(d, "verify_sha256")  as mock_verify:
-        d.main()
-
-    mock_dl.assert_called_once_with("Qwen/Qwen3-4B-Instruct", None, None, None)
-    mock_verify.assert_called_once_with(fake_dir, "Qwen/Qwen3-4B-Instruct", None)
-
-    mock_orchapod_io.write_output.assert_called_once()
-    args, kwargs = mock_orchapod_io.write_output.call_args
-    assert args[0] == "hf_model"
-    assert kwargs["kind"] == "model"
-    assert kwargs["metadata"]["format"] == "hf"
-    assert kwargs["metadata"]["model_id"] == "Qwen/Qwen3-4B-Instruct"
-
-
-def test_main_passes_token_from_inputs(mock_orchapod_io, tmp_path):
-    mock_orchapod_io.read_inputs.return_value = {
-        "model_id": "meta-llama/Llama-3.1-8B-Instruct",
-        "hf_token": "hf_secret",
-    }
-    fake_dir = tmp_path / "hf_model"
-    fake_dir.mkdir()
-
-    with patch.object(d, "download_model", return_value=fake_dir) as mock_dl, \
-         patch.object(d, "verify_sha256"):
-        d.main()
-
-    assert mock_dl.call_args.args[1] == "hf_secret"
-
-
-def test_main_passes_revision(mock_orchapod_io, tmp_path):
-    mock_orchapod_io.read_inputs.return_value = {
-        "model_id": "Qwen/Qwen3-4B-Instruct",
-        "revision": "v0.1",
-    }
-    fake_dir = tmp_path / "hf_model"
-    fake_dir.mkdir()
-
-    with patch.object(d, "download_model", return_value=fake_dir) as mock_dl, \
-         patch.object(d, "verify_sha256"):
-        d.main()
-
-    assert mock_dl.call_args.args[2] == "v0.1"
-    metadata = mock_orchapod_io.write_output.call_args.kwargs["metadata"]
-    assert metadata["revision"] == "v0.1"
-
-
-def test_main_parses_ignore_patterns_from_json_string(mock_orchapod_io, tmp_path):
-    mock_orchapod_io.read_inputs.return_value = {
-        "model_id": "Qwen/Qwen3-4B-Instruct",
-        "ignore_patterns": '["*.bin", "*.pt"]',
-    }
-    fake_dir = tmp_path / "hf_model"
-    fake_dir.mkdir()
-
-    with patch.object(d, "download_model", return_value=fake_dir) as mock_dl, \
-         patch.object(d, "verify_sha256"):
-        d.main()
-
-    assert mock_dl.call_args.args[3] == ["*.bin", "*.pt"]
+def test_stub_writes_a_fixed_directory_without_the_hub(node, hub, monkeypatch):
+    monkeypatch.setenv("STUB", "1")
+    outs, metrics = node()
+    path = outs["hf_model"][0]
+    assert json.loads((path / "config.json").read_text()) == {"stub": True, "model_id": MODEL, "revision": "main"}
+    assert metrics["files"] == 1 and metrics["sha256_verified"] is False
+    hub.download.assert_not_called()
+    hub.info.assert_not_called()

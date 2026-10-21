@@ -45,8 +45,11 @@ LoRA SFT via Unsloth. 2-5x faster, ~80% less VRAM than vanilla HF.
 ### `distill-sft`
 Off-policy knowledge distillation: teacher inference → student SFT.
 
+### `hf-download`
+`model_id`, `revision` (main), `ignore_patterns` → `hf_model` (directory) with every downloaded LFS file checked against the Hub's SHA-256 (`sha256_verified` in metrics). CPU-only; a gated model needs `HF_TOKEN` in the env and its licence accepted. `STUB=1` writes a one-file directory offline.
+
 ### `quantize`
-GGUF (for Ollama/llama.cpp) or AWQ (for vLLM). Can run after distill or train.
+GGUF on CPU with llama.cpp: `model` (a Hugging Face id or hf-download's `hf_model`) → f16 GGUF → `precision` (q4_k_m, q5_k_m, q8_0) → `gguf_file`; `keep_f16: true` also writes `gguf_f16`, the baseline judge-eval compares against. `method: awq` needs a GPU job and exits 1. `STUB=1` writes 4-byte GGUF files.
 
 ### `lm-eval`
 Benchmark evaluation with lm-evaluation-harness + LLM-as-judge comparison.
@@ -59,6 +62,9 @@ LoRA fine-tune on Token Factory (`model`, `train_data`/`eval_data` ← data-prep
 
 ### `tf-deploy`
 `job` ← `${{ nodes.<finetune>.outputs.job }}` → `model_ref` for judge-eval and /compare, proven with one completion. Runtime `api`. If Token Factory has no per-token LoRA for the base, it fails with "serve it with vllm-serve + lora_adapter": wire tf-finetune's `lora_adapter` into vllm-serve instead.
+
+### `judge-eval`
+`test_data` ← data-prep's `test_jsonl` (or `dataset`), `base_model_ref` and `tuned_model_ref` ← a Token Factory model id, a ModelRef JSON paired NEBIUS_API_KEY ↔ Token Factory, or `${{ nodes.<id>.outputs.model_ref | base_model_ref | gguf_file | gguf_f16 }}` (vllm-serve, tf-deploy, quantize; GGUF files are served in the node by llama-server) → `eval_summary` (win/tie/loss for the tuned model from two judge orders, `win_rate`, `consistency`, optional `exact_match`, and every sample with both judgments). Runtime `api`; `n_judge` rows go to Nemotron 3 Ultra, `max_samples` rows are answered; more than 10% failed rows fails the node after the summary is written.
 
 ## Input reference syntax
 

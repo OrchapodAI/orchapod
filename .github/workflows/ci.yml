@@ -124,6 +124,7 @@ jobs:
           - tf-finetune
           - tf-deploy
           - web-research
+          - judge-eval
 
     steps:
       - uses: actions/checkout@v4

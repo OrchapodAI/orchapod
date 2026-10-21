@@ -1,20 +1,18 @@
 """Playwright smoke of the web app, in STUB mode and $0, on the same stack as e2e_demo.py and e2e_agent.py.
 
-    python scripts/e2e_ui.py [--strict] [-g REGEX]     # `make ui-smoke`; needs Docker, `make up`, node and pnpm
+    python scripts/e2e_ui.py [-g REGEX]                # `make ui-smoke`; needs Docker, `make up`, node and pnpm
 
 It rebuilds and retags the shared `orchapod/<node>:dev` images, like `make check E2E=1`, so only the orchestrator runs it, after
 merges. It starts the API (STUB=1, throwaway DB, full caps: the UI is anonymous) and `next dev` on the first free port from 3100,
 a second API at the public demo's scale (PUBLIC_CAPS) for the template cap test, builds the node images of the canonical
-intents that can run, and runs tests/ui (Playwright, version pinned in tests/ui/package.json, headless Chromium) against
-them; Playwright's own report counts the passes and the skips.
+intents, and runs tests/ui (Playwright, version pinned in tests/ui/package.json, headless Chromium) against them; Playwright's
+own report counts the passes.
 
 The tests: /agent intent #2 to a finished report; the template gallery's one-click Run of intent #2 with its dataset card; at
-ORCHAPOD_ANON_SCALE=0.1, a template above the per-run cap keeps Run disabled and says why; the eval view and the compare
-playground on a run served from a fixture; the golden path (intent #1: one click, the run, its eval view, the playground).
+ORCHAPOD_ANON_SCALE=0.1, a template above the per-run cap keeps Run disabled and says why; the golden path (intent #1: one click,
+the run, its eval view, the compare playground).
 
-A step whose piece is not merged yet (vllm-serve for intent #1: see e2e_agent.PENDING) prints SKIP with its reason and does not
-fail; --strict fails it. The pieces the API still lacks are found here, from the planner's own errors, and passed on in
-E2E_PENDING. The UI, judge-eval and POST /compare are on NebiusHackathon: a missing one fails.
+A canonical intent whose plan has any error fails the run before anything is built: a missing piece is never a SKIP.
 """
 
 import argparse
@@ -48,13 +46,11 @@ def web_env(api_url: str, environ) -> dict[str, str]:
                   "NEXT_TELEMETRY_DISABLED": "1"}
 
 
-def playwright_env(web_url: str, api_url: str, public_url: str, pending: dict, strict: bool, environ) -> dict[str, str]:
-    """What tests/ui reads: where the app, its API and the public-scale API are, what cannot run yet, which templates are the
-    canonical intents, and whether a SKIP fails."""
+def playwright_env(web_url: str, api_url: str, public_url: str, environ) -> dict[str, str]:
+    """What tests/ui reads: where the app, its API and the public-scale API are, and which templates are the canonical intents."""
     env = {k: v for k, v in environ.items() if k not in demo.PAID}
     return env | {"E2E_WEB_URL": web_url, "E2E_API_URL": api_url, "E2E_PUBLIC_API_URL": public_url,
-                  "E2E_SLUGS": json.dumps({n: agent.SLUGS[n] for n in SPEC_INTENTS}),
-                  "E2E_PENDING": json.dumps(pending), "E2E_STRICT": "1" if strict else ""}  # SKIP-SITE(ml-w4): the last two
+                  "E2E_SLUGS": json.dumps({n: agent.SLUGS[n] for n in SPEC_INTENTS})}
 
 
 def deps_missing() -> list[str]:
@@ -63,22 +59,18 @@ def deps_missing() -> list[str]:
             if not (d / "node_modules/.bin" / tool).exists()]
 
 
-def ui_pending(c: httpx.Client) -> tuple[dict[str, list[str]], set[str]]:  # SKIP-SITE(ml-w4): the SKIP half
-    """({intent: why it cannot run yet}, node types of the intents that can) for the canonical intents the tests drive.
-    A plan error that is not a named gap raises: that is a failure, not a SKIP."""
-    templates, pending, types = demo.get_templates(c), {}, set()
+def ui_node_types(c: httpx.Client) -> set[str]:
+    """The node types of the canonical intents the tests drive, whose images get built. Any plan error raises: a failure."""
+    templates, types = demo.get_templates(c), set()
     for number in SPEC_INTENTS:
         template = agent.canonical(templates, number)
         if template is None:
             raise RuntimeError(f"none of the {len(templates)} templates is canonical intent #{number} (slug {agent.SLUGS[number]!r})")
         reply = demo.call(c, "POST", "/agent/plan", json={"intent": template["intent"]})
-        if reasons := agent.skip_reasons(reply["errors"], reply["plan"]):
-            pending[number] = reasons
-        elif reply["errors"]:
+        if reply["errors"]:
             raise RuntimeError(f"intent #{number}: {'; '.join(reply['errors'])}")
-        else:
-            types |= {n["type"] for n in reply["plan"]["nodes"]}
-    return pending, types
+        types |= {n["type"] for n in reply["plan"]["nodes"]}
+    return types
 
 
 def free_port(start: int) -> int:
@@ -123,13 +115,10 @@ def run_playwright(extra: list[str], env: dict[str, str]) -> int:
             stop_group(proc)
 
 
-def run(c: httpx.Client, strict: bool, extra: list[str]) -> int:
+def run(c: httpx.Client, extra: list[str]) -> int:
     if problems := demo.preflight() + deps_missing():
         return demo.fail("the stack is not ready:" + "".join(f"\n  - {p}" for p in problems))
-    pending, types = ui_pending(c)
-    for number, reasons in pending.items():
-        demo.say(f"intent #{number} cannot run yet (its UI steps SKIP): " + "; ".join(reasons))
-    if err := demo.build_images(sorted(types)):
+    if err := demo.build_images(sorted(ui_node_types(c))):
         return demo.fail(err)
     api_url = str(c.base_url).rstrip("/")
     with tempfile.TemporaryDirectory(prefix="orchapod-ui-") as tmp:
@@ -140,7 +129,7 @@ def run(c: httpx.Client, strict: bool, extra: list[str]) -> int:
             demo.wait_healthy(web, web_url, Path(tmp) / "web.log", path="/agent", tries=240)
             demo.wait_healthy(public, public_url, Path(tmp) / "api.log")
             demo.say(f"web up on {web_url} (next dev, API {api_url}; public-scale API {public_url})")
-            code = run_playwright(extra, playwright_env(web_url, api_url, public_url, pending, strict, os.environ))
+            code = run_playwright(extra, playwright_env(web_url, api_url, public_url, os.environ))
         except RuntimeError as e:
             return demo.fail(e)
         finally:
@@ -156,10 +145,9 @@ def run(c: httpx.Client, strict: bool, extra: list[str]) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Playwright smoke of the web app (see the module docstring).")
-    ap.add_argument("--strict", action="store_true", help="a step whose piece is not merged yet fails instead of SKIPping")  # SKIP-SITE(ml-w4)
     ap.add_argument("-g", "--grep", help="only the tests whose title matches (Playwright's --grep)")
     args = ap.parse_args(argv)
-    return demo.with_stack(lambda c: run(c, args.strict, ["--grep", args.grep] if args.grep else []), agent.FULL_CAPS)
+    return demo.with_stack(lambda c: run(c, ["--grep", args.grep] if args.grep else []), agent.FULL_CAPS)
 
 
 if __name__ == "__main__":

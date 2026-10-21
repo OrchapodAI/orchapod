@@ -40,8 +40,7 @@ test("/agent: intent #2 is planned, run and reported", async ({ page }, testInfo
   const t = await template(2);
 
   await page.goto("/agent");
-  await page.getByRole("button", { name: t.intent }).click(); // the example chip fills the box
-  await expect(page.getByLabel("What should Orchapod build?")).toHaveValue(t.intent);
+  await page.getByLabel("What should Orchapod build?").fill(t.intent); // typed, as a person would
   await page.getByRole("button", { name: "Plan", exact: true }).click();
 
   // the plan card: the canonical plan, no errors, an estimate

@@ -74,6 +74,12 @@ class FakeProvider:
             nr.outputs = {**(nr.outputs or {}), **step.get("outputs", {})}
             nr.error = step.get("error")
             await self.db.commit()
+        if "cost" in step:  # the node's SDK registered its cost_json (/internal/artifact)
+            nr = await self.db.scalar(select(NodeRun).where(NodeRun.node_id == pod.pod_id,
+                                                            NodeRun.status == NodeStatus.RUNNING))
+            self.db.add(Artifact(node_run_id=nr.id, name="cost_json", kind=ArtifactKind.METRICS,
+                                 uri=f"r2://bk/{pod.pod_id}/cost_json", meta={"usd": step["cost"]}))
+            await self.db.commit()
         if "pod_error" in step:  # platform-w5's NebiusProvider: why the job ended, set before wait() returns
             pod.error = step["pod_error"]
         if "exit" in step and step["exit"] is None:
@@ -357,6 +363,47 @@ async def test_why_the_provider_ended_a_pod_is_the_node_error(db, provider, gpu)
     oom = await seed(db, one)
     await ex.run_workflow(oom.id, db, AsyncMock(), 1.0)
     assert (await nodes(db, oom))["train"].error == "exit 1: CUDA out of memory"
+
+
+ONE_GPU = "name: t\nnodes:\n  - {id: train, type: unsloth-train, inputs: {train_data: r2://b/t}}\n"
+
+
+async def test_a_gpu_pod_that_ends_without_cost_json_is_billed_its_wall_time_once(db, provider, gpu, monkeypatch):
+    """A Nebius job preempted, killed or cancelled before its SDK wrote cost_json still rented the GPU: the executor
+    bills its wall time at the provider's hourly price, once the pod is gone. A node that wrote cost_json billed itself."""
+    clock = [0.0]
+    monkeypatch.setattr(ex, "monotonic", lambda: clock.append(clock[-1] + 1800) or clock[-1])  # 30 min a pod
+
+    gpu.script = {"train": {"exit": 1, "pod_error": "FAILED Preempted: the VM was reclaimed"}}
+    killed, broadcast = await seed(db, ONE_GPU), AsyncMock()
+    await ex.run_workflow(killed.id, db, broadcast, 1.0)
+    billed = await db.scalar(select(Artifact).where(Artifact.name == "cost_json"))
+    await db.refresh(killed)
+    assert (billed.meta, billed.uri, killed.cost_usd) == (
+        {"usd": 2.25, "gpu_hours": 0.5, "billed_by": "executor"}, "nebius:train", Decimal("2.25"))  # H100 $4.50/h
+    assert {"type": "run_cost", "cost_usd": 2.25} in events(broadcast)
+
+    gpu.script = {"train": {"exit": None}}  # a long training job, then Cancel
+    gpu.started.clear()
+    cancelled = await seed(db, ONE_GPU)
+    task = asyncio.create_task(ex.run_workflow(cancelled.id, db, AsyncMock(), 1.0))
+    await asyncio.wait_for(gpu.started.wait(), 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await db.refresh(cancelled)
+    assert (cancelled.cost_usd, (await nodes(db, cancelled))["train"].error) == (Decimal("2.25"), "cancelled")
+
+    gpu.script = {"train": {"exit": 1, "cost": 0.4}}
+    paid = await seed(db, ONE_GPU)
+    await ex.run_workflow(paid.id, db, AsyncMock(), 1.0)
+    costs = (await db.scalars(select(Artifact).where(Artifact.name == "cost_json"))).all()
+    assert sorted(a.meta["usd"] for a in costs) == [0.4, 2.25, 2.25]  # no second cost_json for the node that wrote one
+
+    gpu.script = {"train": {"exit": 1}}  # Retry node: the first attempt's cost_json does not cover the second
+    await ex.run_workflow(paid.id, db, AsyncMock(), 1.0)
+    costs = (await db.scalars(select(Artifact).where(Artifact.name == "cost_json"))).all()
+    assert sorted(a.meta["usd"] for a in costs) == [0.4, 2.25, 2.25, 2.25]
 
 
 async def test_one_node_run_per_run_and_node(db):

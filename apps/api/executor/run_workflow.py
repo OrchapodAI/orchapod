@@ -20,14 +20,17 @@ import logging
 import re
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
+from time import monotonic
 from typing import Awaitable, Callable
 
+from sqlalchemy import func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from api import config
 from api.executor.dag import DAGNode, compile_dag
-from api.models.db import NodeRun, NodeStatus, Run, RunStatus, Workflow, utcnow
+from api.models.db import Artifact, ArtifactKind, NodeRun, NodeStatus, Run, RunStatus, Workflow, utcnow
 from api.services import budget
 
 Broadcast = Callable[[uuid.UUID, dict], Awaitable[None]]
@@ -213,6 +216,7 @@ async def _execute_node(
     if runtime == "api" and row.get("rents_gpu") and config.env("STUB") != "1":
         env["NEBIUS_IAM_TOKEN"] = await _iam_token()
     image = f"{config.env('ORCHAPOD_IMAGE_PREFIX')}/{dag_node.type}:latest"
+    started = monotonic()
     prov = asyncio.ensure_future(provider.provision(gpu_spec=gpu_spec, image=image, env=env))
     try:
         pod = await asyncio.shield(prov)  # a cancel mid-provision (image pull, jobs.create) leaves it running
@@ -235,12 +239,39 @@ async def _execute_node(
         await _terminate(provider, pod, run.id)  # cancel/timeout: SIGTERM, 30 s grace, kill; after exit: cleanup
         await asyncio.wait({stream}, timeout=5)  # drain the tail of stdout
         stream.cancel()
+        if runtime not in ("cpu", "api"):
+            await _bill_gpu_time(db, run, node_run, provider, gpu_spec, pod, monotonic() - started, broadcast)
 
     await db.refresh(node_run)  # outputs and the last ERROR line arrive through /internal webhooks
     if exit_code != 0:  # the node's last ERROR line, else why its provider ended the pod (platform-w5's pod.error)
         raise NodeFailed(f"exit {exit_code}: {node_run.error}" if node_run.error
                          else getattr(pod, "error", None) or f"exit {exit_code}")
     return node_run.outputs or {}
+
+
+async def _bill_gpu_time(db: AsyncSession, run: Run, node_run: NodeRun, provider, gpu_spec, pod, seconds: float,
+                         broadcast: Broadcast) -> None:
+    """A gpu pod gone without a cost_json from this attempt (cancelled, timed out, preempted, or killed before its SDK
+    wrote one) still rented the GPU: its wall time at the provider's hourly quote becomes the node's cost_json, once;
+    a node that wrote cost_json billed itself. Never raises: the node's own outcome stands.
+    ponytail: provision to teardown, so queueing counts too (over, never under); a pod that a cancel caught still
+    provisioning is not billed, and vllm-serve's endpoint bills keep_alive_min itself (its lifecycle is /internal/ttl)."""
+    try:
+        if await db.scalar(select(Artifact.id).where(Artifact.node_run_id == node_run.id, Artifact.name == "cost_json",
+                                                     Artifact.created_at >= node_run.started_at).limit(1)):
+            return
+        hours = seconds / 3600
+        usd = round(hours * (await provider.quote(gpu_spec)).price_per_hour, 6)
+        db.add(Artifact(node_run_id=node_run.id, name="cost_json", kind=ArtifactKind.METRICS,
+                        uri=f"{provider.name}:{pod.pod_id}", meta={"usd": usd, "gpu_hours": round(hours, 4),
+                                                                    "billed_by": "executor"}))
+        total = await db.scalar(update(Run).where(Run.id == run.id).values(cost_usd=func.coalesce(Run.cost_usd, 0)
+                                                                            + Decimal(str(usd)))
+                                .returning(Run.cost_usd).execution_options(synchronize_session=False))
+        await db.commit()
+        await broadcast(run.id, {"type": "run_cost", "cost_usd": float(total)})
+    except Exception:
+        log.exception("gpu time of %s %s not billed", provider.name, pod.pod_id)
 
 
 def _terminate(provider, pod, run_id: uuid.UUID) -> asyncio.Future:
@@ -353,7 +384,9 @@ def node_order(workflow: Workflow | None, run: Run) -> list[str]:
 
 async def sweep(db: AsyncSession) -> None:
     """At API start: runs left mid-flight fail; a running node's pod is terminated so the node
-    cancels its remote job, and that node (or else the first unfinished one) fails "control plane restarted"."""
+    cancels its remote job, and that node (or else the first unfinished one) fails "control plane restarted".
+    ponytail: a Nebius job or endpoint that no row names (a create lost to a SIGTERM) is not swept; deleting our
+    "orchapod-" names needs platform-w5's jobs.list()/endpoints.list() and a rule for a project two APIs share."""
     from api.services.provider_selector import get_providers, pick_local_docker
     from packages.providers.base import Pod
 

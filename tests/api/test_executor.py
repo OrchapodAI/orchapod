@@ -115,6 +115,9 @@ def gpu(provider, db, monkeypatch):
         return p, GPUSpec(gpu_type="H100")
 
     monkeypatch.setattr("api.services.provider_selector.pick_provider", pick)
+    # a gpu pod's bill has a session of its own, on the test's database (never the module's engine)
+    monkeypatch.setattr("api.database.AsyncSessionLocal", async_sessionmaker(db.bind, class_=AsyncSession,
+                                                                             expire_on_commit=False))
     return p
 
 
@@ -433,12 +436,28 @@ async def test_a_gpu_attempt_costs_its_wall_time_or_what_its_node_reported_which
     assert await cost(early) == (4.5, 4.5)
 
 
-async def test_a_cost_json_racing_the_executors_bill_is_counted_once(client, db, provider, gpu, monkeypatch):
+async def test_a_cost_json_racing_the_executors_bill_is_counted_once(client, provider, gpu, tmp_path, monkeypatch):
     """The node's flush lands while the executor bills, between its read of the attempt and its insert: one lock
-    orders them, so the attempt still totals max(the bill, the report), not their sum."""
+    orders them, so the attempt still totals max(the bill, the report), not their sum. A file database gives each
+    session its own connection, as production has (the in-memory one shares one connection between all of them)."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlmodel import SQLModel
+    from api.database import get_session
+    from api.main import app
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'race.db'}")
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+    sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async def per_request():  # its own session, as in production: never the executor's
+        async with sessions() as session:
+            yield session
+            await session.commit()
+
+    app.dependency_overrides[get_session] = per_request
+    monkeypatch.setattr("api.database.AsyncSessionLocal", sessions)  # the bill's own session
     monkeypatch.setattr(ex, "monotonic", lambda: 0.0 if not gpu.provisioned else 1800.0)
     gpu.script = {"train": {"exit": 1}}
-    run = await seed(db, ONE_GPU)
     read, landed = budget.attempt_costs, []
 
     async def racing(session, node_run):
@@ -448,21 +467,63 @@ async def test_a_cost_json_racing_the_executors_bill_is_counted_once(client, db,
                 await asyncio.sleep(0)  # let the POST run as far as it can (to the lock, or into the database)
         return await read(session, node_run)
 
-    from api.database import get_session
-    from api.main import app
-    sessions = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
-
-    async def per_request():  # its own session, as in production: never the executor's
-        async with sessions() as session:
-            yield session
-            await session.commit()
-
-    app.dependency_overrides[get_session] = per_request
     monkeypatch.setattr(budget, "attempt_costs", racing)
+    try:
+        async with sessions() as db:
+            run = await seed(db, ONE_GPU)
+            await ex.run_workflow(run.id, db, AsyncMock(), 1.0)
+            assert (await landed[0]).status_code == 201
+            await db.refresh(run)
+            assert float(run.cost_usd) == 2.25  # max($2.25 billed, $1.00 reported)
+    finally:
+        await engine.dispose()
+
+
+GPU_THEN_CPU = """
+name: g
+nodes:
+  - {id: train, type: unsloth-train, inputs: {train_data: "r2://b/t"}}
+  - {id: prep, type: data-prep, needs: [train], inputs: {dataset: "hf://x"}}
+"""
+
+
+async def test_a_failed_bill_never_strands_the_run(db, provider, gpu, monkeypatch, caplog):
+    """The bill has its own session: when it fails, the executor's session (its run and NodeRuns) is untouched, so the
+    run goes on to its next node instead of stopping RUNNING."""
+    def blip(*_):  # after the bill's first query, so its transaction has begun
+        raise RuntimeError("database blip")
+
+    monkeypatch.setattr(budget, "attempt_cost", blip)
+    run = await seed(db, GPU_THEN_CPU)
+
     await ex.run_workflow(run.id, db, AsyncMock(), 1.0)
-    assert (await landed[0]).status_code == 201
+
     await db.refresh(run)
-    assert float(run.cost_usd) == 2.25  # max($2.25 billed, $1.00 reported)
+    rows = await nodes(db, run)
+    assert (run.status, rows["train"].status, rows["prep"].status) == (RunStatus.SUCCEEDED,) + (NodeStatus.SUCCEEDED,) * 2
+    assert "gpu time of nebius train not billed" in caplog.text
+
+
+async def test_a_second_cancel_in_the_grace_still_bills_the_gpu_pod(db, provider, gpu, monkeypatch):
+    """The bill is part of the shielded teardown task: a second click on Cancel inside the 30 s SIGTERM grace stops the
+    executor waiting, never the teardown or the bill."""
+    clock = [0.0]
+    monkeypatch.setattr(ex, "monotonic", lambda: clock.append(clock[-1] + 1800) or clock[-1])  # 30 min: $2.25
+    gpu.script, gpu.terminate_gate = {"train": {"exit": None}}, asyncio.Event()
+    run = await seed(db, ONE_GPU)
+    task = asyncio.create_task(ex.run_workflow(run.id, db, AsyncMock(), 1.0))
+    await asyncio.wait_for(gpu.started.wait(), 5)
+
+    task.cancel()
+    await asyncio.wait_for(gpu.terminating.wait(), 5)  # SIGTERM sent, grace running
+    task.cancel()                                      # a second click
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 5)
+    gpu.terminate_gate.set()
+    await drain()
+
+    await db.refresh(run)
+    assert run.cost_usd == Decimal("2.25")
 
 
 async def test_one_node_run_per_run_and_node(db):

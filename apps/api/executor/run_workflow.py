@@ -15,7 +15,6 @@ Key invariants:
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 import re
@@ -234,6 +233,8 @@ async def _execute_node(
         raise NodeFailed(f"provision failed: {e}")
 
     stream = asyncio.create_task(_stream_stdout(provider, pod, node_run, broadcast))
+    bill = None if runtime in ("cpu", "api") else (  # once the pod is gone, inside its shielded teardown
+        lambda: _bill_gpu_time(run.id, node_run, provider, gpu_spec, pod, started, broadcast))
     try:
         node_run.gpu_provider = run.gpu_provider = provider.name
         node_run.gpu_pod_id = run.gpu_pod_id = pod.pod_id
@@ -242,11 +243,9 @@ async def _execute_node(
     except TimeoutError:
         raise NodeFailed(f"timeout after {timeout:g} s")
     finally:
-        await _terminate(provider, pod, run.id)  # cancel/timeout: SIGTERM, 30 s grace, kill; after exit: cleanup
+        await _terminate(provider, pod, run.id, bill)  # cancel/timeout: SIGTERM, 30 s grace, kill; after exit: cleanup
         await asyncio.wait({stream}, timeout=5)  # drain the tail of stdout
         stream.cancel()
-        if runtime not in ("cpu", "api"):
-            await _bill_gpu_time(db, run, node_run, provider, gpu_spec, pod, monotonic() - started, broadcast)
 
     await db.refresh(node_run)  # outputs and the last ERROR line arrive through /internal webhooks
     if exit_code != 0:  # the node's last ERROR line, else why its provider ended the pod (platform-w5's pod.error)
@@ -255,38 +254,38 @@ async def _execute_node(
     return node_run.outputs or {}
 
 
-async def _bill_gpu_time(db: AsyncSession, run: Run, node_run: NodeRun, provider, gpu_spec, pod, seconds: float,
+async def _bill_gpu_time(run_id: uuid.UUID, node_run: NodeRun, provider, gpu_spec, pod, started: float,
                          broadcast: Broadcast) -> None:
     """A gpu attempt costs max(its pod's wall time at the provider's hourly quote, what the node reported) (contracts
     "Run state machine"). Once the pod is gone the executor records its bill (one per attempt), adding only what exceeds the node's
     reports so far; a later cost_json (a Nebius job's SIGTERM flush lands after terminate returns) adds only what
-    exceeds the bill (/internal/artifact). Never raises: the node's own outcome stands.
+    exceeds the bill (/internal/artifact). It runs in the teardown task, so a second Cancel cannot skip it, and in a
+    session of its own, so a failure never touches the executor's run and NodeRuns. Never raises.
     ponytail: provision to teardown, so queueing and a wait for capacity count too (over, never under); a pod that a
     cancel caught still provisioning is not billed, and vllm-serve's endpoint bills itself (its lifecycle is /internal/ttl)."""
+    from api import database
     try:
-        hours = seconds / 3600
+        hours = (monotonic() - started) / 3600
         bill = {"wall_usd": round(hours * (await provider.quote(gpu_spec)).price_per_hour, 6),
                 "gpu_hours": round(hours, 4), "billed_by": "executor"}
-        async with budget.cost_lock:
+        async with budget.cost_lock, database.AsyncSessionLocal() as db:
             earlier = await budget.attempt_costs(db, node_run)
             usd = round(budget.attempt_cost(earlier + [bill]) - budget.attempt_cost(earlier), 6)
             db.add(Artifact(node_run_id=node_run.id, name="cost_json", kind=ArtifactKind.METRICS,
                             uri=f"{provider.name}:{pod.pod_id}", meta={"usd": usd, **bill}))
-            total = await db.scalar(update(Run).where(Run.id == run.id).values(cost_usd=func.coalesce(Run.cost_usd, 0)
+            total = await db.scalar(update(Run).where(Run.id == run_id).values(cost_usd=func.coalesce(Run.cost_usd, 0)
                                                                                 + Decimal(str(usd)))
                                     .returning(Run.cost_usd).execution_options(synchronize_session=False))
             await db.commit()
-        await broadcast(run.id, {"type": "run_cost", "cost_usd": float(total)})
+        await broadcast(run_id, {"type": "run_cost", "cost_usd": float(total)})
     except Exception:
-        with contextlib.suppress(Exception):
-            await db.rollback()  # the session goes on to fail or finish the node
         log.exception("gpu time of %s %s not billed", provider.name, pod.pod_id)
 
 
-def _terminate(provider, pod, run_id: uuid.UUID) -> asyncio.Future:
+def _terminate(provider, pod, run_id: uuid.UUID, then=None) -> asyncio.Future:
     """Teardown runs as its own task, tracked under its run, and is awaited through shield, so a second
-    cancel cannot interrupt the SIGTERM grace; it never raises."""
-    return asyncio.shield(_track(run_id, asyncio.ensure_future(_terminate_now(provider, pod))))
+    cancel cannot interrupt the SIGTERM grace, nor `then` (a gpu pod's bill) after it; it never raises."""
+    return asyncio.shield(_track(run_id, asyncio.ensure_future(_terminate_now(provider, pod, then))))
 
 
 async def _terminate_when_up(provider, provision: asyncio.Future) -> None:
@@ -297,11 +296,13 @@ async def _terminate_when_up(provider, provision: asyncio.Future) -> None:
     await _terminate_now(provider, pod)
 
 
-async def _terminate_now(provider, pod) -> None:
+async def _terminate_now(provider, pod, then=None) -> None:
     try:
         await provider.terminate(pod)
     except Exception as e:
         log.warning("terminate %s failed: %s", pod.pod_id, e)
+    if then:
+        await then()
 
 
 async def _stream_stdout(provider, pod, node_run: NodeRun, broadcast: Broadcast) -> None:

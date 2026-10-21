@@ -1,20 +1,15 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, explainError } from "@/lib/api";
-import type { AgentPlan, AgentReport } from "@/lib/types";
+import type { AgentPlan, AgentReport, AgentTemplate } from "@/lib/types";
 import { planYaml } from "@/lib/workflowYaml";
 import { NODE_META } from "@/components/canvas/OrchaNode";
 import { StatusBadge } from "@/components/StatusBadge";
+import { Callout } from "@/components/Callout";
 import { RunView } from "@/components/runs/RunView";
 
-// The three canonical intents (docs/agent_knowledge.md).
-const EXAMPLES = [
-  "Fine-tune Llama 3B on US real-estate compliance: Fair Housing Act, RESPA, TILA/TRID, state licensing",
-  "Generate synthetic data of movie likes, shares and subscribes",
-  "Quantize a model which is an expert in maths",
-];
 const MAX_INTENT = 2000; // contracts: POST /agent/plan takes at most 2000 chars
 
 const usd = (n: number | null | undefined) => (n == null ? "–" : `$${n.toFixed(2)}`);
@@ -30,18 +25,6 @@ function modelsOf(inputs: Record<string, unknown> = {}): string[] {
   });
 }
 
-function Callout({ tone, title, children }: { tone: "amber" | "rose"; title: string; children: ReactNode }) {
-  return (
-    <div style={{
-      background: `var(--${tone}-soft)`, border: `1px solid var(--${tone})`, borderRadius: 6,
-      padding: "10px 14px", color: `var(--${tone}-ink)`, fontSize: 13, lineHeight: 1.5,
-    }}>
-      <div style={{ fontWeight: 600 }}>{title}</div>
-      <div style={{ marginTop: 2 }}>{children}</div>
-    </div>
-  );
-}
-
 const list = (items: string[]) => (
   <ul style={{ margin: 0, paddingLeft: 18 }}>{items.map((t, i) => <li key={i}>{t}</li>)}</ul>
 );
@@ -54,6 +37,13 @@ export default function AgentPage() {
   const [error, setError] = useState<{ title: string; message: string } | null>(null);
   const [busy, setBusy] = useState<"" | "plan" | "edit" | "run">("");
   const [runId, setRunId] = useState<string | null>(null);
+  const [templates, setTemplates] = useState<AgentTemplate[] | null>(null);
+  const [templatesError, setTemplatesError] = useState("");
+
+  // The three canonical intents with ready plans (GET /agent/templates).
+  useEffect(() => {
+    api.agent.templates().then(setTemplates).catch((err) => setTemplatesError(explainError(err)));
+  }, []);
 
   async function handlePlan(e: React.FormEvent) {
     e.preventDefault();
@@ -81,19 +71,25 @@ export default function AgentPage() {
     }
   }
 
-  async function handleRun() {
-    if (!reply) return;
+  async function handleRun(text: string, plan: AgentPlan) {
     setBusy("run"); setError(null);
     try {
-      setRunId((await api.agent.run(asked, reply.plan)).run_id);
+      setRunId((await api.agent.run(text, plan.plan)).run_id);
     } catch (err) {
       // A 422 carries the server's validation errors; like the plan's own, they keep Run disabled.
       const errors = (err as { body?: { errors?: string[] } }).body?.errors;
-      if (errors?.length) setReply({ ...reply, errors });
+      if (errors?.length) setReply({ ...plan, errors });
       setError({ title: "Couldn't start the run", message: explainError(err) });
     } finally {
       setBusy("");
     }
+  }
+
+  // One-click Run: the template is the plan card, already planned.
+  function runTemplate(t: AgentTemplate) {
+    const plan: AgentPlan = { plan: t.plan, rationale: t.rationale, estimate: t.estimate, warnings: [], errors: [] };
+    setIntent(t.intent); setAsked(t.intent); setReply(plan); setRunId(null);
+    handleRun(t.intent, plan);
   }
 
   return (
@@ -126,12 +122,6 @@ export default function AgentPage() {
               }}
             />
             <div className="row" style={{ flexWrap: "wrap" }}>
-              {EXAMPLES.map((ex) => (
-                <button key={ex} type="button" className="btn btn-sm" onClick={() => setIntent(ex)}
-                  style={{ whiteSpace: "normal", textAlign: "left", maxWidth: 300 }}>
-                  {ex}
-                </button>
-              ))}
               <div className="spacer" />
               <span className="muted mono tnum" style={{ fontSize: 11 }}>{intent.length}/{MAX_INTENT}</span>
               <button type="submit" className="btn btn-primary" disabled={!intent.trim() || busy !== ""}>
@@ -139,6 +129,27 @@ export default function AgentPage() {
               </button>
             </div>
           </form>
+
+          <section aria-label="Templates" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
+            {templatesError ? <div style={{ gridColumn: "1 / -1" }}><Callout tone="amber" title="Templates unavailable">{templatesError}</Callout></div>
+              : !templates ? <p className="muted" style={{ fontSize: 13 }}>Loading templates…</p>
+              : templates.map((t) => (
+                <div key={t.slug} className="card col" style={{ padding: 14, gap: 6 }}>
+                  <span style={{ fontWeight: 600, fontSize: 13.5 }}>{t.title}</span>
+                  <span className="dim" style={{ fontSize: 12.5, flex: 1 }}>{t.intent}</span>
+                  <div className="row" style={{ marginTop: 4 }}>
+                    <span className="mono tnum muted" style={{ fontSize: 12 }} title="Estimated cost and wall time">
+                      {usd(t.estimate?.usd)} · {mins(t.estimate?.minutes)}
+                    </span>
+                    <div className="spacer" />
+                    <button type="button" className="btn btn-sm btn-ghost" onClick={() => setIntent(t.intent)}
+                      aria-label={`Use the intent of ${t.title}`}>Use intent</button>
+                    <button type="button" className="btn btn-sm btn-primary" onClick={() => runTemplate(t)} disabled={busy !== ""}
+                      aria-label={`Run template: ${t.title}`}>▶ Run</button>
+                  </div>
+                </div>
+              ))}
+          </section>
 
           {asked && (
             <div style={{
@@ -197,7 +208,7 @@ export default function AgentPage() {
                 <button className="btn" onClick={handleEdit} disabled={busy !== ""}>
                   {busy === "edit" ? "Opening…" : "Edit on canvas"}
                 </button>
-                <button className="btn btn-primary" onClick={handleRun}
+                <button className="btn btn-primary" onClick={() => handleRun(asked, reply)}
                   disabled={reply.errors.length > 0 || busy !== "" || runId !== null}>
                   {busy === "run" ? "Starting…" : "▶ Run"}
                 </button>

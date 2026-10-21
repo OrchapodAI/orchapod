@@ -1,7 +1,7 @@
 import type {
   Workflow, Run, BaseModel, PublicDataset, NodeTypeMeta, NodeType, TrainingMethod,
   DeployRequest, DeployResponse, InferenceEndpoint, RegisteredModel, ArtifactListItem,
-  AgentPlan, AgentRunOut, AgentReport, Plan, RunSummary, ModelRef, CompareEvent,
+  AgentPlan, AgentRunOut, AgentReport, AgentTemplate, Plan, RunSummary, ModelRef, CompareEvent,
 } from "./types";
 
 export const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
@@ -151,6 +151,9 @@ export const api = {
     },
     report(runId: string): Promise<AgentReport> {
       return req(`/agent/runs/${runId}/report`);
+    },
+    templates(): Promise<AgentTemplate[]> {
+      return req("/agent/templates");
     },
   },
 

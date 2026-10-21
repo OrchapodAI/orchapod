@@ -140,6 +140,16 @@ test("tf-finetune's timeout_min stops at 85, under the executor's 90-minute back
   assert.match(timeout?.help ?? "", /85/);
 });
 
+test("the template gallery reads GET /agent/templates", async () => {
+  const calls: string[] = [];
+  globalThis.fetch = async (url: string, init?: RequestInit) => {
+    calls.push(`${init?.method ?? "GET"} ${url}`);
+    return new Response("[]");
+  };
+  assert.deepEqual(await api.agent.templates(), []);
+  assert.deepEqual(calls, ["GET http://localhost:8001/agent/templates"]);
+});
+
 const TF = "https://api.tokenfactory.nebius.com/v1";
 const tfRef = (model: string, base_model: string | null = null) => ({ base_url: TF, model, api_key_env: "NEBIUS_API_KEY", base_model });
 

@@ -299,6 +299,16 @@ export interface AgentPlan {
   errors: string[];
 }
 
+/** GET /agent/templates: the three canonical intents with ready plans; one-click Run posts one to /agent/run. */
+export interface AgentTemplate {
+  slug: string;
+  title: string;
+  intent: string;
+  rationale: string;
+  plan: Plan;
+  estimate: Estimate;
+}
+
 export interface AgentRunOut {
   run_id: string;
   workflow_id: string;

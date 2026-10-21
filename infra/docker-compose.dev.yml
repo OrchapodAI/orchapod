@@ -85,6 +85,7 @@ services:
       ORCHAPOD_ANON_SCALE: ${ORCHAPOD_ANON_SCALE:-0.1}
       ORCHAPOD_ADMIN_TOKEN: ${ORCHAPOD_ADMIN_TOKEN:-}
       ORCHAPOD_NODE_TIMEOUT_S: ${ORCHAPOD_NODE_TIMEOUT_S:-5400}
+      ORCHAPOD_MAX_COMPARES: ${ORCHAPOD_MAX_COMPARES:-4}
       STUB: ${STUB:-}
       HF_TOKEN: ${HF_TOKEN:-}
       VASTAI_API_KEY: ${VASTAI_API_KEY:-}   # spikes only; used only by nodes whose provider_pref names vastai

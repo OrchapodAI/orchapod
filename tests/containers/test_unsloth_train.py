@@ -21,17 +21,18 @@ import json
 import sys
 import types
 from pathlib import Path
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 
 
 # ---------------------------------------------------------------------------
-# Mock injection — must happen before run.py is loaded (module-level imports)
+# Fakes for the SDK and the GPU libraries. They sit in sys.modules only while run.py loads and while a test
+# of this file runs, so the real orchapod package is untouched for every other test file.
 # ---------------------------------------------------------------------------
 
-def _inject_mocks() -> dict:
-    """Replace all GPU/heavy modules with lightweight fakes in sys.modules."""
+def _fakes() -> dict:
+    """Lightweight fakes for the SDK and the GPU/heavy modules, by sys.modules name."""
 
     # orchapod SDK
     orchapod  = types.ModuleType("orchapod")
@@ -56,50 +57,54 @@ def _inject_mocks() -> dict:
     orchapod.log        = log_m
     orchapod.checkpoint = ckpt_m
 
-    for name, mod in [
-        ("orchapod", orchapod),
-        ("orchapod.io", io_m),
-        ("orchapod.log", log_m),
-        ("orchapod.checkpoint", ckpt_m),
-    ]:
-        sys.modules[name] = mod
-
     # transformers — TrainerCallback is imported at module level in run.py
     tf = types.ModuleType("transformers")
     class FakeTrainerCallback:
         pass
     tf.TrainerCallback   = FakeTrainerCallback
     tf.TrainingArguments = MagicMock(return_value=MagicMock())
-    sys.modules["transformers"] = tf
 
     # Heavy libs used only inside main() — lazy mocks are fine
     unsloth = types.ModuleType("unsloth")
     unsloth.FastLanguageModel = MagicMock()
-    sys.modules["unsloth"] = unsloth
 
     trl = types.ModuleType("trl")
     trl.SFTTrainer = MagicMock()
-    sys.modules["trl"] = trl
 
     datasets = types.ModuleType("datasets")
     datasets.load_dataset = MagicMock(return_value=MagicMock())
-    sys.modules["datasets"] = datasets
 
     return {
-        "io": io_m, "log": log_m, "ckpt": ckpt_m,
-        "tf": tf, "unsloth": unsloth, "trl": trl, "datasets": datasets,
+        "orchapod": orchapod, "orchapod.io": io_m, "orchapod.log": log_m, "orchapod.checkpoint": ckpt_m,
+        "transformers": tf, "unsloth": unsloth, "trl": trl, "datasets": datasets,
     }
 
 
-_mocks = _inject_mocks()
+_FAKES = _fakes()
 
-# Load run.py with all deps mocked
+# Load run.py against the fakes (its module-level imports bind them); sys.modules is restored right after.
 _RUN_PY = (
     Path(__file__).parent.parent.parent / "containers" / "unsloth-train" / "run.py"
 )
-_spec = importlib.util.spec_from_file_location("unsloth_train_run", _RUN_PY)
-_run  = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_run)
+with pytest.MonkeyPatch.context() as _mp:
+    for _name, _mod in _FAKES.items():
+        _mp.setitem(sys.modules, _name, _mod)
+    _spec = importlib.util.spec_from_file_location("unsloth_train_run", _RUN_PY)
+    _run  = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_run)
+_LEFT_BEHIND = [n for n in ("orchapod", "orchapod.io", "transformers", "unsloth", "trl", "datasets")
+                if n in sys.modules and sys.modules[n].__spec__ is None]  # a fake has no import spec
+
+
+def test_loading_run_py_leaves_sys_modules_as_it_was():
+    assert _LEFT_BEHIND == []
+
+
+@pytest.fixture(autouse=True)
+def _fake_modules(monkeypatch):
+    """main() imports unsloth, trl, datasets and transformers lazily, and the tests read the fakes back."""
+    for name, mod in _FAKES.items():
+        monkeypatch.setitem(sys.modules, name, mod)
 
 
 # ---------------------------------------------------------------------------

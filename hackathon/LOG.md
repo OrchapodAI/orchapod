@@ -331,3 +331,8 @@ worktrees:
   - RULING on its question: the golden-run link matches the workflow name exactly (substring also lists '(copy)' workflows).
   - Review dispatched (sonnet).
 - 2026-10-21T16:48Z frontend-w5 review (sonnet): token boundary tight (no URL/log/toast/props leak; sessionStorage XSS exposure accepted for a no-auth demo; never cleared before the tab closes, because retry keeps the token); selectors stable. Needs fixes: the exact-match ruling was unmet → the orchestrator did it in frontend-w5's branch (runShown in lib/runEvents.ts + a test; web 30/30, tsc clean). Minors parked: a second copy collides on name (no unique constraint; harmless); the page-level 409 flow is untested beyond the client → qa-w6 smoke case; README:182 line kept. Merge after backend-w5.
+- 2026-10-21T16:53Z backend-w5 re-review 2 (opus): items 2–6 ADDRESSED.
+  - Item 1 partly: a sooner re-register cancels live timers BEFORE its commit, so a commit made to fail leaves the endpoint with no timer.
+  - New: /internal/artifact accepts kind=endpoint, so a node can forge live endpoint rows (0-timer supersede; /internal/ttl 500s; /compare trusts the forged URL; one junk row crash-loops every API start through the unguarded resume_ttls).
+  - /compare token leak CONFIRMED, rated Minor (nodes already hold the token); the SSRF + 4xx-body echo is the real addition.
+  - Fix round 3 (the last resumed round) → cancel/arm after commit; refuse kind=endpoint at /internal/artifact; guard resume_ttls per row; /internal/ttl stores the Nebius-reported URL (stub for stub-*); a per-attempt report cap; fix a 2/70 flaky test.

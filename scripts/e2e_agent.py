@@ -1,19 +1,21 @@
 """Stub e2e of the three canonical intents through the Orchapod Agent, through the API only: $0.
 
-    python scripts/e2e_agent.py --stub                       # all three; `make check E2E=1` runs it with --strict
+    python scripts/e2e_agent.py --stub                       # all three; `make check E2E=1` runs it (a SKIP does not fail it)
     python scripts/e2e_agent.py --stub --intent 2            # one canonical intent (1, 2 or 3), or any text: the STUB planner
                                                              # answers with the closest canonical plan
     python scripts/e2e_agent.py --intent "..." --max-cost 3  # real (`make agent-e2e INTENT=...`): refuses without --max-cost
 
 Per intent: POST /agent/plan (the STUB planner must return that intent's canonical plan, error-free, estimate under the $3 run
-cap) -> POST /agent/run -> GET /agent/runs/{id}/report every 2 s until `ready`. Asserted: the run succeeded in under 5 minutes
-with every node's contract artifacts and a cost_json, cost $0, the report names the plan, the data-prep dataset downloads
+cap, with the shape docs/agent_knowledge.md gives it: #1 ends in judge-eval, #2 trains nothing, #3 runs quantize before
+judge-eval) -> POST /agent/run -> GET /agent/runs/{id}/report every 2 s until `ready`. Asserted: the run succeeded in under 5
+minutes with every node's contract artifacts and a cost_json, cost $0, the report names the plan, the data-prep dataset downloads
 (intent #2: rows with exactly the schema's fields), judge-eval's eval_summary has the contract's shape, and quantize
 keep_f16 registers the f16 baseline. It reuses e2e_demo.py: its stack (own API, STUB=1, throwaway DB, no paid key), image
 builds and run checks; the images it builds are the shared orchapod/<node>:dev, so it is opt-in like e2e_demo.py.
 
 Intent #1 needs vllm-serve to contract (ml-w4; PENDING below). While a plan's errors are exactly that named gap the intent is
 SKIPped, loudly: exit 0, and --strict makes it 3. Any other plan error is a FAIL, and so is a gap whose piece has merged.
+`make check E2E=1` does not pass --strict until ml-w4 merges; ml-w4's acceptance is `--stub --strict` -> 3 PASS.
 
 The real run is not written: it needs the keys (spike 3). Without --max-cost it refuses, whatever else it is asked.
 """
@@ -29,17 +31,33 @@ import httpx
 CAP_USD = 3.0  # ORCHAPOD_MAX_RUN_USD: a plan estimated above it can never run
 # The caps are pinned so a shell's ORCHAPOD_* cannot change the verdict; the UI is anonymous, so full scale is ANON_SCALE=1.
 FULL_CAPS = {"ORCHAPOD_ANON_SCALE": "1", "ORCHAPOD_MAX_RUN_USD": f"{CAP_USD:g}", "ORCHAPOD_MAX_DAY_USD": "15"}
-# The slugs of the three canonical templates (apps/api/agent/templates/1-…, 2-…, 3-…). Other templates may exist (a fourth also
-# fine-tunes), so a plan's shape cannot tell them apart; the default run covers these three and no others.
-INTENTS = {"1": "real-estate-compliance", "2": "movie-engagement", "3": "maths-quantize"}
+# number: (the slug of its template (apps/api/agent/templates/1-…, 2-…, 3-…), a rule on the plan's node types in execution order,
+# what the rule says). Other templates may exist (a fourth also fine-tunes), so a plan's shape cannot tell them apart, and the
+# default run covers these three and no others. The rules are docs/agent_knowledge.md "Expected plans": a template edit that
+# drops a step fails here.
+INTENTS = {
+    "1": ("real-estate-compliance", lambda t: t[-1] == "judge-eval", "ends in judge-eval"),
+    "2": ("movie-engagement", lambda t: "tf-finetune" not in t, "has no tf-finetune: it trains nothing"),
+    "3": ("maths-quantize", lambda t: "quantize" in t and "judge-eval" in t and t.index("quantize") < t.index("judge-eval"),
+          "runs quantize before judge-eval"),
+}
+SLUGS = {number: slug for number, (slug, _, _) in INTENTS.items()}
 
 VLLM = ("ml-w4: vllm-serve is not to contract yet (lora_adapter input, model_ref and base_model_ref outputs, runtime api; "
         "contracts \"vllm-serve\")")
-# ponytail: SKIP scaffolding for the one piece not merged yet. (node type or None, regex over the plan error "<node_id>: <problem>",
-# the missing piece.) Once ml-w4 (vllm-serve) merges, delete PENDING, skip_reasons, the SKIP branch of run_one and --strict, and
-# drop the Makefile's --strict from this script's line (nothing can SKIP then). Entries for merged pieces (ml-w3: judge-eval,
-# quantize keep_f16) are already gone: a plan that still lacks them is a failure.
-PENDING = (
+# ponytail: THE vllm-serve SKIP LAYER, one deletion. When ml-w4 merges, `python scripts/e2e_agent.py --stub --strict` must print
+# 3 PASS; then delete every site tagged SKIP-SITE(ml-w4) (tests/e2e/test_e2e_agent.py checks that this list is complete):
+#   scripts/e2e_agent.py    PENDING, VLLM, skip_reasons, the SKIP branch of run_one, the --strict flag
+#   scripts/e2e_ui.py       ui_pending's SKIP half (the plan-error check stays) and the E2E_PENDING it sends
+#   tests/ui/smoke.spec.ts  PENDING, pending() and its call in the golden path test; the fixture test goes too: that test then
+#                           covers the eval view and the playground on real data
+#   Makefile                UI_ARGS (ui-smoke --strict)
+#   tests/test_harness.py   the assertion that `check E2E=1` runs the agent e2e without --strict
+#   tests/e2e/test_e2e_agent.py, tests/e2e/test_e2e_ui.py   the SKIP tests
+#   docs/NODE_CONTRACT.md   the SKIP sentence of step 7
+# PENDING is (node type or None, regex over the plan error "<node_id>: <problem>", the missing piece). Entries for merged pieces
+# (ml-w3: judge-eval, quantize keep_f16) are already gone: a plan that still lacks them is a failure.
+PENDING = (  # SKIP-SITE(ml-w4)
     ("vllm-serve", r"unknown input 'lora_adapter'|no GPU provider", VLLM),
     (None, r"\(vllm-serve\) has no output '(base_)?model_ref'", VLLM),
 )
@@ -53,10 +71,22 @@ EVAL_KEYS = ("n", "judged", "wins", "ties", "losses", "errors", "win_rate", "con
 
 def canonical(templates: list[dict], number: str) -> dict | None:
     """The template of canonical intent 1, 2 or 3."""
-    return next((t for t in templates if t["slug"] == INTENTS[number]), None)
+    return next((t for t in templates if t["slug"] == SLUGS[number]), None)
 
 
-def skip_reasons(errors: list[str], plan: dict) -> list[str] | None:
+def node_types(plan: dict) -> list[str]:
+    """The plan's node types in execution order: a node after the nodes it needs, ties in plan order."""
+    done, order = set(), []
+    while len(order) < len(plan["nodes"]):
+        ready = next((n for n in plan["nodes"] if n["id"] not in done and set(n.get("needs", [])) <= done), None)
+        if ready is None:
+            break  # a cycle: the planner reports it
+        done.add(ready["id"])
+        order.append(ready["type"])
+    return order
+
+
+def skip_reasons(errors: list[str], plan: dict) -> list[str] | None:  # SKIP-SITE(ml-w4)
     """The missing pieces when every plan error is a PENDING one (the intent SKIPs), else None (no error, or one that is
     something else: that is a FAIL, never a SKIP)."""
     types = {n["id"]: n["type"] for n in plan.get("nodes", [])}
@@ -137,8 +167,8 @@ def show(verb: str, label: str, lines: list[str], note: str = "") -> None:
     print("\n".join([f"e2e {verb} {label}{note}", *(f"  - {x}" for x in lines)]), flush=True)
 
 
-def run_one(c: httpx.Client, label: str, intent: str, template: dict | None) -> str:
-    """One intent: PASS, SKIP (named gaps only) or FAIL."""
+def run_one(c: httpx.Client, label: str, intent: str, template: dict | None, number: str | None = None) -> str:
+    """One intent: PASS, SKIP (named gaps only) or FAIL. `number` is the canonical intent, None for free text."""
     demo.say(f"--- {label}: {intent!r}")
     reply = demo.call(c, "POST", "/agent/plan", json={"intent": intent})
     plan, estimate, errors = reply["plan"], reply["estimate"], reply["errors"]
@@ -147,7 +177,9 @@ def run_one(c: httpx.Client, label: str, intent: str, template: dict | None) -> 
         problems.append("the STUB planner did not answer this canonical intent with its canonical plan")
     if template and estimate != template["estimate"]:
         problems.append(f"the plan's estimate {estimate['usd']} differs from the template's {template['estimate']['usd']}")
-    if not problems and (reasons := skip_reasons(errors, plan)):
+    if number and not INTENTS[number][1](types := node_types(plan)):
+        problems.append(f"the plan of canonical intent #{number} {INTENTS[number][2]} (docs/agent_knowledge.md), but this one runs {types}")
+    if not problems and (reasons := skip_reasons(errors, plan)):  # SKIP-SITE(ml-w4)
         show("SKIP", label, reasons, " (this is NOT a pass: it did not run; --strict turns it into a failure)")
         return "SKIP"
     problems += errors
@@ -179,18 +211,18 @@ def run_one(c: httpx.Client, label: str, intent: str, template: dict | None) -> 
 
 def run_all(c: httpx.Client, which: str | None, strict: bool) -> int:
     templates = demo.get_templates(c)
-    todo = []  # (label, intent text, its canonical template or None)
+    todo = []  # (label, intent text, its canonical template and number, or None for free text)
     for number in [which] if which in INTENTS else [] if which else list(INTENTS):
         template = canonical(templates, number)
         if template is None:
-            return demo.fail(f"{len(templates)} templates, none is canonical intent #{number} (slug {INTENTS[number]!r})")
-        todo.append((f"intent #{number}", template["intent"], template))
+            return demo.fail(f"{len(templates)} templates, none is canonical intent #{number} (slug {SLUGS[number]!r})")
+        todo.append((f"intent #{number}", template["intent"], template, number))
     if which and which not in INTENTS:
-        todo.append(("free-text intent", which, None))
+        todo.append(("free-text intent", which, None, None))
     results = {}
-    for label, intent, template in todo:
+    for label, intent, template, number in todo:
         try:
-            results[label] = run_one(c, label, intent, template)
+            results[label] = run_one(c, label, intent, template, number)
         except RuntimeError as e:  # an HTTP error from the API fails this intent, not the others
             show("FAIL", label, [str(e)])
             results[label] = "FAIL"
@@ -199,7 +231,7 @@ def run_all(c: httpx.Client, which: str | None, strict: bool) -> int:
              + ", ".join(f"{label} {r}" for label, r in results.items()))
     if count["FAIL"]:
         return 1
-    return 3 if count["SKIP"] and strict else 0
+    return 3 if count["SKIP"] and strict else 0  # SKIP-SITE(ml-w4)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -207,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--stub", action="store_true", help="STUB=1: $0, no keys, no network beyond the local stack")
     ap.add_argument("--intent", help="1, 2 or 3 (a canonical intent), or any text; stub default: all three; a real run needs one")
     ap.add_argument("--max-cost", type=float, help="USD cap of a real run; a real run is refused without it")
-    ap.add_argument("--strict", action="store_true", help="a SKIP (vllm-serve not merged yet) exits 3 instead of 0")
+    ap.add_argument("--strict", action="store_true", help="a SKIP (vllm-serve not merged yet) exits 3 instead of 0")  # SKIP-SITE(ml-w4)
     args = ap.parse_args(argv)
     if not args.stub:
         if args.max_cost is None or args.max_cost <= 0:

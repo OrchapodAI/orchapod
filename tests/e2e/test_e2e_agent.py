@@ -1,6 +1,8 @@
 """scripts/e2e_agent.py: the logic around the stub e2e of the canonical intents. The run is `make check E2E=1` (Docker, `make up`)."""
 
+import copy
 import json
+import subprocess
 from pathlib import Path
 
 import e2e_agent as agent
@@ -9,9 +11,10 @@ import httpx
 import pytest
 
 from api.agent import planner
+from tests.e2e.test_e2e_demo import good_summary, templates_on_disk
 
 ROOT = Path(__file__).resolve().parents[2]
-SHIPPED = [json.loads(f.read_text()) for f in sorted((ROOT / "apps/api/agent/templates").glob("*.json"))]
+SHIPPED = templates_on_disk()
 TEMPLATES = [{**t, "estimate": planner.estimate(t["plan"])[0]} for t in SHIPPED]  # what GET /agent/templates serves
 I1, I2, I3 = (agent.canonical(TEMPLATES, n) for n in "123")
 # data-w4's fourth template: it fine-tunes like #1, and a later template must neither steal an intent nor be run by default
@@ -23,6 +26,16 @@ ERRORS_1 = ["serve: unknown input 'lora_adapter'",
             "serve: no GPU provider in provider_pref ['nebius'] is configured (nebius needs NEBIUS_PROJECT_ID)",
             "evaluate: base_model_ref: serve (vllm-serve) has no output 'base_model_ref'",
             "evaluate: tuned_model_ref: serve (vllm-serve) has no output 'model_ref'"]
+
+
+@pytest.fixture(autouse=True)
+def no_docker(monkeypatch):
+    """These are logic tests over a fake API: a plan that reaches the stack check or an image build is a bug in the test, never a run."""
+    def refuse(name):
+        return lambda *args, **kwargs: pytest.fail(f"{name}() was reached from a logic test: that is Docker")
+
+    monkeypatch.setattr(demo, "preflight", refuse("preflight"))
+    monkeypatch.setattr(demo, "build_images", refuse("build_images"))
 
 
 def fake_api(errors_by_intent=None, plan_for=None, status=200, templates=TEMPLATES):
@@ -57,17 +70,58 @@ def test_each_canonical_intent_has_its_own_template_and_extra_templates_are_allo
     assert agent.canonical([], "1") is None and agent.canonical([I1, I2], "3") is None
 
 
-def test_the_default_run_covers_the_three_canonical_intents_and_no_other_template(capsys, monkeypatch):
+def test_the_default_run_covers_the_three_canonical_intents_and_no_other_template(capsys):
     errors = {I1["intent"]: ERRORS_1, I2["intent"]: ["synth: boom"], I3["intent"]: ["gsm8k: boom"]}  # none reaches a run
-    monkeypatch.setattr(demo, "preflight", lambda: ["no stack in this test"])  # a fourth intent would stop here, at once, not in Docker
-    api = fake_api(errors, templates=[*TEMPLATES, FOURTH])
+    api = fake_api(errors, templates=[*TEMPLATES, FOURTH])  # a fourth intent would reach preflight(), which fails the test
     assert agent.run_all(api, None, strict=False) == 1
     out = capsys.readouterr().out
     assert out.count("--- intent #") == 3 and "nebius" not in out.lower()
 
 
+# --- the shape of each canonical plan (docs/agent_knowledge.md "Expected plans") -----------------------------------------------
+
+def test_every_canonical_plan_has_the_shape_the_knowledge_file_gives_it():
+    for number in "123":
+        slug, rule, what = agent.INTENTS[number]
+        types = agent.node_types(agent.canonical(TEMPLATES, number)["plan"])
+        assert rule(types), (slug, what, types)
+    assert agent.node_types(I3["plan"]).index("quantize") < agent.node_types(I3["plan"]).index("judge-eval")
+
+
+def broken_plans():
+    """Each canonical plan with its step dropped or misplaced."""
+    no_judge = copy.deepcopy(I1["plan"])
+    no_judge["nodes"] = [n for n in no_judge["nodes"] if n["type"] != "judge-eval"]
+    trains = copy.deepcopy(I2["plan"])
+    trains["nodes"].append({"id": "ft", "type": "tf-finetune", "needs": ["prep"], "inputs": {}})
+    judge_first = copy.deepcopy(I3["plan"])  # the judge needs nothing and is listed first, so it runs before quantize
+    judge = next(n for n in judge_first["nodes"] if n["type"] == "judge-eval")
+    judge["needs"] = []
+    judge_first["nodes"].remove(judge)
+    judge_first["nodes"].insert(0, judge)
+    return {"1": no_judge, "2": trains, "3": judge_first}
+
+
+@pytest.mark.parametrize("number", ["1", "2", "3"])
+def test_a_template_edit_that_drops_or_misplaces_a_step_fails_the_e2e(number, capsys):
+    template = agent.canonical(TEMPLATES, number)
+    templates = [{**t, "plan": broken_plans()[number]} if t is template else t for t in TEMPLATES]
+    assert not agent.INTENTS[number][1](agent.node_types(broken_plans()[number]))
+    errors = {template["intent"]: ERRORS_1 if number == "1" else []}  # named gaps beside a wrong shape are still a failure
+    assert agent.run_all(fake_api(errors, templates=templates), number, strict=False) == 1
+    out = capsys.readouterr().out
+    assert f"e2e FAIL intent #{number}" in out and agent.INTENTS[number][2] in out and "e2e SKIP" not in out
+
+
+def test_node_types_follow_needs_not_the_listing_order():
+    plan = {"nodes": [{"id": "b", "type": "judge-eval", "needs": ["a"]}, {"id": "a", "type": "quantize", "needs": []}]}
+    assert agent.node_types(plan) == ["quantize", "judge-eval"]
+    assert agent.node_types({"nodes": [{"id": "x", "type": "t", "needs": ["y"]}, {"id": "y", "type": "t", "needs": ["x"]}]}) == []
+
+
 # --- SKIP: only the named gaps -------------------------------------------------------------------------------------------
 
+# SKIP-SITE(ml-w4): the tests of the SKIP, to delete with it (the marker in scripts/e2e_agent.py)
 def test_skip_reasons_name_the_missing_piece_once():
     assert agent.skip_reasons(ERRORS_1, I1["plan"]) == [agent.VLLM]  # four vllm-serve errors, one reason
     assert "ml-w4" in agent.VLLM
@@ -86,7 +140,7 @@ def test_anything_else_is_not_a_skip():
     assert agent.skip_reasons(["evaluate: base_model_ref: quantize (quantize) has no output 'gguf_f16'"], I3["plan"]) is None
 
 
-def test_every_planner_error_about_vllm_serve_on_a_shipped_template_is_a_named_gap_or_gone():
+def test_every_planner_error_about_vllm_serve_on_a_shipped_template_is_a_named_gap_or_gone():  # SKIP-SITE(ml-w4)
     """If the planner's wording drifts, the SKIP stops matching and the e2e fails loudly, so catch it here first. Only the
     vllm-serve errors: the rest of a tree that lacks ml-w3 (judge-eval) is not a named gap, and must not become one."""
     for t in SHIPPED:
@@ -96,9 +150,22 @@ def test_every_planner_error_about_vllm_serve_on_a_shipped_template_is_a_named_g
         assert not gaps or agent.skip_reasons(gaps, t["plan"]), (t["slug"], gaps)
 
 
+SKIP_SITES = {"scripts/e2e_agent.py", "scripts/e2e_ui.py", "tests/ui/smoke.spec.ts", "Makefile", "tests/test_harness.py",
+              "tests/e2e/test_e2e_agent.py", "tests/e2e/test_e2e_ui.py", "docs/NODE_CONTRACT.md"}
+
+
+def test_the_skip_marker_lists_every_skip_site():  # SKIP-SITE(ml-w4)
+    """One deletion when ml-w4 merges: the marker in scripts/e2e_agent.py names every file that carries the tag, and no more."""
+    tag = "SKIP-SITE" + "(ml-w4)"
+    tagged = set(subprocess.run(["git", "grep", "-l", "-F", tag], cwd=ROOT, capture_output=True, text=True).stdout.split())
+    assert tagged == SKIP_SITES, f"tagged but unlisted: {sorted(tagged - SKIP_SITES)}; listed but untagged: {sorted(SKIP_SITES - tagged)}"
+    marker = (ROOT / "scripts/e2e_agent.py").read_text()
+    assert all(site in marker for site in SKIP_SITES - {"scripts/e2e_agent.py"}), "the marker names each site's path"
+
+
 # --- exit codes: a SKIP is not a pass --------------------------------------------------------------------------------------
 
-def test_a_skip_exits_0_and_strict_makes_it_3(capsys):
+def test_a_skip_exits_0_and_strict_makes_it_3(capsys):  # SKIP-SITE(ml-w4)
     api = fake_api({I1["intent"]: ERRORS_1})
     assert agent.run_all(api, "1", strict=False) == 0
     out = capsys.readouterr().out
@@ -171,8 +238,6 @@ def test_a_real_run_is_refused_without_max_cost(argv, message, capsys):
 # --- the report and the outputs -----------------------------------------------------------------------------------------------
 
 def good_report(plan_name="movie-engagement-synthetic-data", intent="Generate synthetic data"):
-    from tests.e2e.test_e2e_demo import good_summary
-
     return {**good_summary(), "intent": intent, "estimate": {"usd": 0.15}, "ready": True,
             "markdown": f"## {plan_name}: succeeded\n\n**Cost:** $0.0000 of $0.15 estimated."}
 

@@ -50,11 +50,7 @@ def test_env_example_is_the_contract_config():
     env = dict(re.findall(r"^([A-Z][A-Z0-9_]*)=(.*)$", text, re.M))
     assert env == CONFIG | HOSTED
     assert [name for name in REMOVED if name in text] == []
-
-
-def test_vastai_key_is_documented_but_never_live():
-    """A set VASTAI_API_KEY registers vast.ai, so a gpu node whose provider_pref names it rents a vast.ai GPU."""
-    assert re.search(r"^# VASTAI_API_KEY=$", ENV_EXAMPLE.read_text(), re.M)
+    assert re.search(r"^# VASTAI_API_KEY=$", text, re.M)  # documented, never live: a set key lets gpu nodes rent vast.ai
 
 
 def test_every_env_name_the_code_reads_is_in_env_example():

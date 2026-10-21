@@ -50,8 +50,12 @@ Do the proposal's "What needs a human" steps 2–3 first (vCPU quota; GPU quotas
 5. **First deploy**, from your Mac: `ORCHAPOD_DEPLOY_HOST=<user>@<vm-ip> scripts/deploy-hosted.sh` (the first build takes minutes).
 6. **Node images**: the API pulls `ghcr.io/bangadpurva/<node>:latest`, so those packages must be public. If they are not,
    build them on the VM: `cd /opt/orchapod && for d in containers/*/; do sudo docker build -t orchapod/$(basename $d):dev -f ${d}Dockerfile .; done`.
+   A `:dev` image wins over `:latest` for good, so every later deploy must rebuild it (same loop) or remove it.
 7. **Golden run** (what `make demo` does locally):
    `dc run --rm -v /opt/orchapod/scripts:/app/scripts:ro api python scripts/seed-golden-run.py`.
+   D8, once the real golden run has finished on the VM: `dc run --rm -v /opt/orchapod/scripts:/app/scripts api python scripts/seed-golden-run.py --export <run_id>`,
+   then at once, from your Mac, `scp <user>@<vm>:/opt/orchapod/scripts/golden-run.json scripts/`, gitleaks it and commit it.
+   The next deploy's rsync overwrites the VM's copy with yours.
 8. **Lane B only** (R15): the API image has the `nebius` CLI (0.12.293) and mounts `/opt/orchapod/nebius` at `/root/.nebius`.
    Copy the compute service account's private key there, then run `dc exec api nebius profile create` with `--parent-id`,
    `--service-account-id`, `--public-key-id` and `--private-key-file-path /root/.nebius/<file>` (`--help` explains each).
@@ -68,8 +72,10 @@ Do the proposal's "What needs a human" steps 2–3 first (vCPU quota; GPU quotas
 From your Mac, at the commit to ship: `ORCHAPOD_DEPLOY_HOST=<user>@<vm> scripts/deploy-hosted.sh`. It copies the checkout
 (minus `.git` and everything `.gitignore` names) and never touches the VM's `.env`, `nebius/` or `deploys.log`. Then it
 rebuilds the images, restarts what changed, and appends `<UTC time> <commit>` to `/opt/orchapod/deploys.log`; `-dirty`
-means uncommitted changes went out. A run in flight when the API restarts fails with "control plane restarted" (retry it),
-so deploy between runs.
+means uncommitted or untracked changes went out. Last, it pulls every node `:latest` the VM already has (`docker run` only
+pulls a missing one). It does not touch `orchapod/<node>:dev` images built on the VM: rebuild or remove them, or they keep
+shadowing the new `:latest`. An edited `infra/Caddyfile` needs `dc restart caddy` (it is bind-mounted on its own).
+A run in flight when the API restarts fails with "control plane restarted" (retry it), so deploy between runs.
 
 ## Rollback
 `ssh <vm> tail -3 /opt/orchapod/deploys.log`, then `git checkout <previous commit>`, deploy, and `git checkout -`. Code
@@ -79,16 +85,26 @@ back only by a restore.
 ## Kill switch
 - Soft (the site stays up; plan, run, start and retry answer 503): set `ORCHAPOD_KILL_SWITCH=1` in `/opt/orchapod/.env`,
   then `dc up -d api` (about 10 s; recreating the API also fails the runs in flight). Undo: set it to 0 and rerun the same command.
-- Hard (no API): `dc stop api`; undo with `dc start api`. The watchdog leaves a stopped API alone.
+- Hard (no API): `dc stop api`; undo with `dc start api`. The watchdog leaves a stopped API alone. Node containers keep
+  running without the API. Stop them too (each gets SIGTERM and 30 s to cancel its remote job):
+  `sudo docker ps --format '{{.ID}} {{.Label "com.docker.compose.project"}}' | awk '$2 == "" {print $1}' | xargs -r sudo docker stop -t 30`.
+  Then check the Nebius console for Serverless Jobs and Endpoints and delete any that are running: the API deletes
+  endpoints at their TTL only while it runs.
 
 ## Backup and restore
 Cron runs `scripts/backup-db.sh` at 03:15 UTC: `pg_dump -Fc` → `s3://<bucket>/backups/pg/orchapod-<NN>.dump`, NN = day
 number mod 14, so the bucket keeps the last 14 nights with no lifecycle rule. Its log: `journalctl -t orchapod-backup`.
-To back up by hand: `sudo /opt/orchapod/scripts/backup-db.sh`. Restore (it replaces the tables the dump holds):
+The dumps share the artifact bucket and its storage key, which every node container receives. A separate bucket and key
+would keep the nodes away from them. To back up by hand: `sudo /opt/orchapod/scripts/backup-db.sh`.
+Restore: list the slots, download one while the API runs, stop the API, restore in one transaction (it replaces the
+tables the dump holds; on any error, nothing changes), start the API:
 ```
 dc exec api python -c 'from api.services.storage import _bucket, _get_client; [print(o["LastModified"], o["Key"], o["Size"]) for o in _get_client().list_objects_v2(Bucket=_bucket(), Prefix="backups/pg/").get("Contents", [])]'
+umask 077
 dc exec -T api python -c 'import sys; from api.services.storage import _bucket, _get_client; _get_client().download_fileobj(_bucket(), sys.argv[1], sys.stdout.buffer)' backups/pg/orchapod-<NN>.dump > /tmp/restore.dump
-dc exec -T postgres pg_restore -U orchapod -d orchapod --clean --if-exists < /tmp/restore.dump && dc restart api && rm /tmp/restore.dump
+dc stop api
+dc exec -T postgres pg_restore -U orchapod -d orchapod --clean --if-exists --single-transaction < /tmp/restore.dump
+dc start api && rm /tmp/restore.dump
 ```
 Rebuild from nothing (target 30 minutes): a new VM from cloud-init, the same `.env`, deploy, restore, golden run.
 
@@ -98,9 +114,13 @@ Rebuild from nothing (target 30 minutes): a new VM from cloud-init, the same `.e
   shows last night's `backup: … bytes`.
 - The Nebius bill lists only the VM, its disk, its IP and the bucket: no leftover endpoint or job. Check the Token Factory
   credit and today's spend against `ORCHAPOD_MAX_DAY_USD`.
+- Weekly: `test -f /var/run/reboot-required && echo reboot needed`. Unattended upgrades never reboot. Reboot between
+  runs with `sudo reboot`; Docker and the stack come back by themselves.
 
 ## Teardown (Dec 16, or Jan 11 under decision 2; owner Hari)
-1. Export what is worth keeping, for example the golden run: `dc run --rm -v /opt/orchapod/scripts:/app/scripts api python scripts/seed-golden-run.py --export <run_id>`.
+1. Export what is worth keeping, and copy it off the VM before step 2 deletes its disk. For example, the golden run:
+   `dc run --rm -v /opt/orchapod/scripts:/app/scripts api python scripts/seed-golden-run.py --export <run_id>`, then from
+   your Mac `scp <user>@<vm>:/opt/orchapod/scripts/golden-run.json scripts/`.
 2. Delete the VM, then its disk (check the Disks list for leftovers) and its public IP.
 3. Empty the bucket, then delete it.
 4. Delete both service accounts and their keys (the copies on the VM go with its disk).
@@ -109,24 +129,16 @@ Rebuild from nothing (target 30 minutes): a new VM from cloud-init, the same `.e
 7. The next day, check that the Nebius bill shows no running line items.
 
 ## Rehearse locally
-The prod stack on a laptop: Caddy on 18080/18443 with its internal CA, MinIO as the bucket, STUB on. Use your own project name.
+The prod stack on a laptop, never on the VM: Caddy on 18080/18443 with its internal CA, MinIO as the bucket, STUB on.
+The project name keeps it, and the scripts it runs, off any other stack.
 ```
 export COMPOSE_PROJECT_NAME=orchapod-prodtest-$USER DOMAIN=orchapod.test POSTGRES_PASSWORD=smoke ORCHAPOD_INTERNAL_SECRET=smoke \
   ORCHAPOD_R2_ENDPOINT=http://minio:9000 ORCHAPOD_R2_REGION=auto ORCHAPOD_R2_ACCESS_KEY=orchapod ORCHAPOD_R2_SECRET_KEY=orchapod_dev STUB=1
-dc() { docker compose -f infra/docker-compose.prod.yml -f infra/docker-compose.smoke.yml "$@"; }   # bash and zsh
-dc up -d --build --wait
+smoke() { docker compose -p "$COMPOSE_PROJECT_NAME" -f infra/docker-compose.prod.yml -f infra/docker-compose.smoke.yml "$@"; }
+smoke up -d --build --wait
 curl -kfsS --resolve api.orchapod.test:18443:127.0.0.1 https://api.orchapod.test:18443/health
 curl -kfsSL --resolve app.orchapod.test:18443:127.0.0.1 https://app.orchapod.test:18443/ | grep -o '<title>[^<]*'
-scripts/backup-db.sh                                       # a dump lands in MinIO
-docker kill -s STOP "$(dc ps -q api)"; sleep 40; scripts/watchdog.sh   # unhealthy → restarted
-dc down -v --rmi local; rmdir nebius                       # Docker created nebius/ for the bind mount
+scripts/backup-db.sh                                          # a dump lands in MinIO
+docker kill -s STOP "$(smoke ps -q api)"; sleep 40; scripts/watchdog.sh   # unhealthy → restarted
+smoke down -v --rmi local; rmdir nebius                       # Docker created nebius/ for the bind mount
 ```
-
-## What the hosted app still needs from backend (D6 hardening, backend-w4)
-- CORS: the compose file already passes `ORCHAPOD_CORS_ORIGINS=https://app.<domain>`. Until backend reads it,
-  `apps/api/main.py` allows `*` with credentials.
-- Health: `/health` is shallow today, and both the compose healthcheck and the watchdog follow it. Once backend splits it
-  into a deep `/health` and a shallow `/livez`, point the API healthcheck at `/livez`. Otherwise a Postgres outage restarts the API every minute.
-- Per-IP rate limits see the visitor's address: uvicorn trusts Caddy's `X-Forwarded-For` (`--forwarded-allow-ips '*'`), and
-  only Caddy can reach the API.
-- The kill switch works whether or not it is read per request, because the procedure recreates the API.

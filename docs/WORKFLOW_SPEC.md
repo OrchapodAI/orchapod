@@ -40,7 +40,7 @@ Tavily through packages.providers: `seed_urls` (extract) first, then one advance
 Nemotron 3 Super on Token Factory (guided JSON, reasoning off) → `dataset`. `pipeline_template`: `self-instruct` | `evol-instruct` | `magpie` (chat rows), `grounded` (one call per `corpus` passage, k = min(5, ⌈`n_samples` ÷ passages⌉, `max_tokens` ÷ 150) closed-book pairs; rows keep `context` and `source_url`) or `structured` (batches of min(25, `max_tokens` ÷ 100) rows checked against `row_schema` with jsonschema; `corpus` optionally supplies real values). Corpus text is fenced as untrusted (`<passage>`/`<reference>`, tags stripped from it) with the rules after it; questions citing "the passage/text/article" are invalid. `instructions` steer the teacher; a call whose worst case would pass min(`max_usd`, the node budget) is never sent, and the rows so far are kept (`metrics.stopped`). `STUB=1` needs no network.
 
 ### `unsloth-train`
-LoRA SFT via Unsloth. 2-5x faster, ~80% less VRAM than vanilla HF.
+Lane B: Unsloth LoRA (16-bit unless `load_in_4bit`; spike 4's recipe and pinned stack) of `model` (default nvidia/Llama-3.1-Nemotron-Nano-8B-v1) on data-prep's `train_jsonl` (`eval_jsonl` optional) for at most `max_steps` → `lora_adapter` (PEFT) and `merged_model` (16-bit, vllm-serve's `model`), `checkpoint_step_NNNNNN` every `checkpoint_steps` (a retry resumes from the newest) and `loss_curve` in metrics. Runtime `gpu` (a Nebius Serverless Job; never vast.ai unless a node names it). GPU time is billed as it runs, so the node budget stops training. `STUB=1` writes small fixed outputs.
 
 ### `distill-sft`
 Off-policy knowledge distillation: teacher inference → student SFT.

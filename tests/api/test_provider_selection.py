@@ -39,7 +39,7 @@ async def test_default_resources_never_provision_on_vastai_without_nebius(db, mo
     db.add(run)
     await db.commit()
 
-    await ex.run_workflow(run.id, db, AsyncMock())
+    await ex.run_workflow(run.id, db, AsyncMock(), 1.0)  # the caller's budget scale is required
 
     node = (await db.exec(select(NodeRun).where(NodeRun.run_id == run.id))).one()
     await db.refresh(node)

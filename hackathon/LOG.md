@@ -228,3 +228,9 @@ worktrees:
   - Its DECISIONs: the arm64 image fix; test[:50]; vllm-serve bills GPU time from endpoint creation; rents_gpu.
   - Review dispatched (opus).
   - Housekeeping: removed the :ml-w3 leftover images. ml-w3's ~10 GB of artifacts in the local MinIO are left for Hari's call.
+- 2026-10-21T14:34Z platform-w5 reported DONE: c45b4b2 + 90ac230 contract edits, 673ef77 rewrite; test_nebius 27; make check 729 + web 27; $0; no Nebius call.
+  - Contract signatures held for ml-w4. Additions: list() paged, get() {id, name, state, url, code, message}, blank auth_token refused, 404 delete = done.
+  - Provider runs 1×H100 or 1×L40S only, refuses non-https control/bucket URLs, adopts its job by name after a lost reply.
+  - G2 BLOCKER found: vllm-serve's container gets neither the nebius CLI nor a token on the hosted VM → sent to backend-w5: executor injects a fresh NEBIUS_IAM_TOKEN into gpu/rents_gpu nodes only; also record GPU hours when a cancelled Job writes no cost_json.
+  - Open for ml (follow-up): endpoint names are unique per project, so vllm-serve's retry needs endpoints.list() recovery.
+  - Review dispatched (opus; spend-safety + secrets).

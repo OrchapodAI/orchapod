@@ -48,6 +48,14 @@ class DAG:
         return order
 
 
+def load_yaml(text: str):
+    """yaml.safe_load without aliases: a chain of a few hundred bytes (`&b [*a, *a, ...]`) expands to gigabytes once the
+    spec is copied or serialised (graph_json, json.dumps), which would freeze the one API worker."""
+    if any(isinstance(event, yaml.AliasEvent) for event in yaml.parse(text, Loader=yaml.SafeLoader)):
+        raise ValueError("workflow YAML may not use aliases (*name)")
+    return yaml.safe_load(text)
+
+
 def compile_dag(workflow_yaml: str, runtime_inputs: dict) -> DAG:
     """
     Parse a workflow YAML string into a DAG ready for execution.
@@ -55,7 +63,7 @@ def compile_dag(workflow_yaml: str, runtime_inputs: dict) -> DAG:
     """
     from packages.workflow_schema.models import NodeType  # noqa: PLC0415
 
-    spec = yaml.safe_load(workflow_yaml)
+    spec = load_yaml(workflow_yaml)
     dag = DAG()
 
     for node_spec in spec.get("nodes", []):

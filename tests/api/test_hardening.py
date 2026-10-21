@@ -184,3 +184,31 @@ async def test_livez_answers_while_every_dependency_is_down(client, deps, monkey
     assert (await client.get("/health")).json()["failed"] == ["database", "redis", "storage"]
     r = await client.get("/livez")
     assert (r.status_code, r.json()) == (200, {"status": "ok"})
+
+
+# --- workflow YAML ---------------------------------------------------------------
+
+def alias_bomb(levels=6):
+    """The reviewer's alias chain, bounded: under 1 KB of YAML, 9 copies per level once expanded (json.dumps, deepcopy)."""
+    lines = ["x0: &a0 [" + ", ".join(['"xxxxxxxx"'] * 9) + "]"]
+    lines += [f"x{i}: &a{i} [" + ", ".join([f"*a{i - 1}"] * 9) + "]" for i in range(1, levels)]
+    return ("name: w\nanchors:\n" + "\n".join("  " + line for line in lines)
+            + f'\nnodes:\n  - id: d\n    type: data-prep\n    inputs: {{dataset: "hf://x", extra: *a{levels - 1}}}\n')
+
+
+async def test_workflow_yaml_with_an_alias_is_refused_before_it_expands(client, db):
+    from api.executor.dag import compile_dag
+    from api.models.db import Workflow
+    from sqlmodel import select
+
+    bomb = alias_bomb()
+    assert len(bomb) < 1000
+    r = await client.post("/workflows", json={"name": "w", "yaml": bomb})
+    assert r.status_code == 422 and "alias" in r.json()["detail"]
+    ok = await client.post("/workflows", json={"name": "w", "yaml": "name: w\nnodes:\n  - {id: d, type: data-prep, "
+                                                                     "inputs: {dataset: &ds hf://x}}\n"})
+    assert ok.status_code == 201  # an anchor alone is harmless
+    assert (await client.put(f"/workflows/{ok.json()['id']}", json={"yaml": bomb})).status_code == 422
+    assert [w.yaml for w in await db.scalars(select(Workflow))] == [ok.json()["yaml"]]
+    with pytest.raises(ValueError, match="alias"):
+        compile_dag(bomb, {})  # the executor and the planner compile through it too

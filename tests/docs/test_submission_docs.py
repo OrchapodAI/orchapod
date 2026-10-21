@@ -109,6 +109,12 @@ def test_docs_have_no_stale_strings_or_bare_todos():
         assert not re.search(BARE_TODO, text), f"{name}: every TODO names its day"
 
 
+def test_the_cpu_exact_match_is_called_noise_wherever_it_appears():
+    # f16 0.78 vs q4_k_m 0.84 at n = 50 is a 3-question gap: never present it as q4 beating f16.
+    for name, text in {"README": README, **DOCS}.items():
+        assert [ln[:60] for ln in text.splitlines() if "0.84" in ln and "noise" not in ln] == [], name
+
+
 def test_cited_repo_paths_exist():
     for name, text in DOCS.items():
         for path in re.findall(r"`((?:hackathon|docs|containers)/[\w./-]+|CHANGELOG\.md|README\.md)`", text):

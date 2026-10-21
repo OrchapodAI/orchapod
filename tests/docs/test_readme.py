@@ -91,9 +91,33 @@ def test_unbuilt_make_targets_are_marked_todo():
             assert "TODO(D8)" in line, f"the target does not work yet: {line[:70]}"
 
 
+def _templates() -> list[dict]:
+    return [json.loads(p.read_text()) for p in sorted(ROOT.glob("apps/api/agent/templates/*.json"))]
+
+
+def _node_types() -> set[str]:
+    from packages.workflow_schema.models import NODE_REGISTRY
+    return {t.value for t in NODE_REGISTRY}
+
+
 def test_every_template_card_is_in_the_readme():
-    titles = [json.loads(p.read_text())["title"] for p in sorted(ROOT.glob("apps/api/agent/templates/*.json"))]
+    titles = [t["title"] for t in _templates()]
     assert titles and [t for t in titles if t not in README] == []
+
+
+def test_each_intent_row_shows_its_templates_node_chain():
+    for t in _templates():
+        row = next((ln for ln in README.splitlines() if f"| **{t['title']}** |" in ln), "")
+        assert row, f"no intents-table row for {t['title']}"
+        chain = [seg.split()[0] for seg in row.rsplit("|", 2)[-2].split("→")]
+        assert [s for s in chain if s in _node_types()] == [n["type"] for n in t["plan"]["nodes"]], t["title"]
+
+
+def test_the_image_lists_are_the_templates_node_types():
+    names = "|".join(map(re.escape, _node_types()))
+    section = README.partition("**Node images.**")[2].partition("**GPU nodes")[0]
+    lists = re.findall(rf"(?<![\w-])(?:(?:{names}) )+(?:{names})(?![\w-])", section)
+    assert {frozenset(m.split()) for m in lists} == {frozenset(n["type"] for n in t["plan"]["nodes"]) for t in _templates()}
 
 
 def test_node_table_matches_the_registry():

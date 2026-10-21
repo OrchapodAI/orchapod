@@ -43,11 +43,37 @@ def test_ci_web_job_runs_the_web_tests():
     assert test and test["working-directory"] == "apps/web", CI["jobs"]["web"]["steps"]
 
 
+GATE = ("ruff check", "pytest tests", "-C apps/web test")  # what `make check` always runs
+
+
+def make_check_dry_run(e2e: str) -> str:
+    """The commands `make check E2E=<e2e>` would run (an explicit E2E beats one exported in the shell)."""
+    done = subprocess.run(["make", "-n", "check", f"E2E={e2e}"], cwd=ROOT, capture_output=True, text=True, check=True)
+    return done.stdout
+
+
 @pytest.mark.skipif(not shutil.which("make"), reason="make is not installed")
-def test_make_check_runs_lint_unit_web_and_stub_e2e():
-    dry_run = subprocess.run(["make", "-n", "check"], cwd=ROOT, capture_output=True, text=True, check=True).stdout
-    for step in ("ruff check", "pytest tests", "-C apps/web test", "scripts/e2e_demo.py --stub"):
-        assert step in dry_run, f"make check no longer runs {step!r}:\n{dry_run}"
+def test_make_check_skips_the_stub_e2e_unless_asked():
+    """The e2e builds and retags the shared orchapod/*:dev images, so parallel worktrees must not run it by default."""
+    dry_run = make_check_dry_run("")
+    assert all(step in dry_run for step in GATE), dry_run
+    assert "SKIP stub e2e: set E2E=1 (orchestrator/integration only)" in dry_run
+    assert "e2e_demo.py" not in dry_run
+
+
+@pytest.mark.skipif(not shutil.which("make"), reason="make is not installed")
+def test_make_check_e2e_1_runs_the_stub_e2e_strict():
+    dry_run = make_check_dry_run("1")
+    assert all(step in dry_run for step in GATE), dry_run
+    assert "scripts/e2e_demo.py --stub --strict" in dry_run  # a missing prerequisite must fail, not pass as a SKIP
+    assert "SKIP stub e2e" not in dry_run
+
+
+@pytest.mark.skipif(not (shutil.which("git") and (ROOT / ".git").exists()), reason="not a git checkout")
+def test_pnpm_11_workspace_file_is_gitignored():
+    """pnpm 11 drops apps/web/pnpm-workspace.yaml when it ignores a build script; committed, it broke CI (012ac47)."""
+    ignored = subprocess.run(["git", "check-ignore", "-q", "apps/web/pnpm-workspace.yaml"], cwd=ROOT)
+    assert ignored.returncode == 0
 
 
 def test_build_script_builds_and_pushes_every_container(tmp_path):

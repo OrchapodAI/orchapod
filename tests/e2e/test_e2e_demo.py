@@ -1,4 +1,4 @@
-"""scripts/e2e_demo.py: the logic around the stub e2e. The run itself is `make check`'s last step (needs Docker and `make up`)."""
+"""scripts/e2e_demo.py: the logic around the stub e2e. The run itself is `make check E2E=1` (needs Docker and `make up`)."""
 
 import copy
 import importlib.util

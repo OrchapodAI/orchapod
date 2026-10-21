@@ -7,8 +7,14 @@ PNPM ?= pnpm --config.verify-deps-before-run=false
 
 up:        ; $(COMPOSE) up -d postgres redis minio
 down:      ; $(COMPOSE) down
-# check = lint + unit tests + web tests + stub e2e. The e2e needs Docker and `make up` (Redis, MinIO); it starts its own API on a free port from 8002.
-check:     ; ruff check apps packages containers && $(PY) -m pytest tests -q && $(PNPM) -C apps/web test && $(PY) scripts/e2e_demo.py --stub
+# check = lint + unit tests + web tests. `make check E2E=1` adds the stub e2e of intent #2, strict (a missing prerequisite fails): it needs
+# Docker and `make up` and builds and retags the shared orchapod/<node>:dev images, so only the orchestrator runs it, after merges.
+ifeq ($(E2E),1)
+E2E_STEP = $(PY) scripts/e2e_demo.py --stub --strict
+else
+E2E_STEP = echo "SKIP stub e2e: set E2E=1 (orchestrator/integration only)"
+endif
+check:     ; ruff check apps packages containers && $(PY) -m pytest tests -q && $(PNPM) -C apps/web test && $(E2E_STEP)
 e2e:       ; $(PY) scripts/e2e_demo.py --max-cost 3
 agent-e2e: ; $(PY) scripts/e2e_agent.py --intent "$(INTENT)" --max-cost 3
 demo:      ; $(PY) scripts/seed-golden-run.py

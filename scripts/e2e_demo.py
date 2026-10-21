@@ -1,6 +1,8 @@
 """Stub e2e of intent #2 (synthetic movie events), through the API only: no paid call, $0.
 
-    python scripts/e2e_demo.py --stub     # the last step of `make check`; needs Docker and `make up` (Redis, MinIO)
+    python scripts/e2e_demo.py --stub     # `make check E2E=1` runs it with --strict; needs Docker and `make up` (Redis, MinIO)
+
+It rebuilds and retags the shared `orchapod/<node>:dev` images, so parallel worktrees must not run it: it is opt-in.
 
 It starts its own API (STUB=1, throwaway SQLite DB, first free port from 8002, no paid key in its env), builds the images
 the plan needs (`orchapod/<node>:dev`), creates the workflow from GET /agent/templates (fallback: the JSON files it is
@@ -9,7 +11,7 @@ dataset, train_jsonl and eval_jsonl; cost_usd is 0 with a cost_json on every nod
 with exactly the schema's fields.
 
 A prerequisite that is not merged yet (backend-w2: the templates; data-w2: synth `structured`) prints SKIP with its
-reason and exits 0; --strict makes that exit 3. The real golden run (--max-cost) is written on D3.
+reason and exits 0; --strict (what `make check E2E=1` passes) makes that exit 3. The real golden run (--max-cost) is written on D3.
 """
 
 import argparse
@@ -40,7 +42,7 @@ LOCAL_STACK = {
     "REDIS_URL": "redis://localhost:6379", "ORCHAPOD_R2_ENDPOINT": "http://localhost:9000", "ORCHAPOD_R2_REGION": "auto",
     "ORCHAPOD_R2_ACCESS_KEY": "orchapod", "ORCHAPOD_R2_SECRET_KEY": "orchapod_dev", "ORCHAPOD_R2_BUCKET": "orchapod-artifacts",
 }
-# ponytail: SKIP scaffolding for wave 2; delete MISSING, skip_reasons, structured_supported and --strict once both merge.
+# ponytail: SKIP scaffolding for wave 2; once both merge delete MISSING, skip_reasons, structured_supported, --strict and the Makefile's --strict.
 MISSING = {
     "templates": "backend-w2 is not merged: GET /agent/templates answers 404 and apps/api/agent/templates/*.json is absent",
     "synth": 'data-w2 is not merged: SynthDistilabelInputs rejects pipeline_template "structured" '

@@ -1,11 +1,15 @@
-""".env.example lists exactly the docs/contracts.md "Config" variables, with the contract's values."""
+""".env.example and compose's api service carry exactly the docs/contracts.md "Config" variables."""
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
 
-ENV_EXAMPLE = Path(__file__).resolve().parents[2] / ".env.example"
+import yaml
+
+ROOT = Path(__file__).resolve().parents[2]
+ENV_EXAMPLE = ROOT / ".env.example"
+COMPOSE = ROOT / "infra" / "docker-compose.dev.yml"
 
 CONFIG = {  # name → the value .env.example ships ("" = none; you fill it in)
     "NEBIUS_API_KEY": "", "NEBIUS_BASE_URL": "https://api.tokenfactory.nebius.com/v1", "TAVILY_API_KEY": "",
@@ -29,3 +33,12 @@ def test_env_example_is_the_contract_config():
     env = dict(re.findall(r"^([A-Z][A-Z0-9_]*)=(.*)$", text, re.M))
     assert env == CONFIG
     assert [name for name in REMOVED if name in text] == []
+
+
+def test_compose_api_gets_the_contract_config_on_8001():
+    text = COMPOSE.read_text()
+    services = yaml.safe_load(text)["services"]
+    assert services["api"]["ports"] == ["8001:8000"]  # host 8000 belongs to another project
+    assert set(services["api"]["environment"]) == set(CONFIG)
+    assert services["web"]["environment"]["NEXT_PUBLIC_API_URL"] == "http://localhost:8001"
+    assert [name for name in REMOVED + ["253B"] if name in text] == []

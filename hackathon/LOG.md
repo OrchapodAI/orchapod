@@ -324,3 +324,9 @@ worktrees:
   - Orchestrator at merge: drop the TOKEN fallback (import platform's); truncate vllm-serve STUB ids to 63 chars.
 - 2026-10-21T16:19Z Orchestrator: vllm-serve STUB ids capped at 63 chars (the backend's endpoint_id pattern would refuse longer ones), b4813b8. frontend-w5 dispatched (opus, base b4813b8), coding against backend-w5's contract lines (cancel_token from start and /agent/run, sent as X-Orchapod-Cancel-Token, kept in sessionStorage; RunOut.workflow_name; save a copy on 409; hf_token field removed); it merges after backend-w5.
 - 2026-10-21T16:30Z backend-w5 fix round 2 landed (6e6c8ec..f1139a9; make check 749; merged tree 840): a registration never extends an endpoint's life; delete retries stop only on 400/401/403; cost_json grouped by ORCHAPOD_ATTEMPT; the gpu bill runs inside the shielded teardown in its own session; non-finite or > 2× run-cap usd refused. APPROVED: ORCHAPOD_ATTEMPT on platform's env-scan allow-list (executor-set, like ORCHAPOD_RUN_ID). Its own finding: /compare would send ORCHAPOD_ENDPOINT_TOKEN to any URL a node registers via /internal/ttl (a gpu Job running third-party code could exfiltrate the shared endpoint token). Re-review (opus) assesses both.
+- 2026-10-21T16:39Z frontend-w5 reported DONE: 6 commits aeb14d9..8a0a7a5 on b4813b8; tested against backend-w5's real API at f1139a9, 24/24 browser checks; make check 795 + web 29; $0.
+  - Cancel token in that tab's sessionStorage (orchapod:cancel-token:<run_id>); other tabs see Cancel disabled with a reason; 403 → toast.
+  - /runs names runs by workflow_name; Save a copy after a 409; hf_token field gone.
+  - Merge AFTER backend-w5 (on today's API start returns no token, so Cancel would be disabled everywhere).
+  - RULING on its question: the golden-run link matches the workflow name exactly (substring also lists '(copy)' workflows).
+  - Review dispatched (sonnet).

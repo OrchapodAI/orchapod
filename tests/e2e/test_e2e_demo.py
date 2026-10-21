@@ -7,6 +7,7 @@ import socket
 from pathlib import Path
 from typing import Literal
 
+import httpx
 import pytest
 import yaml
 from pydantic import BaseModel, model_validator
@@ -98,6 +99,20 @@ def test_find_intent2_is_the_template_with_a_structured_synth_node():
     assert e2e.find_intent2([GROUNDED, INTENT2]) is INTENT2
     assert e2e.find_intent2([INTENT2["plan"]]) is INTENT2["plan"]  # a bare plan file works too
     assert e2e.find_intent2([GROUNDED]) is None and e2e.find_intent2([]) is None
+
+
+def test_get_templates_prefers_the_api_then_the_files_and_names_a_broken_route(tmp_path, monkeypatch):
+    def client(status, body=None):
+        return httpx.Client(base_url="http://api", transport=httpx.MockTransport(lambda r: httpx.Response(status, json=body)))
+
+    monkeypatch.setattr(e2e, "TEMPLATES", tmp_path)
+    (tmp_path / "disk.json").write_text(json.dumps(GROUNDED))
+    assert e2e.get_templates(client(200, [INTENT2])) == [INTENT2]  # the route wins over the files
+    assert e2e.get_templates(client(404)) == [GROUNDED]  # no route yet: the JSON it is built from
+    (tmp_path / "disk.json").unlink()
+    assert e2e.get_templates(client(404)) is None  # neither: backend-w2 is not merged
+    with pytest.raises(RuntimeError, match="HTTP 500"):  # a route that exists and breaks is a failure, not a SKIP
+        e2e.get_templates(client(500, {"detail": "boom"}))
 
 
 def test_plan_yaml_is_a_workflow_the_api_compiles():

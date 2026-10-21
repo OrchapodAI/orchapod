@@ -18,6 +18,8 @@ export default defineConfig({
   outputDir: out,
   use: {
     baseURL: process.env.E2E_WEB_URL,
+    actionTimeout: 60_000, // a click on a tab that never appears fails in a minute, not at the 5-minute test timeout
+    navigationTimeout: 60_000,
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
   },

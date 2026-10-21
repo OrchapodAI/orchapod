@@ -201,6 +201,7 @@ def test_check_eval_summary_accepts_the_contract_shape():
     ({"exact_match": {"base": 0, "tuned": 1}}, "exact_match"),
     ({"samples": [{"verdict": "maybe"}]}, "samples"),
     ({"samples": "none"}, "samples"),
+    ({"samples": None}, "samples"),
 ])
 def test_check_eval_summary_flags(changes, text):
     problems = agent.check_eval_summary(eval_summary(**changes), exact_match=False)

@@ -92,8 +92,8 @@ def check_eval_summary(s, exact_match: bool) -> list[str]:
         problems.append(f"stub is {s['stub']!r} in a STUB run")
     if bool(s["exact_match"]) != exact_match:
         problems.append(f"exact_match is {s['exact_match']!r} but the plan asked for exact_match={exact_match}")
-    bad = [v for v in s["samples"] if not isinstance(v, dict) or v.get("verdict") not in ("win", "tie", "loss", None)]
-    if not isinstance(s["samples"], list) or bad:
+    if not isinstance(s["samples"], list) or any(
+            not isinstance(v, dict) or v.get("verdict") not in ("win", "tie", "loss", None) for v in s["samples"]):
         problems.append("samples must be a list of verdicts with verdict win | tie | loss | null")
     return problems
 

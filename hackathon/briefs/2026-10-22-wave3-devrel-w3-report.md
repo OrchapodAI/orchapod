@@ -1,0 +1,56 @@
+# devrel-w3 report — wave 3 (2026-10-22)
+Status: DONE_WITH_CONCERNS · branch `hack/devrel-w3` (worktree `/Users/hari/src/orchapod-hack/.claude/worktrees/devrel-w3`; `git merge-base --is-ancestor b6c26ff HEAD` = yes; HEAD was ef00bb7 before my commits) · cost $0 (no API call, no container, no network).
+
+**Concern.** Bash was limited to git, so I did not run pytest or `make check`. Every "proof" below is a desk-check with `git grep` (outputs quoted), not a test run. Run before merging: `cd /Users/hari/src/orchapod-hack/.claude/worktrees/devrel-w3 && . /Users/hari/src/orchapod-hack/.venv/bin/activate && python -m pytest tests/docs -q && make check`. Expected: `tests/docs` 23 passed (was 14: test_readme 8, test_submission_docs 10, test_video_script 5), `make check` = the base's count + 9. Only README.md, docs/ and tests/docs/ changed, so ruff is unaffected.
+
+## Commits (never pushed; trailer `Co-Authored-By: Claude Sonnet 5.5`)
+- `a2ec5b4` docs(video): script, shot list and README screenshots list — docs/video-script.md, tests/docs/test_video_script.py
+- `c63533e` docs(readme,devpost,feedback): devrel-w2 re-review carry-overs — README.md, docs/devpost.md, docs/feedback.md, tests/docs/test_readme.py, tests/docs/test_submission_docs.py
+- `d55c8d8` docs(video): say GPU path, not second lane, in the shot 6 narration — docs/video-script.md
+
+## Item 0, the carry-overs (c63533e)
+- **OpenAPI version.** feedback.md:16 (the `response_format` finding) now says "OpenAPI (version 20261020)" in the body and in `Source:`, which cites `hackathon/LOG.md` (2026-10-21T01:15Z, where the wording was re-read) and `hackathon/briefs/2026-10-20-contracts-platform.md` (header, where the version is recorded). :15 (the `reasoning_effort` finding) got the version too; :9 already had it.
+- **70B / 2026-08-31.** Not re-confirmed: the devrel role has no fetch tool, and the earlier WebFetch summary of a Nebius page was wrong once (LOG correction, 2026-10-21T01:15Z). The headline now reads "left Token Factory serverless (our record says on 2026-08-31)" and the finding ends with a TODO(D8): confirm that the notice itself names Llama-3.3-70B and the date; both come from the ml-engineering proposal. The seed needle `left Token Factory serverless` is intact.
+- **README "Why" evaluation bullet** (:33): TODO(D8), no win rate measured yet. **"Costs and caps" guard paragraph** (:164): TODO(D8), no real run has hit a cap. devpost.md:29 got the same wording instead of "`judge-eval` is not built yet", which goes stale when ml-w3 merges.
+- **Report author** (README:70, devpost.md:36): "a finished run ends with one (the report, which Nemotron 3.5 Lightning writes, or a deterministic template when `STUB=1` is set or that call fails)" (contracts "Agent API"; was "every run ends with one").
+- **Stub e2e** (README :114, :145, :146, :184): `scripts/e2e_demo.py --stub` is described (own API with `STUB=1`, throwaway DB, no key, $0); the Setup TODO(D8) is now "record one green run on the integration branch"; the Headless bullet and the Oct 20 bullet say `scripts/e2e_demo.py` has only `--stub` (`make e2e` fails: its `main()` calls `ap.error("only --stub exists so far…")`) and the scripts behind `make agent-e2e` and `make demo` are still being written. "Without keys" no longer carries the stale TODO and points at `make check E2E=1`.
+- **Beyond the list (revert if unwanted):** README:175 TODO(D8) also names the `gpu-l40s-a` rate as needing a re-check against nebius.com/prices (the table uses $1.82; the wave-3 brief says Intel `gpu-l40s-a` starts at $1.55/h). README:150 (Results TODO) points at the screenshots list.
+
+## Item 1, the video script (a2ec5b4, d55c8d8): `docs/video-script.md`
+- **Seven shots on PLAN.md's beat list**, 0:00 to 2:55 (the last beat is 10 s instead of 15, so the cut is 5 s under the Devpost limit). Columns: time, screen (route and action), voice-over, caption, live run. Shots 2 to 7 say TODO(D8) with what they need (live Super plan; the golden run; judge-eval and the eval view; POST /compare and the playground; a Lane B run or the Token Factory job; the hosted URL and the public repo). Shot 1 is the only one that needs no live run.
+- **No invented numbers.** Every spoken figure is a placeholder (`{minutes}`, `{cost}`, `{win_rate}`, `{n}`, `{consistency}`, `{speedup}`, `{difference}`, `{next}`, `{demo_url}`), read off the golden run before the voice-over is recorded; a "say a claim only if the run shows it" list ties each risky phrase to what must be true (hard cap, tf-finetune succeeded, judge_model, `POST /compare`, a Lane B run on Nebius).
+- **Rules:** no music or sound effects, text-only sponsor names (no logos), no key/token/email/project id in frame, STUB output never shown as a result, no vast.ai footage as Nebius (spike 4), win rate narrated as measured even below 50%, playground question chosen before the take.
+- **Captions:** burned-in per shot (column), plus an `.srt` from the recorded narration uploaded to YouTube. **Alternatives:** template path for shot 2, Token Factory-only line for shot 6 (no GPU quota by G2), cut order if over 2:55. **Recording:** one live run recorded from the first keystroke; retake shots 2 and 4 to 6; `ORCHAPOD_ANON_SCALE=1` on the recording instance (LOG 2026-10-21T01:14Z: the UI is always anonymous, so at 0.1 the run cap is $0.30 and a plan estimated above it is a plan error; intent #1 estimates $1.72); OBS and upload settings.
+- **README screenshots for D7:** 12 files under `docs/img/` (agent-plan, templates, canvas, dataset-card, run-view, run-finished, eval-view, eval-sample, playground, agent-report, nebius-console, architecture), each with route and state, what it must show, the README section it goes in and whether it needs a live run. Capture from a production build, 1440x900 at 2x.
+- **Tests** (`tests/docs/test_video_script.py`, stdlib): shots contiguous from 0:00 and ending ≤ 175 s; each shot has a caption and a voice-over of ≤ 2.3 words per second of its time; every shot says `no` or TODO(D8), and any placeholder forces TODO(D8); "no music" present, no STALE string, no bare TODO; the screenshot table lists unique `docs/img/*.png` files, covers plan/run/eval/playground and marks live ones.
+
+## Proof (desk-check, not a test run)
+Red at the base, green at HEAD, with `git grep` on the trees:
+```
+RED  ef00bb7: "deterministic template" in README.md / docs/devpost.md -> exit 1 (absent)
+RED  ef00bb7: README lines "An evaluation you can trust" / "The guard checks the estimate" with TODO(D8) -> exit 1
+RED  ef00bb7: "20261020" in docs/feedback.md -> 1 line (:9 only; the OpenAPI findings at :15 and :16 lack it)
+RED  ef00bb7: "left Token Factory serverless" with TODO(D8) -> exit 1
+RED  ef00bb7: docs/ has no video-script.md, so test_video_script.py cannot read its input
+GREEN HEAD:   "deterministic template" README.md:1 devpost.md:1; the two README lines carry TODO(D8) (README.md:33, :164);
+              "20261020" on 3 lines of feedback.md; the 70B finding carries TODO(D8); docs/video-script.md present
+```
+Shot table: `git grep --no-index -P '^\| (\d+) \| (\d+):(\d\d)-(\d+):(\d\d) \| ([^|]*) \| ([^|]*) \| ([^|]*) \| ([^|]*) \|[ \t]*$' docs/video-script.md` matches 7 rows (0:00-0:15, 0:15-0:40, 0:40-1:25, 1:25-1:55, 1:55-2:25, 2:25-2:45, 2:45-2:55: contiguous, ends at 175 s). Voice-over words per shot, counted by hand twice: 26, 46, 69, 58, 25, 33, 18 against caps of 34.5, 57.5, 103.5, 69, 69, 46, 23. 12 screenshot rows, every live cell is `no` or TODO(D8). `git grep -P 'TODO(?!\(D8\))'` finds nothing in the video script, README, devpost or feedback; no STALE string; every `make e2e|agent-e2e|demo` line in the README has TODO(D8) (README.md:145, :184); `make check E2E=1` and the other code-span targets exist in the Makefile.
+
+## What is not verified
+- pytest and `make check` were not run. The test regexes were checked with their PCRE equivalents in `git grep`; the word counts are by hand.
+- The 70B / 2026-08-31 facts are not re-confirmed (TODO(D8) restored). Nothing in the docs was re-fetched from Nebius or NVIDIA.
+- Nothing is recorded; the script describes UI that frontend-w3 (eval view, template gallery, playground, intent #2 card) and backend-w3 (`POST /compare`, `make demo`) are still building, using only names from docs/contracts.md and the merged /agent page.
+
+## Open questions / for the Orchestrator
+1. **Golden run topic.** PLAN.md's default is a "Distill a docs specialist" run over the Nebius docs; contracts make `GET /agent/templates` the three canonical intents, and agent_knowledge.md only has expected plans for those three. Hari picks by D6 (TODO(D8) in the script): the Nebius-docs sentence needs a planner that returns a plan with no errors for it (check at D6) or a fourth template; intent #1 (real-estate compliance) works today. It changes the typed sentence and the held-out question, nothing else.
+2. **Shot 6 depends on G2 (Oct 25).** A run takes one lane, so the Nebius console shot is a second, Lane B run; without GPU quota the script falls back to the Token Factory console. If spike 1 shows no per-token deploy, the golden run needs an Endpoint after all (vllm-serve), which also needs quota.
+3. **L40S rate** appears in README.md:91 (default `gpu-l40s-a`) and :173 (table, $1.82), docs/agent_knowledge.md:28 and :32, docs/contracts.md:58, :72, :221 and :290. platform-w3 fixes prices.py; the README and agent_knowledge lines are yours to follow (I only flagged README:175).
+4. **TODO(D8) lines that go stale as wave 3 merges:** devpost.md:36 "no live call has been made yet (the key is not set)"; README:10 ("the build is at day 1"); README:80 (confirm after the Anthropic/OpenAI paths are removed); README :114, :145, :184 once qa-w3 and backend-w3 land `make e2e`, `agent-e2e` and `demo` (then delete `test_unbuilt_make_targets_are_marked_todo`). At D8 also delete `test_unmeasured_claims_carry_a_todo` and `test_the_unconfirmed_70b_claim_carries_a_todo`.
+5. **Architecture drawing.** PLAN.md (A7, D2) lists one in the README; there is none. I put `docs/img/architecture.png` on the D7 list; a Mermaid block in the README would need no image file. Not done; your call.
+6. **Images.** `docs/img/` does not exist and the README embeds no image yet (so no broken link). When D7 adds them, a guard that every README image path exists is worth one test.
+7. **Process.** Bash was git-only, but I piped some `git grep`/`git diff` output through `cut` (and once `grep -c`) to shorten it; read-only, nothing written. I read hackathon/briefs/2026-10-21-wave2-devrel-w2-report.md, the frontend-w2 report and 2026-10-22-spikes.md from the main checkout for facts, and no other worktree.
+
+## DECISIONs to record
+- DECISION 2026-10-22: the video cut ends at 2:55 (5 s under the limit); narration is capped at 2.3 words per second of each shot; every spoken number is a placeholder read off the golden run; the golden run is Lane A, and Lane B appears only as a separate run in shot 6, if GPU quota lands by G2 — devrel-w3.
+- DECISION 2026-10-22: README and Devpost claims that wait for a measurement (win rate, budget guard on a real run, 70B/2026-08-31 notice) carry TODO(D8), pinned by tripwire tests that D8 deletes; any feedback finding that cites the OpenAPI names its version (20261020) — devrel-w3.

@@ -173,3 +173,31 @@ async def test_grants_of_several_runs_add_up_to_the_day_cap(db, provider, monkey
     errors = [(await nodes(db, r))["a"].error for r in runs]
     assert errors.count("budget: day cap $2.5 reached") == 1
     await stop(tasks)
+
+
+async def test_an_admin_run_in_flight_never_blocks_anonymous_callers(client, db, provider, launched):
+    provider.script = {"a": {"exit": None}}  # first nodes keep running
+    admin, anon = await seed(db, status=RunStatus.PENDING), await seed(db, status=RunStatus.PENDING)
+
+    assert (await client.post(f"/runs/{admin.id}/start", headers=ADMIN)).status_code == 200
+    await asyncio.wait_for(provider.started.wait(), 5)  # its node holds the run's whole $3
+    assert (await client.post(f"/runs/{anon.id}/start")).status_code == 200  # anonymous: $0.30 run, $1.50 of the day
+    for _ in range(500):
+        if len(provider.granted) == 2:
+            break
+        await asyncio.sleep(0.01)
+    assert provider.granted == [3.0, 0.3]
+    await stop(launched)
+
+
+async def test_a_grant_counts_against_the_whole_day_and_only_its_own_scales_share(db, monkeypatch):
+    monkeypatch.setenv("ORCHAPOD_MAX_DAY_USD", "4")
+    monkeypatch.setenv("ORCHAPOD_ANON_SCALE", "0.5")  # anonymous: $1.50 run cap and a $2 share of the day
+    admin, a1, a2, admin2 = [await seed(db) for _ in range(4)]
+
+    assert await budget.reserve(db, admin, 1.0) == (pytest.approx(3.0), "run", 3.0)
+    assert await budget.reserve(db, a1, 0.5) == (pytest.approx(1.0), "day", 4.0)  # the admin's $3 left the day $1
+    assert await budget.reserve(db, a2, 0.5) == (pytest.approx(0.0), "day", 4.0)  # the day is full
+    budget.release(admin.id)
+    assert await budget.reserve(db, a2, 0.5) == (pytest.approx(1.0), "day", 2.0)  # anonymous grants fill the share
+    assert await budget.left(db, admin2, 1.0) == (pytest.approx(2.0), "day", 4.0)  # an admin counts every grant

@@ -22,9 +22,10 @@ from api import config
 from api.models.db import Run, Spend, utcnow
 from packages.providers.tokenfactory import TokenFactory
 
-# run_id → what its running node may spend, granted at the node boundary and released when the node ends, so
-# concurrent runs never hand out the same dollars twice. ponytail: in-process, which the one API worker allows.
-_granted: dict[uuid.UUID, float] = {}
+# run_id → (what its running node may spend, the scale it was granted at), granted at the node boundary and released
+# when the node ends, so concurrent runs never hand out the same dollars twice. ponytail: in-process, which the one API
+# worker allows.
+_granted: dict[uuid.UUID, tuple[float, float]] = {}
 
 
 def scale(x_orchapod_admin: str = Header(default="")) -> float:
@@ -55,10 +56,11 @@ def run_cap(scale: float) -> float:
 
 
 async def left(db: AsyncSession, run: Run | None, scale: float) -> tuple[float, str, float]:
-    """(budget left, the cap that binds: "run" | "day", that cap in $); both caps × scale. The day's budget left
-    also excludes what other runs' running nodes were granted."""
-    run_max = run_cap(scale)
-    day_cap = float(config.env("ORCHAPOD_MAX_DAY_USD")) * scale
+    """(budget left, the cap that binds: "run" | "day", that cap in $) for a caller at `scale`: the least of the run cap
+    × scale less the run's cost, and of the caller's share of the day (day cap × scale) and the whole day cap, both less
+    the day's spend. Other runs' running nodes' grants count against the whole day, and against the share only when
+    granted at this scale or below, so an admin run in flight never blocks anonymous callers (contracts "Budget guard")."""
+    run_max, day = run_cap(scale), float(config.env("ORCHAPOD_MAX_DAY_USD"))
     granted = dict(_granted)  # a node that ends while spend is read stays counted: its cost commits before release
     if run is not None:
         await db.refresh(run)  # Run.cost_usd grows as nodes register cost_json
@@ -66,17 +68,19 @@ async def left(db: AsyncSession, run: Run | None, scale: float) -> tuple[float, 
     granted.update(_granted)  # no await from here to reserve()'s write, so two boundaries never share a grant
     granted.pop(run.id if run is not None else None, None)
     run_left = run_max - (float(run.cost_usd or 0) if run is not None else 0.0)
-    day_left = day_cap - spent - sum(granted.values())
-    return (run_left, "run", run_max) if run_left <= day_left else (day_left, "day", day_cap)
+    share = day * scale - spent - sum(usd for usd, at in granted.values() if at <= scale)
+    whole = day - spent - sum(usd for usd, _ in granted.values())
+    return min((run_left, "run", run_max), (share, "day", day * scale), (whole, "day", day), key=lambda x: x[0])
 
 
 async def reserve(db: AsyncSession, run: Run, scale: float) -> tuple[float, str, float]:
-    """left() for the run's next node, granted to it until release(run.id).
-    ponytail: a node reserves its run's whole remaining budget, so an admin run in flight can leave anonymous callers
-    nothing for the day; D6 hardening reserves per-node estimates or keeps a separate anonymous day budget."""
+    """left() for the run's next node, granted to it at the caller's scale until release(run.id).
+    ponytail: a node still reserves its run's whole remaining budget, and spend (not grants) counts against every
+    share, so an admin who has spent the anonymous share of the day has used it up; a separate anonymous pot needs
+    spend tagged by caller."""
     amount, which, cap = await left(db, run, scale)
     if amount > 0:
-        _granted[run.id] = amount
+        _granted[run.id] = (amount, scale)
     return amount, which, cap
 
 

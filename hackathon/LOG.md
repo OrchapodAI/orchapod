@@ -153,3 +153,10 @@ worktrees:
   - Ruling: tf-deploy stays the docs default; the docs template is NOT G1-ready until spike 1; ml-w4 owns a vllm-serve swap.
   - Fix round 1 sent (seeds, seed order, 8B-id clause, test all(), planner.reduced reuse, contracts caveat).
   - Routed: backend follow-ups (STUB stopwords + near-miss tests; price tf-finetune from tokens instead of TYPICAL $0.50; the SDK's cost_json waits on thread joins, from the ml-w3 review); devrel follow-up (video-script.md:14 says no docs template exists).
+- 2026-10-21T13:03Z qa-w3 reported DONE: 16 commits, tip 0038b3d on 10168de; make check 560 passed.
+  - Scratch-merge `make check E2E=1`: 648 passed, demo PASS, agent #2/#3 PASS, #1 SKIP (no vllm-serve); `make ui-smoke` 3 passed + 1 skipped; Playwright 1.63.0.
+  - Its decisions: E2E=1 = e2e_demo --stub, then e2e_agent --stub --strict; ui-smoke separate; only vllm-serve may SKIP, so E2E=1 exits 3 until ml-w4 merges.
+  - G1 blocker found: template #1's reduced plan yields test 0 rows in STUB and judge-eval exits; root-cause fix (data-prep: ≥ 1 test row when n ≥ 3) sent to data-w4.
+  - vllm-serve STUB must register via /internal/ttl → sent to ml-w4.
+  - PROCESS NOTE: qa-w3 started Docker Desktop and ran `make up` itself, explaining the earlier 'Docker back up'. No harm (complychip2 did not start), but future briefs say: never start Docker Desktop.
+  - Trial merge into NebiusHackathon: clean. Review dispatched (sonnet), reviewer id; qa-w3 told about the 4th template (test_e2e_agent.py:45).

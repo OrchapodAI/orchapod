@@ -4,7 +4,7 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 ## Next actions (in order)
 1. Hari: NEBIUS_API_KEY and TAVILY_API_KEY into ~/src/orchapod-hack/.env — both lines still empty on disk (2026-10-21T02:37Z); the hidden-input command is in chat. Unblocks spikes 1–3 and every live check.
 2. Spikes 1–3 (hackathon/briefs/2026-10-22-spikes.md; worktrees spike1–3 at c164e4e) — dispatch the moment the key lands.
-3. Wave 3 (hackathon/briefs/2026-10-22-wave3.md): MERGED devrel-w3 (d257183), frontend-w3 (3d250c5); REVIEW data-w3 (fix round 1 re-review); IN_PROGRESS ml-w3, platform-w3, backend-w3, qa-w3.
+3. Wave 3 (hackathon/briefs/2026-10-22-wave3.md): MERGED devrel-w3 (d257183), frontend-w3 (3d250c5), data-w3; REVIEW backend-w3 (opus), platform-w3 (+ hosting fact-check); IN_PROGRESS ml-w3, qa-w3.
 4. After wave 3: shared fence() (platform), apps/api/config.py (platform), vllm-serve rewrite (ml), `make check E2E=1` + Playwright smoke on the merged branch, D6 hardening (anonymous budget ceiling).
 5. G1 Oct 24: golden path green from the UI (needs spike 1's deploy answer) + intent #2 from the agent chat (STUB green 2026-10-21; live waits on the key).
 
@@ -35,7 +35,7 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [x] P0 D2 data-engineering reviewed the R19 diffs of its two Dockerfiles — DONE (data-w2 report)
 - [x] P0 D2 synth-distilabel: Anthropic/OpenAI teacher branches and pip deps removed (Nemotron via packages/providers only) — DONE (data-w2)
 - [x] P0 D3 data-prep: exact + near dedupe, train/val/test, TF dataset rules — DONE
-- [ ] P0 D3 data-prep quality_filter (Lightning 1–5, drop < 3, failure gate) + the data-w1 minors + intent #1 data half in STUB — REVIEW(data-w3, fix round 1 re-review)
+- [x] P0 D3 data-prep quality_filter (Lightning 1–5, drop < 3, failure gate max(2, 10 %)) + the data-w1 minors + intent #1 data half in STUB — DONE (data-w3)
 ### ml-engineering
 - [x] P1 D1 spike 4: Unsloth 16-bit LoRA on nvidia/Llama-3.1-Nemotron-Nano-8B-v1, vast.ai A100 — DONE ($1.29, 48 min; containers/unsloth-train/spike/RESULTS.md)
 - [x] P0 D2 all 8 Dockerfiles build from the repo root + test_dockerfiles.py; synth's vendored SDK deleted (R19) — DONE (a298ea1)

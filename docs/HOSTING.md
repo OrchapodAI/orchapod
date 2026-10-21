@@ -133,6 +133,7 @@ Rebuild from nothing (target 30 minutes): a new VM from cloud-init, the same `.e
 
 ## Rehearse locally
 The prod stack on a laptop, never on the VM: Caddy on 18080/18443 with its internal CA, MinIO as the bucket, STUB on.
+The e2e scripts and `make up` never run on the VM either (D7's fresh-clone test and D8's rehearsals use a throwaway Linux host): `make up` publishes Postgres, Redis and MinIO on every interface past ufw, and the e2e retags the `orchapod/<node>:dev` images the live API prefers over `:latest`.
 The project name keeps it, and the scripts it runs, off any other stack.
 ```
 export COMPOSE_PROJECT_NAME=orchapod-prodtest-$USER DOMAIN=orchapod.test POSTGRES_PASSWORD=smoke ORCHAPOD_INTERNAL_SECRET=smoke \

@@ -112,7 +112,7 @@ def test_convert_formats():
 
 def test_csv_cells_stay_text_and_malformed_rows_are_skipped(run_node):
     long = "x" * 200_000  # past csv's default 128 KB field limit
-    lines = ["﻿instruction,input,output", "Say hi,,Hi", "Spell it,NA,N-A", "Add 2 and 2,,4", f'"Two\nlines",,{long}',
+    lines = ["\ufeffinstruction,input,output", "Say hi,,Hi", "Spell it,NA,N-A", "Add 2 and 2,,4", f'"Two\nlines",,{long}',
              "Ragged,row,has,4 cells", "Short row"]  # a BOM, a quoted newline, an extra cell, missing cells
     outs, m = run_node(lines, dataset=f"{R2}.csv", format="alpaca")
     assert [[t["content"] for t in r["messages"]] for r in outs["dataset"]] == [
@@ -287,7 +287,7 @@ def test_quality_filter_drops_rows_scored_under_3(run_node, lightning):
     body = json.loads(seen[0].content)
     assert (body["model"], body["temperature"], body["chat_template_kwargs"]) == (LIGHTNING, 0.0, {"enable_thinking": False})
     assert body["response_format"]["json_schema"]["schema"]["properties"] == {"score": {"type": "integer", "enum": [1, 2, 3, 4, 5]}}
-    assert seen[0].extensions["timeout"]["read"] == 30  # a hung call fails in 30 s, not the client's 120
+    assert seen[0].extensions["timeout"]["read"] == 30  # a hung try fails in 30 s, not the client's 120
     (item,) = cost.summary()["items"]
     assert {k: item[k] for k in ("provider", "model", "calls", "in_tokens", "out_tokens")} == {
         "provider": "token_factory", "model": LIGHTNING, "calls": 5, "in_tokens": 500, "out_tokens": 25}

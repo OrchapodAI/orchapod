@@ -167,7 +167,7 @@ def quality_filter(rows: list[dict]) -> tuple[list[dict], int]:
     for i, row in enumerate(rows, 1):
         try:
             reply = tf.chat([{"role": "user", "content": score_prompt(row)}], LIGHTNING, max_tokens=64,
-                            json_schema=SCORE, thinking=False, read_timeout=30)["parsed"]  # a hang fails in 30 s
+                            json_schema=SCORE, thinking=False, read_timeout=30)["parsed"]  # a hung try fails in 30 s (4 tries)
             score = reply.get("score") if isinstance(reply, dict) else None
             if type(score) is not int or not 1 <= score <= 5:  # guided JSON should prevent it; output is untrusted
                 raise ProviderError("token_factory", "bad_output", 200, f"{LIGHTNING} gave no 1–5 score: {reply!r:.80}")

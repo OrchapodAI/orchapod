@@ -656,8 +656,8 @@ async def test_events_fire_only_after_their_change_is_committed(client, tmp_path
 async def test_deploy_launches_through_the_one_launcher_with_the_callers_caps(client, monkeypatch):
     launched = []
     monkeypatch.setattr(ex, "launch", lambda run_id, scale: launched.append((run_id, scale)))  # cancel finds its task
-    r = await client.post("/inference/deploy", json={"model": "Qwen/Qwen3-4B-Instruct", "mode": "serve"})
-    assert r.status_code == 202
+    r = await client.post("/inference/deploy", json={"model": "Qwen/Qwen3-4B-Instruct", "mode": "quantize-gguf"})
+    assert r.status_code == 202  # GGUF runs on CPU; serve (vllm-serve, a GPU) is admin-only
     assert launched == [(uuid.UUID(r.json()["run_id"]), 0.1)]  # anonymous: caps x ORCHAPOD_ANON_SCALE
     monkeypatch.setenv("ORCHAPOD_KILL_SWITCH", "1")
     assert (await client.post("/inference/deploy", json={"model": "m", "mode": "serve"})).status_code == 503

@@ -61,6 +61,7 @@ async def run(body: RunRequest, db: Session, scale: Scale):
     if errors:
         return JSONResponse(status_code=422, content={"detail": "the plan has errors", "errors": errors})
     plan = planner.Plan.model_validate(body.plan).model_dump()  # extra keys (resources, ...) are dropped
+    budget.gpu_guard((n["type"] for n in plan["nodes"]), scale)
     await budget.guard(db, scale, need=estimate["usd"])
 
     text = yaml.safe_dump(plan, sort_keys=False)
@@ -105,10 +106,11 @@ async def report(run_id: uuid.UUID, db: Session, scale: Scale):
 async def list_templates(scale: Scale):
     """→ [{slug, title, intent, rationale, plan, estimate, reduced_inputs, reduced: {plan, estimate}, fits}]; one-click Run
     posts a template's plan to /agent/run, and "Run it yourself" posts `reduced.plan`. fits: the reduced estimate is
-    within this caller's run cap (ORCHAPOD_MAX_RUN_USD × their scale)."""
+    within this caller's run cap (ORCHAPOD_MAX_RUN_USD × their scale), and an anonymous caller's plan has no gpu node."""
     out = []
     for t in planner.templates():
         small = planner.reduced(t)
+        gpu = scale < 1 and budget.gpu_nodes(n["type"] for n in small["plan"]["nodes"])  # /agent/run would 403
         out.append({**t, "estimate": planner.estimate(t["plan"])[0], "reduced": small,
-                    "fits": small["estimate"]["usd"] <= budget.run_cap(scale)})
+                    "fits": small["estimate"]["usd"] <= budget.run_cap(scale) and not gpu})
     return out

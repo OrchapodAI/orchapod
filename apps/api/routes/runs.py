@@ -33,6 +33,7 @@ from sqlmodel import select
 
 from api.database import get_session
 from api.executor import run_workflow as executor
+from api.executor.dag import compile_dag
 from api.models.db import AgentRun, Run, NodeRun, RunStatus, NodeStatus, Workflow, Artifact, ArtifactKind, utcnow
 from api.services import budget, ratelimit
 from api.services.events import event_bus
@@ -124,6 +125,7 @@ async def start_run(run_id: uuid.UUID, db: Session, scale: Scale):
         raise HTTPException(status_code=404, detail="Run not found")
     if run.status == RunStatus.PENDING:
         await budget.guard(db, scale, run)
+        budget.gpu_guard(await _to_run(db, run), scale)
     if run.status != RunStatus.PENDING or not await _move(db, run, [RunStatus.PENDING]):
         await db.refresh(run)
         raise HTTPException(status_code=409, detail=f"Run is {run.status.value}; only pending runs can be started")
@@ -165,6 +167,7 @@ async def retry_node(run_id: uuid.UUID, node_id: str, db: Session, scale: Scale)
         raise HTTPException(status_code=409, detail=f"Only the failed node of a failed or cancelled run "
                                                     f"can be retried (run {run.status.value}, node {node_run.status.value})")
     await budget.guard(db, scale, run)
+    budget.gpu_guard(await _to_run(db, run), scale)
     if executor.busy(run_id):  # its executor, or a container it started, is still stopping
         raise HTTPException(status_code=409, detail="Run is still stopping; retry in a moment")
 
@@ -177,6 +180,18 @@ async def retry_node(run_id: uuid.UUID, node_id: str, db: Session, scale: Scale)
         raise HTTPException(status_code=409, detail="Run changed meanwhile; reload it")
     executor.launch(run_id, scale)
     return _run_out(run)
+
+
+async def _to_run(db: AsyncSession, run: Run) -> list[str]:
+    """The types of the run's nodes that have not succeeded: what a start or retry would run."""
+    workflow = await db.get(Workflow, run.workflow_id) if run.workflow_id else None
+    try:
+        nodes = compile_dag(workflow.yaml, run.inputs).nodes.values()
+    except Exception:
+        return []  # a workflow that no longer compiles fails in the executor, with its error
+    done = set(await db.scalars(select(NodeRun.node_id).where(NodeRun.run_id == run.id,
+                                                              NodeRun.status == NodeStatus.SUCCEEDED)))
+    return [n.type for n in nodes if n.id not in done]
 
 
 async def _move(db: AsyncSession, run: Run, sources: list[RunStatus]) -> bool:
@@ -283,7 +298,6 @@ async def cost_estimate(run_id: uuid.UUID, db: Session):
         raise HTTPException(status_code=404, detail="Run not found")
     workflow = await db.get(Workflow, run.workflow_id)
 
-    from api.executor.dag import compile_dag
     from api.services.provider_selector import get_cost_estimate
     from packages.workflow_schema.models import ResourceSpec
 

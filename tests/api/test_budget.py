@@ -220,3 +220,49 @@ async def test_the_kill_switch_is_read_on_every_request(client, monkeypatch):
         monkeypatch.setenv("ORCHAPOD_KILL_SWITCH", value)
         assert (await client.post("/agent/plan", json={"intent": "movie likes"})).status_code == plan_code
         assert (await client.post("/compare", json=compare)).status_code == compare_code  # 422: the refs are refused
+
+
+GPU_FIRST = """
+name: gpu
+nodes:
+  - id: train
+    type: unsloth-train
+    inputs: {train_data: "r2://b/train"}
+  - id: prep
+    type: data-prep
+    needs: [train]
+    inputs: {dataset: "hf://x"}
+"""
+
+
+async def test_anonymous_callers_never_start_a_gpu_node(client, db, monkeypatch):
+    """Rented GPU time bills from provisioning, whatever the node's ORCHAPOD_MAX_COST_USD: on the public app only the admin
+    starts a gpu node. Only the nodes that would run count."""
+    from api.agent import planner
+    started = []
+    monkeypatch.setattr(ex, "launch", lambda run_id, scale: started.append(scale))
+    pending = await seed(db, GPU_FIRST, status=RunStatus.PENDING)
+    r = await client.post(f"/runs/{pending.id}/start")
+    assert r.status_code == 403 and "unsloth-train" in r.json()["detail"]
+
+    trained, untrained = await seed(db, GPU_FIRST, status=RunStatus.FAILED), await seed(db, GPU_FIRST, status=RunStatus.FAILED)
+    for run, train in ((trained, NodeStatus.SUCCEEDED), (untrained, NodeStatus.FAILED)):
+        db.add_all([NodeRun(run_id=run.id, node_id="train", node_type="unsloth-train", status=train),
+                    NodeRun(run_id=run.id, node_id="prep", node_type="data-prep",
+                            status=NodeStatus.FAILED if train == NodeStatus.SUCCEEDED else NodeStatus.PENDING)])
+    await db.commit()
+    assert (await client.post(f"/runs/{untrained.id}/nodes/train/retry")).status_code == 403
+    assert (await client.post(f"/runs/{trained.id}/nodes/prep/retry")).status_code == 202  # its GPU part is done
+
+    monkeypatch.setattr(planner, "get_providers", lambda: {"nebius": object()})  # a plan with a gpu node validates
+    plan = {"name": "p", "nodes": [{"id": "t", "type": "unsloth-train", "needs": [], "inputs": {"train_data": "r2://b/t"}}]}
+    assert (await client.post("/agent/run", json={"intent": "x", "plan": plan})).status_code == 403
+    assert (await client.post("/agent/run", json={"intent": "x", "plan": plan}, headers=ADMIN)).status_code == 201
+    assert (await client.post("/inference/deploy", json={"model": "m", "mode": "serve"})).status_code == 403  # vllm-serve
+    assert (await client.post("/inference/deploy", json={"model": "m", "mode": "quantize-gguf"})).status_code == 202
+    assert (await client.post(f"/runs/{pending.id}/start", headers=ADMIN)).status_code == 200
+    assert started == [0.1, 1.0, 0.1, 1.0]  # anonymous retry of prep, admin /agent/run, gguf deploy, admin start
+
+    monkeypatch.setenv("ORCHAPOD_ANON_SCALE", "0.5")  # real-estate's reduced plan ($0.83) fits a $1.50 run cap ...
+    fits = [t["fits"] for t in (await client.get("/agent/templates")).json()]
+    assert fits == [False, True, True]  # ... but its vllm-serve rents a GPU

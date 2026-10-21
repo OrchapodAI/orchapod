@@ -15,8 +15,15 @@ import pytest
 # POST /inference/deploy  (one-click node execution)
 # ---------------------------------------------------------------------------
 
-async def test_deploy_valid_model_returns_202(client, no_bg_tasks):
-    resp = await client.post("/inference/deploy", json={
+@pytest.fixture
+def admin(monkeypatch):
+    """vllm-serve rents a GPU, which only the admin starts (anonymous callers get 403: tests/api/test_budget.py)."""
+    monkeypatch.setenv("ORCHAPOD_ADMIN_TOKEN", "s3cret")
+    return {"X-Orchapod-Admin": "s3cret"}
+
+
+async def test_deploy_valid_model_returns_202(client, no_bg_tasks, admin):
+    resp = await client.post("/inference/deploy", headers=admin, json={
         "model": "Qwen/Qwen3-4B-Instruct",
         "mode":  "serve",
     })
@@ -38,11 +45,10 @@ async def test_deploy_invalid_mode_returns_422(client):
     assert resp.status_code == 422
 
 
-async def test_deploy_creates_workflow_and_run_in_db(client, db, no_bg_tasks):
-    from sqlmodel import select
+async def test_deploy_creates_workflow_and_run_in_db(client, db, no_bg_tasks, admin):
     from api.models.db import Run, Workflow
 
-    resp = await client.post("/inference/deploy", json={
+    resp = await client.post("/inference/deploy", headers=admin, json={
         "model": "Qwen/Qwen3-4B-Instruct",
         "mode":  "quantize-serve",
     })
@@ -58,7 +64,7 @@ async def test_deploy_creates_workflow_and_run_in_db(client, db, no_bg_tasks):
     assert "vllm-serve" in workflow.yaml
 
 
-async def test_deploy_never_stores_an_hf_token(client, db, no_bg_tasks):
+async def test_deploy_never_stores_an_hf_token(client, db, no_bg_tasks, admin):
     """Nodes get HF_TOKEN from the executor's env (hf-download and quantize take no hf_token input), so a token in a
     deploy request goes nowhere: never into the stored workflow, its graph or the run."""
     import json
@@ -66,8 +72,8 @@ async def test_deploy_never_stores_an_hf_token(client, db, no_bg_tasks):
     from api.models.db import Run, Workflow
 
     for mode in ("serve", "quantize-serve", "quantize-gguf"):
-        r = await client.post("/inference/deploy", json={"model": "meta-llama/Llama-3.2-3B-Instruct", "mode": mode,
-                                                          "hf_token": "hf_secret123"})
+        r = await client.post("/inference/deploy", headers=admin, json={
+            "model": "meta-llama/Llama-3.2-3B-Instruct", "mode": mode, "hf_token": "hf_secret123"})
         assert r.status_code == 202
     stored = json.dumps([[w.yaml, w.graph_json] for w in await db.scalars(select(Workflow))]
                         + [r.inputs for r in await db.scalars(select(Run))])

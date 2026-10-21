@@ -94,6 +94,8 @@ async def deploy_model(body: DeployRequest, db: Session, scale: float = Depends(
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Failed to compile workflow: {e}")
 
+    budget.gpu_guard((n["data"]["node_type"] for n in graph_json["nodes"]), scale)  # vllm-serve rents a GPU
+
     workflow = Workflow(
         user_id=uuid.uuid4(),
         name=wf_name,

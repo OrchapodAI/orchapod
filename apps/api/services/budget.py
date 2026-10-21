@@ -91,6 +91,20 @@ def release(run_id: uuid.UUID) -> None:
     _granted.pop(run_id, None)
 
 
+def gpu_nodes(types) -> list[str]:
+    """The node types among `types` whose runtime is gpu (a rented GPU, a Serverless Job)."""
+    from packages.workflow_schema.models import NODE_REGISTRY
+    return sorted({t for t in types if NODE_REGISTRY.get(t, {}).get("runtime") == "gpu"})
+
+
+def gpu_guard(types, scale: float) -> None:
+    """403 when an anonymous caller (scale < 1) would start a gpu node: rented GPU time bills from provisioning, by the
+    hour, whatever the node's ORCHAPOD_MAX_COST_USD, so on the public app only the admin starts one."""
+    if scale < 1 and (gpu := gpu_nodes(types)):
+        raise HTTPException(status_code=403, detail=f"{', '.join(gpu)} runs on a rented GPU, billed by the hour: "
+                                                    "only the admin can start it on the public app")
+
+
 async def guard(db: AsyncSession, scale: float, run: Run | None = None, need: float = 0.0) -> None:
     """503 while the kill switch is on; 402 when nothing is left, or less than `need` (a plan's estimate)."""
     if kill_switch():

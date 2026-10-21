@@ -42,8 +42,8 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [x] P0 D2 all 8 Dockerfiles build from the repo root + test_dockerfiles.py; synth's vendored SDK deleted (R19) — DONE (a298ea1)
 - [x] P0 D2 lm-eval: Claude/Anthropic judge fallback removed — DONE (a298ea1)
 - [ ] P2 test_dockerfiles.py minors: continuation regex `\\[ \t]*\n`, `assert DOCKERFILES` instead of >= 8, one-line docstring (no LocalDocker claim), ROOT.glob — TODO
-- [ ] P0 D3 tf-finetune node: job id, checkpoint id, loss_curve.json; failed/cancelled handled — TODO
-- [ ] P0 D3 tf-deploy node: model name + one proving completion — TODO
+- [x] P0 D3 tf-finetune node (idempotent retry R19, lost-create recovery) — DONE (ml-w2; live behaviour waits on spike 1)
+- [x] P0 D3 tf-deploy node (unsupported path → vllm-serve message; price check before deploy) — DONE (ml-w2; /v0/models = spike 1)
 - [ ] P0 D4 judge-eval node: base vs tuned, identical decoding, Ultra pairwise reference-guided, position swap — TODO
 - [ ] P0 D4 quantize path for intent #3: maths shortlist, GGUF q4_k_m on CPU, 50-item GSM8K eval — TODO
 - [ ] P1 D2 unsloth-train container: bucket I/O, SDK logs, --max-steps, pinned to spike 4's requirements.lock.txt (BOS fix; Mamba out_proj excluded; tvm-ffi restore) — TODO

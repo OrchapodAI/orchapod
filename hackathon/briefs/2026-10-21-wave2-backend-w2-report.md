@@ -150,3 +150,31 @@
 - **Ponytail notes in code:**
   - `TYPICAL` costs are rough until spikes 1–3.
   - Two concurrent first report GETs may both call Lightning (< $0.001; both are in the ledger).
+
+## Fix round 1 (orchestrator review)
+**Commits:** 8ac06fe (the fixes); dfab7dd (merged NebiusHackathon into the branch); f7fce93 (`tests/api/test_provider_selection.py`, which landed after my base, passes `scale`, now a required argument).
+
+- **I1, model-ref provenance:** a `*_model_ref` input now accepts only these, and anything else is a plan error:
+  - a plain Token Factory model id (no `://`, no `{`);
+  - an inline Token Factory ref; every dict in such an input goes through the pair rule, with or without `base_url`;
+  - a ref to vllm-serve `model_ref`/`base_model_ref`, tf-deploy `model_ref`, or quantize `gguf_file`/`gguf_f16`.
+  - Test: 13 parametrized rows, 7 accepted and 6 refused (a dataset output, quantize `model_ref`, a bare `r2://`, a bare `https://`, a JSON string, a dict without `base_url`).
+- **I2, scale required:** `/inference/deploy` takes the caller's `Scale`, runs `budget.guard` (503/402) and calls `launch(run.id, scale)`.
+  - `scale` is a required parameter of `launch()` and `run_workflow()`. A test asserts the signatures have no default.
+  - The deploy test asserts an anonymous caller launches at 0.1 and that the kill switch returns 503.
+- **I3, day-cap grants:** at each node boundary, `budget.reserve()` grants `left()` to the node in the in-process `_granted[run_id]`, and the node's `finally` releases it.
+  - `left()` subtracts other runs' grants from the day's budget. A node that finishes while spend is being read stays counted, because its cost commits before its grant is released. No await separates the final read of `_granted` from `reserve()`'s write, so two boundaries never share one grant.
+  - Test: 5 concurrent runs under a $1 day cap. The grants sum to ≤ $1, every other run fails `budget: day cap $1 reached`, and no grant is left after cancel. It passed 5 of 5 repeat runs.
+- **Minors:**
+  - Per-node estimates are floored at $0 and 0 min, and `keep_alive_min` has `ge=1`.
+  - The web-research estimate is 2 credits per query plus ⌈max_pages/5⌉ extraction credits.
+  - The report is stored with a conditional `UPDATE … WHERE report_md IS NULL AND <run.finished_at unchanged>` and then read back. A report written while a retry lands is dropped (test).
+  - `/agent/run` takes `plan: dict`, so shape errors come back as `{"detail", "errors"}`; extra keys such as `resources` are still dropped (test).
+  - The planner's 502 always says "Nemotron on Token Factory failed; the API log has the cause". The cause goes only to the log (test with caplog).
+  - Fixed the wording in agent_knowledge.md.
+- **Ponytail:** the AgentRun reset happens inline in `retry_node`'s transaction (no `*also`); `Counter` finds duplicate ids; the planner has one `except Exception` arm; `control_plane` takes `Callable[[TokenFactory], dict]`; the dead `read_timeout` pop in test_agent.py is gone.
+- **Proof:**
+  - `make check` on f7fce93: `All checks passed!` · `397 passed, 1 skipped` (the intent #2 test, which waits for data-w2) · web tests pass · stub e2e opt-in SKIP · exit 0.
+  - Trial merge of hack/data-w2 on top: `465 passed`, 0 skipped.
+  - Mutation checks: all 10 fixes reverted one at a time; each failed its covering test.
+- **For contracts (orchestrator):** plans may no longer give a bare `r2://` string as a model ref, because its provenance cannot be checked. Plans use `${{ nodes.… }}` refs; the ModelRef section still allows `r2://` URIs for direct node inputs.

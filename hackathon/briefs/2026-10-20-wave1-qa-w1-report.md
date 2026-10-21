@@ -2,6 +2,8 @@
 
 Status: **DONE_WITH_CONCERNS** · branch `hack/qa-w1` · base 178d2e6 (verified ancestor) · commits `31c45ba`, `6c77b52` · cost $0 (no API calls) · not pushed.
 
+**Superseded after review:** see the last section, "Rebase + minors". The branch is rebased onto NebiusHackathon `a0af5e9`; final commits are `4cb3920`, `94ba302`, `b3ece55`; the autouse `_clear_ttl_tasks` fixture described below was deleted; final numbers are `299 passed, 54 warnings`.
+
 Concerns, in order of weight:
 1. The `:latest` tag line is a GitHub `${{ }}` expression. No `actionlint`/`act` is installed and I did not download one, so it is verified structurally only (YAML parses, tests below). The first push to NebiusHackathon is the real check: watch the `containers` jobs.
 2. The brief's premise for item 2 was off (see below): the fixture it describes cannot remove the warning. I fixed the root cause instead, which edits five call sites in `tests/api/test_internal.py` and `test_runs.py` (backend-w1's files) — a possible merge conflict.
@@ -89,3 +91,32 @@ Observed, out of scope:
 Likely merge conflicts: `tests/api/conftest.py` (fixtures inserted between `db` and `client`), `tests/api/test_internal.py` / `test_runs.py` (five dedented blocks), `docs/NODE_CONTRACT.md` (one line after step 5).
 
 Reproduce: `cd .claude/worktrees/qa-w1 && . /Users/hari/src/orchapod-hack/.venv/bin/activate && make check` (expect 160 passed, 56 warnings, no "never awaited").
+
+## Rebase + minors
+
+Branch `hack/qa-w1` is rebased onto NebiusHackathon `a0af5e9` and fast-forwardable (verified with `git merge-base --is-ancestor`). The tip moved twice while I worked (`f592fd5` → `ee9db49` → `a0af5e9`, docs-only each time), so I rebased twice. New commits, not pushed: `4cb3920` ci (was `31c45ba`), `94ba302` tests/api (was `6c77b52`), `b3ece55` review minors. Against the tip, only my 8 files differ.
+
+**Rebase.** No textual conflicts: backend's hunks in `tests/api/conftest.py` (the `INTERNAL_SECRET` import and the `X-Orchapod-Secret` header in `client`) and my fixtures (inserted above `client`) do not overlap. I read the merged file to check it semantically: both are present. `docs/NODE_CONTRACT.md` step 6 still sits after step 5 and before the new local-runs paragraph.
+
+**`patch("asyncio.create_task")` in backend's new tests: none to convert.** The only `create_task` calls are `tests/api/test_executor.py:306` and `:325`, real `asyncio.create_task(ex.run_workflow(...))` tasks that the tests cancel and await. Switching them to `no_bg_tasks` would close the coroutine and break the two cancel tests, so they stay.
+
+**Minors folded in (`b3ece55`):**
+- `tests/test_harness.py`: install check is `run.split()[-1].endswith(".txt")` (helper inlined, it had one caller); dependency check is a substring check for `ruff==`, `huggingface_hub`, `jsonschema` on the file text; `:latest` check collects every `:latest` line from every job's `with.tags`. I kept `latest and` in front of `all(...)`: a bare "every line contains NebiusHackathon" passes vacuously when the tag is deleted, which is the very regression R4 guards against. Matrix-equality test unchanged.
+  - Mutation re-run, each caught by the intended test: inline package appended to the install line; each of the 3 deps removed in turn; `:latest` line deleted; branch gate removed; an ungated `:latest` added to the `api` job. Restored: 4 passed. Accepted looseness: the install check only looks at the last argument (an inline package before the last `-r` file would pass), and a commented-out dependency line would pass the substring check.
+- Deleted the autouse `_clear_ttl_tasks` fixture, its two order-coupled tests, and conftest's `import asyncio`. Mutation with it gone: `no_bg_tasks` without `coro.close()` gives `1 failed, 298 passed, 59 warnings` and 4 "never awaited" lines, so `no_bg_tasks` alone is the fix.
+- `seeded_node_run` now calls `api.models.db.utcnow` (backend added it in wave 1: naive UTC, as the columns store it) instead of a second expression of mine; the `datetime` import is gone. 12 warnings removed.
+- Matrix test kept. Wave-2 node authors add their matrix line (`docs/NODE_CONTRACT.md` step 6 says so).
+
+**Proof, on `b3ece55` with the shared venv:**
+```
+$ python -m pytest tests -q 2>&1 | grep -c "never awaited"
+0
+$ make check          # exit 0
+All checks passed!
+299 passed, 54 warnings in 2.58s
+SKIP stub e2e: scripts/e2e_demo.py not written yet (qa)
+```
+
+**Warning count.** NebiusHackathon: 294 passed, 66 warnings, and 1 "never awaited" line (`sys:1: ... '_terminate_after_ttl'`, printed at exit and never part of pytest's count; measured from a clean `git archive` export, so the 66 matches yours). Branch: 299 passed (+4 harness, +1 `test_bg_tasks`), 54 warnings, 0 "never awaited". The 12 fewer are exactly the `seeded_node_run` `utcnow()` hits.
+
+The 54 left, none in my files: 52 sqlmodel "use `session.exec()`" deprecations, all backend code (36 raised from `test_executor.py`'s executor calls via `sqlalchemy/ext/asyncio/session.py`, 7 + 3 in `routes/internal.py`, 4 in `model_registry.py`, 2 in `runs.py`); 1 starlette/anyio alias and 1 botocore `utcnow()` (both third party). The earlier "mostly `datetime.utcnow`" note in STATE.md no longer holds: backend's `utcnow()` helper and this fix removed the project-owned ones.

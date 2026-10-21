@@ -6,6 +6,7 @@ load (r2:// JSONL or CSV, hf://<id> or <org>/<name>) → convert + validate → 
 (always written) + io.write_metrics. STUB=1 swaps Hugging Face loads for fixed rows, so no network.
 """
 
+import csv
 import json
 import os
 import random
@@ -46,9 +47,9 @@ def load_rows(uri: str, fmt: str, hf_config: str | None = None, hf_split: str = 
 
 
 def read_file(path: Path) -> list:
-    if path.name.endswith(".csv"):
-        import pandas as pd
-        return pd.read_csv(path).to_dict("records")
+    if path.name.endswith(".csv"):  # every cell stays text ("", "NA", "4"); a row with extra cells is skipped
+        with open(path, encoding="utf-8-sig", newline="") as f:
+            return [None if None in r else r for r in csv.DictReader(f)]
     rows = []
     with open(path, encoding="utf-8-sig") as f:
         for line in filter(str.strip, f):
@@ -75,7 +76,7 @@ def tf_valid(msgs) -> bool:
     """Token Factory chat rules: roles in ROLES, system only first, a user turn, last turn assistant, no empty content."""
     return (
         isinstance(msgs, list) and len(msgs) > 0
-        and all(isinstance(m, dict) and m.get("role") in ROLES
+        and all(isinstance(m, dict) and isinstance(m.get("role"), str) and m["role"] in ROLES
                 and isinstance(m.get("content"), str) and m["content"].strip() != "" for m in msgs)
         and all(m["role"] != "system" for m in msgs[1:])
         and any(m["role"] == "user" for m in msgs)
@@ -124,7 +125,10 @@ def near_dedupe(rows: list[dict]) -> list[dict]:
 
 
 def split(rows: list[dict], train: float, test: float) -> tuple[list, list, list]:
-    """Seed-42 split stratified by source_url: each source's shuffled rows spread evenly over one order cut train|eval|test."""
+    """Seed-42 split stratified by source_url: each source's shuffled rows spread evenly over one order, cut
+    train|eval|test at round(n × share). Counts always add up to n, but small n can leave a split empty (n=5 at
+    0.9/0.1 → 4/1/0), and only a source with about 1/share rows or more reaches eval and test: a one-row source
+    sits mid-order, so it lands in train."""
     rng = random.Random(SEED)
     groups = defaultdict(list)
     for r in rows:
@@ -181,12 +185,15 @@ def main():
     raw = load_rows(inputs["dataset"], fmt, inputs.get("hf_config") or None, inputs.get("hf_split") or "train")
     converted = [c for c in (convert(r, fmt) for r in raw) if c is not None]
     unique = list({dumps(r, sort_keys=True): r for r in converted}.values())  # exact dupes: canonical JSON
+    log.info(f"{len(raw)} rows loaded, {len(unique)} valid and distinct")  # first: near dedupe can take minutes
     rows = unique if fmt == "structured" else near_dedupe(unique)
-    log.info(f"{len(raw)} rows loaded, {len(rows)} kept")
     if not rows:
         fail(f"0 rows after cleaning {inputs['dataset']} as {fmt}")
 
-    train, ev, test = split(rows, float(inputs.get("train_split") or 0.9), float(inputs.get("test_split") or 0))
+    test_share = float(inputs.get("test_split") or 0)
+    train, ev, test = split(rows, float(inputs.get("train_split") or 0.9), test_share)
+    if test_share and not test:
+        log.warn(f"test_jsonl is empty: test_split {test_share} of {len(rows)} rows rounds to 0")
     write_jsonl("dataset", rows)
     write_jsonl("test_jsonl", test)
     if fmt != "structured":  # training files carry only the turns

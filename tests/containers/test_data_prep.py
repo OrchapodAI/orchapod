@@ -30,17 +30,20 @@ def read_jsonl(path):
 
 @pytest.fixture
 def run_node(mock_orchapod_io, tmp_path, monkeypatch):
-    """Run main() on `lines` (served as an extensionless r2 object); return ({output: rows}, metrics)."""
+    """Run main() on `lines`, served from their own directory under the URI's last segment (as io.download_input
+    names the file: extensionless for an r2 dataset); return ({output: rows}, metrics)."""
     monkeypatch.delenv("STUB", raising=False)
-    mock_orchapod_io.local_path.side_effect = lambda name: tmp_path / name
-    src = tmp_path / "dataset"
-    mock_orchapod_io.download_input.side_effect = lambda uri: src
+    src, out = tmp_path / "in", tmp_path / "out"
+    src.mkdir(), out.mkdir()
+    mock_orchapod_io.local_path.side_effect = lambda name: out / name
+    mock_orchapod_io.download_input.side_effect = lambda uri: src / uri.rsplit("/", 1)[-1]
 
     def run(lines=(), **inputs):
-        src.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        inputs = {"dataset": R2, **inputs}
+        (src / (inputs["dataset"].rsplit("/", 1)[-1] or "unused")).write_text("\n".join(lines) + "\n", encoding="utf-8")
         mock_orchapod_io.write_output.reset_mock()
         mock_orchapod_io.write_metrics.reset_mock()
-        mock_orchapod_io.read_inputs.return_value = {"dataset": R2, **inputs}
+        mock_orchapod_io.read_inputs.return_value = inputs
         dp.main()
         calls = mock_orchapod_io.write_output.call_args_list
         assert all(c.kwargs == {"kind": "dataset"} for c in calls)
@@ -95,6 +98,15 @@ def test_convert_formats():
     assert dp.convert(["not", "a", "dict"], "structured") is None
     assert dp.convert({"conversations": "oops"}, "sharegpt") is None
     assert dp.convert({"question": "Q"}, "qa") is None
+    assert dp.convert({"messages": [{"role": ["user"], "content": "Q"}, msgs[1]]}, "chatml") is None  # unhashable
+
+
+def test_csv_cells_stay_strings_and_a_ragged_row_is_skipped(run_node):
+    lines = ["instruction,input,output", "Say hi,,Hi", "Spell it,NA,N-A", "Add 2 and 2,,4", "Ragged,row,has,4 cells"]
+    outs, m = run_node(lines, dataset=f"{R2}.csv", format="alpaca")
+    assert [[t["content"] for t in r["messages"]] for r in outs["dataset"]] == [
+        ["Say hi", "Hi"], ["Spell it\nNA", "N-A"], ["Add 2 and 2", "4"]]  # blank, "NA" and a number stay text
+    assert m["skipped"] == 1
 
 
 U, A, S = ({"role": r, "content": "x"} for r in ("user", "assistant", "system"))
@@ -110,6 +122,8 @@ U, A, S = ({"role": r, "content": "x"} for r in ("user", "assistant", "system"))
     ([U, {"role": "assistant", "content": " "}], False),  # non-empty content
     ([U, {"role": "assistant", "content": 3}], False),
     ([U, {"role": "tool", "content": "x"}], False),
+    ([{"role": ["user"], "content": "x"}, A], False),     # an unhashable role is invalid, not a crash
+    ([{"role": {"user": 1}, "content": "x"}, A], False),
     ([], False),
     ("not a list", False),
 ])
@@ -138,7 +152,28 @@ def test_split_is_deterministic_and_stratified_by_source():
     assert (train, ev, test) == dp.split(list(rows), 0.8, 0.1)
     assert (len(train), len(ev), len(test)) == (80, 10, 10)
     assert set(Counter(r["source_url"] for r in train).values()) == {4}  # every source keeps 4 of its 5 rows
+    held_out = [{r["source_url"] for r in part} for part in (ev, test)]
+    assert len(held_out[0] | held_out[1]) == 20 and not held_out[0] & held_out[1]  # its 5th: in eval or in test
     assert sorted(map(json.dumps, train + ev + test)) == sorted(map(json.dumps, rows))
+
+
+@pytest.mark.parametrize("n, train, test, sizes", [
+    (4, 0.8, 0.1, (3, 1, 0)),     # a requested test split can round to nothing
+    (5, 0.9, 0.1, (4, 1, 0)),     # round() goes to even: 0.5 → 0
+    (12, 0.8, 0.1, (10, 1, 1)),
+    (20, 0.8, 0.1, (16, 2, 2)),
+])
+def test_small_inputs_can_leave_a_split_empty(n, train, test, sizes):
+    rows = [chat(f"q{i}", source_url=f"https://example.com/{i % 3}") for i in range(n)]
+    assert tuple(map(len, dp.split(rows, train, test))) == sizes
+
+
+def test_one_row_sources_land_in_train():
+    singles = [chat(f"s{i}", source_url=f"https://single.example/{i}") for i in range(10)]
+    groups = [chat(f"g{s}-{i}", source_url=f"https://group.example/{s}") for s in range(4) for i in range(10)]
+    train, ev, test = dp.split(singles + groups, 0.8, 0.1)
+    assert (len(train), len(ev), len(test)) == (40, 5, 5) and all(r in train for r in singles)
+    assert {r["source_url"] for r in ev + test} == {f"https://group.example/{s}" for s in range(4)}
 
 
 # --- main ---------------------------------------------------------------------
@@ -180,9 +215,23 @@ def test_structured_rows_unchanged_with_field_stats(run_node):
     assert "min" not in f["user_id"]
 
 
+def test_counts_are_logged_before_near_dedupe(run_node, monkeypatch):
+    logged = []
+    monkeypatch.setattr(dp, "near_dedupe", lambda rows: logged.append(dp.log.info.call_args.args[0]) or rows)
+    run_node([json.dumps(chat("q1")), json.dumps(chat("q1")), json.dumps(chat("q2")), "not json"])
+    assert logged == ["4 rows loaded, 2 valid and distinct"]  # near dedupe can take minutes on large inputs
+
+
+def test_an_empty_requested_test_split_is_warned(run_node):
+    outs, _ = run_node([json.dumps(chat(f"Question {i} about escrow?")) for i in range(5)], test_split=0.1)
+    assert outs["test_jsonl"] == []
+    assert "test_jsonl is empty" in dp.log.warn.call_args.args[0]
+
+
 @pytest.mark.parametrize("lines, inputs", [
     ([json.dumps({"messages": [{"role": "user", "content": "q"}]}), "not json"], {}),  # nothing survives cleaning
     ([json.dumps(chat("q"))], {"format": "csv"}),                                       # unknown format
+    ([json.dumps(chat("q"))], {"dataset": ""}),                                         # no dataset
 ])
 def test_fatal_errors_exit_1(run_node, mock_orchapod_io, lines, inputs):
     with pytest.raises(SystemExit) as e:

@@ -36,6 +36,9 @@ Load (`r2://` JSONL unless `.csv`; `hf://<id>` or `<org>/<name>` with `hf_config
 ### `web-research`
 Tavily through packages.providers: `seed_urls` (extract) first, then one advanced search with raw content per entry of `queries` (⌈`max_pages` ÷ queries⌉ results, Tavily's cap 20), until `max_pages` (1–100) pages are read → `corpus`: one `{"url", "text"}` per passage of 200–2,000 chars, paragraphs packed up to 2,000 and shorter leftovers dropped, URLs without fragment or trailing slash, exact-duplicate passages dropped. Credits metered via cost; `STUB=1` needs no network.
 
+### `synth-distilabel`
+Nemotron 3 Super on Token Factory (guided JSON, reasoning off) → `dataset`. `pipeline_template`: `self-instruct` | `evol-instruct` | `magpie` (chat rows), `grounded` (one call per `corpus` passage, k = min(5, ⌈`n_samples` ÷ passages⌉, `max_tokens` ÷ 150) closed-book pairs; rows keep `context` and `source_url`) or `structured` (batches of min(25, `max_tokens` ÷ 100) rows checked against `row_schema` with jsonschema; `corpus` optionally supplies real values). `instructions` steer the teacher; a call whose worst case would pass min(`max_usd`, the node budget) is never sent, and the rows so far are kept (`metrics.stopped`). `STUB=1` needs no network.
+
 ### `unsloth-train`
 LoRA SFT via Unsloth. 2-5x faster, ~80% less VRAM than vanilla HF.
 

@@ -141,30 +141,36 @@ class AutoLabelCleanlabOutputs(BaseModel):
 
 
 class SynthDistilabelInputs(BaseModel):
-    """KAN-10 — Generate synthetic ChatML rows via a teacher LLM.
-
-    Default teacher is NVIDIA Nemotron Super via Nebius Token Factory.
-    Falls back to OpenAI or Anthropic if NEBIUS_API_KEY is not set.
-    """
-    pipeline_template: Literal["self-instruct", "evol-instruct", "magpie"] = Field(
+    """Synthetic data from a Nemotron teacher on Token Factory: chat rows (self-instruct, evol-instruct, magpie,
+    grounded Q&A from a web-research corpus) or rows matching row_schema (structured)."""
+    pipeline_template: Literal["self-instruct", "evol-instruct", "magpie", "grounded", "structured"] = Field(
         default="self-instruct",
     )
-    teacher_kind: Literal["nebius", "openai", "anthropic"] = Field(
-        default="nebius",
-        description="Teacher LLM provider — 'nebius' uses Nemotron Super via Token Factory",
-    )
-    teacher_model: str = Field(
-        default="nvidia/nemotron-3-super-120b-a12b",
-        description="Model ID. Nemotron Super 49B is the default teacher.",
-    )
+    teacher_model: str = Field(default="nvidia/nemotron-3-super-120b-a12b", description="Token Factory model id")
     n_samples: int = Field(default=1000, ge=10)
     seed_prompts: str | None = Field(default=None, description="R2 URI to seed prompts JSONL")
     temperature: float = Field(default=0.8, ge=0.0, le=2.0)
-    max_tokens: int = Field(default=512, ge=64)
+    max_tokens: int = Field(default=512, ge=64, description="Per call; a batch asks for what fits "
+                                                             "(150 tokens per grounded pair, 100 per structured row)")
+    corpus: str | None = Field(default=None, description="r2 URI of a web-research corpus: required for grounded, "
+                                                         "real values for structured")
+    row_schema: dict | str | None = Field(default=None, description="JSON Schema of one structured row; "
+                                                                    "a string is parsed as JSON")
+    instructions: str = Field(default="", description="Domain, audience and style hints; for structured, "
+                                                      "the target value distributions")
+    max_usd: float = Field(default=1.0, description="Stop before a call whose worst case would pass "
+                                                    "min(max_usd, the node budget); what was made is kept")
+
+    @model_validator(mode="after")
+    def _template_inputs(self):
+        if self.pipeline_template == "grounded" and not self.corpus:
+            raise ValueError("grounded needs corpus")
+        if self.pipeline_template == "structured" and not self.row_schema:
+            raise ValueError("structured needs row_schema")
+        return self
 
 class SynthDistilabelOutputs(BaseModel):
-    dataset: str          # R2 URI to generated ChatML JSONL
-    cost_summary_json: str
+    dataset: str  # JSONL: chat rows {"messages"} (grounded adds context, source_url) or row_schema objects
 
 
 class UnslothTrainInputs(BaseModel):
@@ -337,7 +343,9 @@ NODE_REGISTRY: dict[NodeType, dict] = {
         "runtime": "cpu",
     },
     NodeType.SYNTH_DISTILABEL: {
-        "description": "Generate synthetic training data via a teacher LLM (default: Nemotron Super via Nebius Token Factory).",
+        "description": "Synthetic data from Nemotron 3 Super on Token Factory: self-instruct, evol-instruct, magpie, "
+                       "grounded Q&A from a web-research corpus (rows keep context and source_url), or structured "
+                       "rows matching a JSON Schema (row_schema).",
         "inputs_schema": SynthDistilabelInputs,
         "outputs_schema": SynthDistilabelOutputs,
         "runtime": "cpu",

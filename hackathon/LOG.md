@@ -136,3 +136,4 @@ worktrees:
   - Follow-ups: healthcheck → /livez after backend-w4; prod Dockerfiles into CI (qa).
   - Unverified until a VM exists: certificates, hairpin NAT, bucket CORS.
   - Review dispatched (opus; security and data-loss focus); reviewer id a17a778021092458a.
+- 2026-10-21T12:36Z frontend-w4 review (sonnet): Needs fixes. Important: the golden-run link filters only the newest 50 runs client-side, and the seeded run keeps old timestamps (→ limit 500 + a ponytail note); the link is unstyled under Tailwind preflight (WCAG 1.4.1). Golden-run-by-filter ruling accepted. Minors sent too: toast text capped at 300 chars; toast a11y (aria-live container, pause on hover/focus, named dismiss); double alert; null-loss tests; copy (no repo path shown to the public; LossChart status-aware); ponytail -7 lines. → fix round 1 (implementer a72185804cc1bd460). For qa-w4: one Playwright check at ORCHAPOD_ANON_SCALE=0.1 that `fits:false` disables Run.

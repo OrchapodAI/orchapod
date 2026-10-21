@@ -124,6 +124,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - ruff 0.17.1 (`uv tool install ruff`) · gitleaks 8.30.1 (`brew install gitleaks`)
 - Playwright MCP (`claude mcp add -s project playwright -- npx @playwright/mcp@latest`, in .mcp.json)
 - Plugins: superpowers 6.3.0, ponytail, episodic-memory (already installed) · nebius CLI: deferred to G2
+- jsonschema in the shared venv (data-w2; also pinned in requirements-dev.txt) · images to rebuild after data-w2 merges: orchapod/synth-distilabel:dev (5 months stale), orchapod/web-research:dev (new), orchapod/data-prep:dev
 ## Spend to date (per day, per key)
 - 2026-10-20: $1.29 (vast.ai A100 SXM4 80 GB at $1.2485/h, 48 min, spike 4; instance destroyed)
 ## Golden path status (last real run: id, date, cost, result)

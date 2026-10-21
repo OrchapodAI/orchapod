@@ -65,6 +65,26 @@ async def test_node_containers_get_host_docker_internal_on_linux_too(monkeypatch
     assert {"ORCHAPOD_CONTROL_URL=http://host.docker.internal:8003", "ORCHAPOD_R2_ENDPOINT=http://host.docker.internal:9000"} <= set(argv)
 
 
+async def test_node_containers_carry_their_run_and_api_for_the_startup_sweep(monkeypatch):
+    """The API's startup sweep finds the containers it started (a teardown in flight dies with the process) by these labels."""
+    argvs = []
+
+    async def fake_exec(*argv, **kwargs):
+        argvs.append(argv)
+        proc = AsyncMock(returncode=0)
+        proc.communicate.return_value = (b"c0ffee\n", b"")
+        return proc
+
+    monkeypatch.setattr(local_docker.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(local_docker.shutil, "which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr(local_docker, "_resolve_image", lambda image: "orchapod/data-prep:dev")
+    env = {"ORCHAPOD_RUN_ID": "5b0c0c4e-0000-4000-8000-000000000001", "ORCHAPOD_CONTROL_URL": "http://localhost:8002"}
+    await LocalDockerProvider().provision(None, "ghcr.io/bangadpurva/data-prep:latest", env)
+    (argv,) = argvs
+    labels = [argv[i + 1] for i, a in enumerate(argv) if a == "--label"]
+    assert labels == ["orchapod.run_id=5b0c0c4e-0000-4000-8000-000000000001", "orchapod.control_url=http://localhost:8002"]
+
+
 async def test_an_unreadable_exit_code_fails_instead_of_reading_as_success(monkeypatch):
     async def fake_exec(*argv, **kwargs):
         proc = AsyncMock(returncode=1)

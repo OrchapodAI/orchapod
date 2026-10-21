@@ -138,6 +138,19 @@ def nebius_cli(tmp_path, monkeypatch):
     return SimpleNamespace(path=cli, calls=tmp_path / "calls")
 
 
+@pytest.fixture
+def docker_cli(tmp_path, monkeypatch):
+    """`docker` on the API host's PATH, so no test reaches the real daemon (other APIs' and projects' containers): `ps`
+    prints the lines of `listing`; every call's arguments are appended to `calls`."""
+    cli, listing, calls = tmp_path / "bin" / "docker", tmp_path / "ps", tmp_path / "docker-calls"
+    cli.parent.mkdir(exist_ok=True)
+    listing.write_text("")
+    cli.write_text(f'#!/bin/sh\necho "$@" >> {calls}\nif [ "$1" = ps ]; then cat {listing}; fi\n')
+    cli.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{cli.parent}{os.pathsep}{os.environ['PATH']}")
+    return SimpleNamespace(path=cli, listing=listing, calls=calls)
+
+
 EVERY_RUNTIME = """
 name: g
 nodes:
@@ -565,7 +578,7 @@ async def test_one_node_run_per_run_and_node(db):
         await db.commit()
 
 
-async def test_startup_sweep_fails_orphaned_runs(db, provider):
+async def test_startup_sweep_fails_orphaned_runs(db, provider, docker_cli):
     run = await seed(db, status=RunStatus.RUNNING)
     for node_id, status, pod in [("a", NodeStatus.SUCCEEDED, None), ("b", NodeStatus.RUNNING, "b"), ("c", NodeStatus.PENDING, None)]:
         db.add(NodeRun(run_id=run.id, node_id=node_id, node_type="data-prep", status=status,
@@ -589,6 +602,46 @@ async def test_startup_sweep_fails_orphaned_runs(db, provider):
     assert [rows[i].status for i in "abc"] == [NodeStatus.SUCCEEDED, NodeStatus.FAILED, NodeStatus.PENDING]
     assert rows["b"].error == rows2["b"].error == "control plane restarted"
     assert provider.terminated == ["b"]
+
+
+async def test_the_startup_sweep_stops_this_apis_containers_of_runs_that_are_over_or_unknown(db, docker_cli, monkeypatch):
+    """A teardown in flight dies with the API (qa-w6: a cancel mid-provision, then a shutdown), and a stub e2e's database is
+    thrown away. Only containers LocalDocker labelled for this API are touched: never another project's, nor those of
+    another API on this host (its runs are unknown here)."""
+    monkeypatch.setenv("ORCHAPOD_CONTROL_URL", "http://localhost:8002")
+    mid, over, waiting = [await seed(db, status=s) for s in (RunStatus.RUNNING, RunStatus.CANCELLED, RunStatus.PENDING)]
+    db.add(NodeRun(run_id=mid.id, node_id="a", node_type="data-prep", status=NodeStatus.RUNNING,
+                   gpu_provider="local-docker", gpu_pod_id="c-recorded"))
+    await db.commit()
+    unknown, ours, other_api = uuid.uuid4(), "http://localhost:8002", "http://127.0.0.1:8003"
+    docker_cli.listing.write_text("".join(f"{cid}\t{run_id}\t{url}\n" for cid, run_id, url in [
+        ("c-recorded", mid.id, ours),     # the running node's pod: terminated once, by the sweep's first half
+        ("c-over", over.id, ours),        # cancelled mid-provision, then the API stopped
+        ("c-unknown", unknown, ours),     # a run this database never had
+        ("c-waiting", waiting.id, ours),  # a run that is neither over nor unknown
+        ("c-other-api", unknown, other_api),
+        ("c-unlabelled", "", ""),         # what docker prints for a container without the labels
+    ]))
+
+    await ex.sweep(db)
+    await drain()
+
+    calls = docker_cli.calls.read_text().splitlines()
+    assert [c.split(" ")[:5] for c in calls if c.startswith("ps ")] == [["ps", "-a", "--no-trunc", "--filter",
+                                                                         "label=orchapod.run_id"]]
+    assert sorted(c for c in calls if not c.startswith("ps ")) == sorted(
+        f"{verb} {cid}" for cid in ("c-recorded", "c-over", "c-unknown") for verb in ("stop -t 30", "rm -f"))
+
+
+async def test_a_docker_that_hangs_never_holds_up_the_api_start(db, provider, docker_cli, monkeypatch, caplog):
+    docker_cli.path.write_text("#!/bin/sh\nexec sleep 5\n")  # Docker Desktop half up
+    monkeypatch.setattr(ex, "DOCKER_PS_TIMEOUT_S", 0.2)
+    run = await seed(db, status=RunStatus.RUNNING)
+
+    await asyncio.wait_for(ex.sweep(db), 3)
+
+    await db.refresh(run)
+    assert run.status == RunStatus.FAILED and "docker ps took over 0.2 s" in caplog.text
 
 
 async def test_startup_runs_the_sweep_and_creates_the_bucket(monkeypatch):

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { api, explainError } from "@/lib/api";
+import { api, apiDate, explainError } from "@/lib/api";
 import { applyRunEvent, canRetry, type RunViewState } from "@/lib/runEvents";
 import { useRunStream } from "@/lib/ws";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -55,10 +55,10 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
     for (const event of events.slice(applied.current)) {
       setView((v) => v && applyRunEvent(v, event));
       if (event.type === "node_status" && event.status === "running") setActiveNodeId(event.node_id);
-      if (event.type === "artifact") {
-        load(); // the new artifact, and the node's usd once its cost_json lands
-        if (event.kind === "endpoint") setTab("endpoint"); // Endpoint is ready — jump to endpoint tab
-      }
+      // The executor commits before it broadcasts, so a snapshot now also has what the page missed (NodeRun rows
+      // created after it opened); an artifact brings the node's usd once its cost_json lands.
+      if (event.type === "run_status" || event.type === "node_status" || event.type === "artifact") load();
+      if (event.type === "artifact" && event.kind === "endpoint") setTab("endpoint"); // Endpoint is ready — jump to endpoint tab
       if (event.type === "endpoint_expiry" && event.expires_at) setExpiresAt(event.expires_at);
     }
     applied.current = events.length;
@@ -106,6 +106,7 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
       setAttempt((a) => a + 1);
     } catch (err) {
       setError(explainError(err));
+      load(); // a 409 (retried elsewhere, still stopping) means the node and button state are stale
     } finally {
       setRetrying(null);
     }
@@ -157,7 +158,7 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
           </div>
           <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>
             {[run.gpu_provider && `GPU: ${run.gpu_provider}`,
-              run.started_at && `Started ${new Date(run.started_at).toLocaleTimeString()}`].filter(Boolean).join("  ·  ")}
+              run.started_at && `Started ${apiDate(run.started_at).toLocaleTimeString()}`].filter(Boolean).join("  ·  ")}
           </div>
         </div>
         <div className="spacer" />

@@ -59,20 +59,6 @@ export interface Run {
   created_at: string;
 }
 
-export interface NodeRun {
-  id: string;
-  run_id: string;
-  node_id: string;
-  node_type: string;
-  status: NodeStatus;
-  started_at: string | null;
-  finished_at: string | null;
-  inputs: Record<string, unknown>;
-  outputs: Record<string, string>;
-  logs_uri: string | null;
-  error: string | null;
-}
-
 export interface Artifact {
   id: string;
   node_run_id: string;

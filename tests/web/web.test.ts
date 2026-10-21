@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { yamlValue, buildYamlFromGraph, planYaml } from "../../apps/web/lib/workflowYaml.ts";
-import { api, explainError } from "../../apps/web/lib/api.ts";
+import { api, apiDate, explainError } from "../../apps/web/lib/api.ts";
 import { applyRunEvent, canRetry } from "../../apps/web/lib/runEvents.ts";
 import { defaultInputs } from "../../apps/web/lib/nodeForms.ts";
 
@@ -124,4 +124,11 @@ test("nothing made up on screen (team, owner, counts, budget) and no links to th
   for (const page of pages.filter((p) => p.endsWith(".tsx"))) assert.doesNotMatch(read(`app/${page}`), /orbital-research|>EM</, page);
   const sidebar = read("components/Sidebar.tsx");
   for (const fake of [/count: "\d+"/, /orbital|Elena|\$250/, /href: "\/(inference|endpoints)"/]) assert.doesNotMatch(sidebar, fake);
+});
+
+test("API datetimes are UTC: a naive one gets Z, one with a zone is kept", () => {
+  const t = Date.UTC(2026, 9, 21, 0, 32, 20, 222);
+  assert.equal(apiDate("2026-10-21T00:32:20.222824").getTime(), t);
+  assert.equal(apiDate("2026-10-21T00:32:20.222Z").getTime(), t);
+  assert.equal(apiDate("2026-10-21T02:32:20.222+02:00").getTime(), t);
 });

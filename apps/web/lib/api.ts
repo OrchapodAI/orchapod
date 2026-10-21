@@ -1,5 +1,5 @@
 import type {
-  Workflow, Run, NodeRun, Artifact, BaseModel, PublicDataset, NodeTypeMeta, NodeType, TrainingMethod,
+  Workflow, Run, BaseModel, PublicDataset, NodeTypeMeta, NodeType, TrainingMethod,
   DeployRequest, DeployResponse, InferenceEndpoint, ExtendResponse, RegisteredModel, ArtifactListItem,
   AgentPlan, AgentRunOut, AgentReport, Plan, RunSummary,
 } from "./types";
@@ -20,6 +20,9 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   }
   return res.json() as Promise<T>;
 }
+
+/** The API sends naive UTC datetimes (no zone); new Date() would read them as local time. */
+export const apiDate = (iso: string) => new Date(/(Z|[+-]\d\d:\d\d)$/i.test(iso) ? iso : `${iso}Z`);
 
 /** One readable sentence for a failed call: the /agent page's error state. */
 export function explainError(err: unknown): string {
@@ -87,12 +90,6 @@ export const api = {
     },
     summary(id: string): Promise<RunSummary> {
       return req(`/runs/${id}/summary`);
-    },
-    nodes(id: string): Promise<NodeRun[]> {
-      return req(`/runs/${id}/nodes`);
-    },
-    artifacts(id: string): Promise<Artifact[]> {
-      return req(`/runs/${id}/artifacts`);
     },
     costEstimate(id: string): Promise<{ nodes: { node_id: string; node_type: NodeType; quotes: unknown[] }[] }> {
       return req(`/runs/${id}/cost-estimate`);

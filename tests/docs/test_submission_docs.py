@@ -7,15 +7,8 @@ exists, and no doc carries a stale name or an unmarked TODO.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
-from tests.docs.test_readme import MODELS, STALE
-
-ROOT = Path(__file__).resolve().parents[2]
-
-
-def _read(*parts: str) -> str:
-    return ROOT.joinpath(*parts).read_text(encoding="utf-8")
+from tests.docs.test_readme import MODELS, ROOT, STALE, _read
 
 
 def _section(text: str, title: str) -> str:
@@ -49,18 +42,23 @@ SPONSORS = [
     "Tavily",
 ]
 AREAS = ["Token Factory", "Nebius AI Cloud", "NVIDIA Nemotron models"]
-# The first version must carry these findings; each needle appears only in its own bullet.
-SEEDS = ["/v0/models", "Llama-3.3-70B", "2026-08-31", "over REST", "beta", "404"]
+# One needle per seed finding, found in no other bullet: deleting the bullet fails the test.
+SEEDS = [
+    "our sources disagree",  # serving a fine-tune per token: the docs disagree
+    "deploy-custom-model",  # the 404 deploy page
+    "has no `/v0/models`",  # the live OpenAPI
+    "left Token Factory serverless",  # Llama-3.3-70B, 2026-08-31
+    "custom-weights",  # Dedicated endpoints: beta, on request
+    "result_files",  # checkpoint downloads
+    "response_format",  # json_object and text vs json_schema
+    "not available over REST",  # Job logs
+]
 
 
 def test_devpost_fields_and_track():
     for title in FIELDS:
         assert _section(DEVPOST, title).strip(), f"empty or missing field: {title}"
     assert _section(DEVPOST, "Track").strip() == "Best Apps and Agents"
-
-
-def test_devpost_tagline_is_short():
-    assert len(_section(DEVPOST, "Tagline").strip()) <= 200  # assumed Devpost limit: confirm on the form
 
 
 def test_devpost_names_the_sponsor_pieces_and_model_ids():

@@ -1,6 +1,6 @@
 # Devpost entry: Orchapod.ai
 
-Copy each section into the matching Devpost field. The text describes the design pinned in `docs/contracts.md`, mirrors `README.md` and reports no result. TODO(D8) marks each link and each claim that waits for a spike or a real run; before submitting, clear them all and re-read the rest against the golden run.
+Copy each section into the matching Devpost field; clear every TODO(D8) before submitting.
 
 ## Title
 
@@ -26,18 +26,18 @@ Three intents define "done", and each must run from the chat box with no manual 
 Every team wants a cheaper, faster, private specialist model, and today that takes an ML engineer and a pile of GPU plumbing. Orchapod turns it into a costed, capped and observable workflow.
 
 - **It makes models, not only calls them.** Nemotron teaches and judges new specialist models, and every one is measured against its base.
-- **An evaluation you can trust.** Base and tuned models get identical prompts and decoding. A Nemotron 3 Ultra judge sees the question, the reference answer and the source passage, and scores the two answers in both orders; a win counts only if it holds in both.
+- **An evaluation you can trust.** Base and tuned models get identical prompts and decoding. A Nemotron 3 Ultra judge sees the question, the reference answer and the source passage, and scores the two answers in both orders; a win counts only if it holds in both. TODO(D8): `judge-eval` is not built yet; the win rate and the judge's agreement between the two orders come from the golden run.
 - **Cost is a first-class output.** Every billed call (tokens, Tavily credits, GPU hours) is metered per node, estimated before a run and capped during it.
 
 ### How we built it
 
 A typical run: research the topic, generate grounded synthetic data, prepare the splits, fine-tune and serve, judge the tuned model against its base, compare side by side. Every step is a node: a Docker container that reads its inputs as JSON and writes artifacts, logs and a cost record through one SDK. A FastAPI control plane with a DAG executor runs the nodes, and a Next.js app shows the run live: node timeline, logs, cost and artifacts. The fine-tune-and-serve step has two lanes, and a plan can take either without changing the rest. Where each sponsor piece is used:
 
-- **NVIDIA Nemotron on Nebius Token Factory.** Every Agent run starts with a Nemotron call (the plan) and ends with one (the report). Nemotron 3 Super (`nvidia/nemotron-3-super-120b-a12b`) plans the pipeline and teaches, writing the synthetic data. Nemotron 3 Ultra (`nvidia/Nemotron-3-Ultra-550b-a55b`) judges base against tuned. Nemotron 3.5 Lightning (`nvidia/Nemotron-3_5-Lightning`) filters data quality and writes the run report. All calls go to `https://api.tokenfactory.nebius.com/v1` through one client that prices every call and refuses to send our key to any other host.
+- **NVIDIA Nemotron on Nebius Token Factory.** A run planned from a sentence starts with a Nemotron call (the plan), a run started from a template skips it, and every run ends with one (the report). Nemotron 3 Super (`nvidia/nemotron-3-super-120b-a12b`) plans the pipeline and teaches, writing the synthetic data. Nemotron 3 Ultra (`nvidia/Nemotron-3-Ultra-550b-a55b`) judges base against tuned. Nemotron 3.5 Lightning (`nvidia/Nemotron-3_5-Lightning`) filters data quality and writes the run report. All calls go to `https://api.tokenfactory.nebius.com/v1` through one client that prices every call and refuses to send our key to any other host. TODO(D8): no live call has been made yet (the key is not set); replace this with the golden run's calls and cost.
 - **Nebius Token Factory fine-tuning (Lane A).** `tf-finetune` runs a LoRA fine-tune of a Llama model and keeps the checkpoint with the lowest validation loss. Token Factory does not fine-tune Nemotron, so Nemotron teaches and judges the Llama model instead. TODO(D8): spike 1 decides how it is served, as a per-token LoRA model on Token Factory or with `vllm-serve` and the adapter.
 - **Nebius AI Cloud Serverless Jobs (Lane B).** `unsloth-train` runs as a Job with a 1-hour timeout and trains a 16-bit LoRA on a Nemotron student, `nvidia/Llama-3.1-Nemotron-Nano-8B-v1`. TODO(D8): GPU quota, and the first Job on Nebius.
 - **Nebius AI Cloud Serverless Endpoints (Lane B).** `vllm-serve` creates an endpoint that serves the tuned model with vLLM behind a bearer token. It registers an expiry (30 minutes by default) and the control plane deletes the endpoint then, so an endpoint never exists without an expiry. TODO(D8): the first endpoint on Nebius, and whether vLLM loads the adapter next to the base model.
-- **Nebius Object Storage.** An S3-compatible bucket holds datasets, checkpoints and artifacts (MinIO locally).
+- **Nebius Object Storage.** An S3-compatible bucket holds datasets, checkpoints and artifacts (MinIO locally). TODO(D8): so far only MinIO has been used; the first run against Nebius Object Storage.
 - **Tavily.** `web-research` calls Tavily Search and Extract and splits the pages into passages with their source URLs, metering credits per call. The passages ground the synthetic Q&A, so every grounded answer carries its source URL. TODO(D8): credits used by the golden run.
 
 ## Built with

@@ -8,16 +8,19 @@ PNPM ?= pnpm --config.verify-deps-before-run=false
 up:        ; $(COMPOSE) up -d postgres redis minio
 down:      ; $(COMPOSE) down
 # check = lint + unit tests + web tests. `make check E2E=1` adds the stub e2es: intent #2 through the workflow API, then the three
-# canonical intents through the Agent (--strict: an intent that cannot run yet, e.g. no vllm-serve to contract, is a failure here, not a pass).
+# canonical intents through the Agent. SKIP-SITE(ml-w4): an intent that cannot run yet (vllm-serve) SKIPs loudly and does not fail it;
+# ml-w4's acceptance is `python scripts/e2e_agent.py --stub --strict` -> 3 PASS, then the marker in scripts/e2e_agent.py says what to delete.
 # They need Docker and `make up` and build and retag the shared orchapod/<node>:dev images, so only the orchestrator runs them, after merges.
 ifeq ($(E2E),1)
-E2E_STEP = $(PY) scripts/e2e_demo.py --stub && $(PY) scripts/e2e_agent.py --stub --strict
+E2E_STEP = $(PY) scripts/e2e_demo.py --stub && $(PY) scripts/e2e_agent.py --stub
 else
 E2E_STEP = echo "SKIP stub e2e: set E2E=1 (orchestrator/integration only)"
 endif
 check:     ; ruff check apps packages containers && $(PY) -m pytest tests -q && $(PNPM) -C apps/web test && $(E2E_STEP)
-# The Playwright smoke of the web app, STUB and $0 (Docker, `make up`, node and pnpm): scripts/e2e_ui.py starts the API and `next dev`.
-# UI_ARGS=--strict fails the steps whose piece is not merged yet. pnpm 11 exits 1 on apps/web (ERR_PNPM_IGNORED_BUILDS: sharp, harmless): hence the "-".
+# The Playwright smoke of the web app, STUB and $0 (Docker, `make up`, node and pnpm): scripts/e2e_ui.py starts the API and `next dev`, and
+# builds and retags the same shared orchapod/<node>:dev images, so it is orchestrator-only too, like `make check E2E=1`.
+# SKIP-SITE(ml-w4): UI_ARGS=--strict fails the steps whose piece is not merged yet (vllm-serve).
+# pnpm 11 exits 1 on apps/web (ERR_PNPM_IGNORED_BUILDS: sharp, harmless): hence the "-" before its install.
 ui-deps:
 	-pnpm -C apps/web install --frozen-lockfile
 	pnpm -C tests/ui install --frozen-lockfile

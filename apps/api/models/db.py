@@ -120,6 +120,17 @@ class Artifact(SQLModel, table=True):
     created_at:  datetime = Field(default_factory=utcnow)
 
 
+class AgentRun(SQLModel, table=True):
+    """A run the Orchapod Agent started (contracts "Agent API"); its report is cached here (R8)."""
+    __tablename__ = "agent_run"
+    run_id:     uuid.UUID = Field(foreign_key="run.id", primary_key=True)
+    intent:     str
+    plan:       dict = Field(sa_column=Column(JSON))
+    estimate:   dict = Field(sa_column=Column(JSON))
+    report_md:  Optional[str] = None          # written on the first GET after a terminal status; retry clears it
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 class Spend(SQLModel, table=True):
     """Control-plane spend (planner, reporter, /compare): the per-UTC-day ledger the day cap counts (R6)."""
     id:         Optional[int] = Field(default=None, primary_key=True)

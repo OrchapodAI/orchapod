@@ -1,0 +1,35 @@
+{
+  "slug": "real-estate-compliance",
+  "title": "Llama 3B tuned on US real-estate compliance",
+  "intent": "Fine-tune Llama 3B on US real-estate compliance: Fair Housing Act, RESPA, TILA/TRID, state licensing",
+  "rationale": "Tavily gathers the regulations, Nemotron 3 Super writes grounded Q&A from them, and Token Factory fine-tunes Llama 3.2 3B with LoRA. Token Factory's per-token LoRA deploy is unverified for 3B (spike 1), so vllm-serve hosts base and adapter on one AI Cloud endpoint for 30 min; Nemotron 3 Ultra then judges base against tuned on held-out questions with the source passage as reference.",
+  "plan": {
+    "name": "real-estate-compliance-llama-3b",
+    "nodes": [
+      {"id": "research", "type": "web-research", "needs": [], "inputs": {
+        "queries": ["Fair Housing Act obligations of real estate agents and landlords",
+                    "RESPA Section 8 kickbacks and referral fees in real estate",
+                    "TILA-RESPA integrated disclosure (TRID) loan estimate and closing disclosure timing",
+                    "US state real estate license requirements and continuing education",
+                    "seller property condition disclosure requirements by state"],
+        "max_pages": 20}},
+      {"id": "synth", "type": "synth-distilabel", "needs": ["research"], "inputs": {
+        "pipeline_template": "grounded", "corpus": "${{ nodes.research.outputs.corpus }}",
+        "teacher_model": "nvidia/nemotron-3-super-120b-a12b", "n_samples": 300, "max_usd": 0.5, "max_tokens": 800,
+        "instructions": "Questions a US real-estate agent, broker or loan officer asks about compliance; answers in at most three sentences, using only the passage."}},
+      {"id": "prep", "type": "data-prep", "needs": ["synth"], "inputs": {
+        "dataset": "${{ nodes.synth.outputs.dataset }}", "format": "chatml", "train_split": 0.8, "test_split": 0.1}},
+      {"id": "finetune", "type": "tf-finetune", "needs": ["prep"], "inputs": {
+        "model": "meta-llama/Llama-3.2-3B-Instruct", "train_data": "${{ nodes.prep.outputs.train_jsonl }}",
+        "eval_data": "${{ nodes.prep.outputs.eval_jsonl }}", "n_epochs": 2}},
+      {"id": "serve", "type": "vllm-serve", "needs": ["finetune"], "inputs": {
+        "model": "meta-llama/Llama-3.2-3B-Instruct", "lora_adapter": "${{ nodes.finetune.outputs.lora_adapter }}",
+        "keep_alive_min": 30}},
+      {"id": "evaluate", "type": "judge-eval", "needs": ["prep", "serve"], "inputs": {
+        "test_data": "${{ nodes.prep.outputs.test_jsonl }}",
+        "base_model_ref": "${{ nodes.serve.outputs.base_model_ref }}",
+        "tuned_model_ref": "${{ nodes.serve.outputs.model_ref }}",
+        "judge_model": "nvidia/Nemotron-3-Ultra-550b-a55b", "max_samples": 30}}
+    ]
+  }
+}

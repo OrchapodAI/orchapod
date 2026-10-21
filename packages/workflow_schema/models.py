@@ -294,6 +294,7 @@ class WorkflowSchema(BaseModel):
 
 # ---------------------------------------------------------------------------
 # Node type registry (used by agent + canvas to list available nodes)
+# Row keys: description, inputs_schema, outputs_schema, runtime (cpu | gpu | api), hidden (the agent never plans it).
 # ---------------------------------------------------------------------------
 
 NODE_REGISTRY: dict[NodeType, dict] = {
@@ -309,18 +310,21 @@ NODE_REGISTRY: dict[NodeType, dict] = {
         "inputs_schema": HFImportInputs,
         "outputs_schema": HFImportOutputs,
         "runtime": "cpu",
+        "hidden": True,  # the agent never plans it: no container
     },
     NodeType.FILE_UPLOAD: {
         "description": "Upload a CSV/JSONL/Parquet file from your computer.",
         "inputs_schema": FileUploadInputs,
         "outputs_schema": FileUploadOutputs,
         "runtime": "cpu",
+        "hidden": True,  # the agent never plans it: no container
     },
     NodeType.S3_IMPORT: {
         "description": "Read CSV/JSONL/Parquet files from an S3-compatible bucket (AWS, R2, MinIO).",
         "inputs_schema": S3ImportInputs,
         "outputs_schema": S3ImportOutputs,
         "runtime": "cpu",
+        "hidden": True,  # the agent never plans it: no container
     },
     NodeType.DATA_PREP: {
         "description": "Load (r2 or Hugging Face), convert to chat or keep structured rows, dedupe, "
@@ -334,6 +338,7 @@ NODE_REGISTRY: dict[NodeType, dict] = {
         "inputs_schema": AutoLabelCleanlabInputs,
         "outputs_schema": AutoLabelCleanlabOutputs,
         "runtime": "cpu",
+        "hidden": True,  # the agent never plans it: no container
     },
     NodeType.SYNTH_DISTILABEL: {
         "description": "Generate synthetic training data via a teacher LLM (default: Nemotron Super via Nebius Token Factory).",
@@ -352,6 +357,7 @@ NODE_REGISTRY: dict[NodeType, dict] = {
         "inputs_schema": DistillSFTInputs,
         "outputs_schema": DistillSFTOutputs,
         "runtime": "gpu",
+        "hidden": True,  # the agent never plans it: off the demo path
     },
     NodeType.QUANTIZE: {
         "description": "Quantize a model to GGUF (for Ollama/llama.cpp) or AWQ (for vLLM).",
@@ -364,6 +370,7 @@ NODE_REGISTRY: dict[NodeType, dict] = {
         "inputs_schema": LMEvalInputs,
         "outputs_schema": LMEvalOutputs,
         "runtime": "gpu",
+        "hidden": True,  # the agent never plans it: off the demo path
     },
     NodeType.VLLM_SERVE: {
         "description": "Deploy a model as an OpenAI-compatible endpoint via vLLM.",

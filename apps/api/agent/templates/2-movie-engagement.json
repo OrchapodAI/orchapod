@@ -1,0 +1,23 @@
+{
+  "slug": "movie-engagement",
+  "title": "Synthetic movie likes, shares and subscribes",
+  "intent": "Generate synthetic data of movie likes, shares and subscribes",
+  "rationale": "Nemotron 3 Super writes schema-checked rows in batches with realistic distributions, and data-prep validates, dedupes and profiles them. No training: the dataset is the result, with a download link and a per-field stats card.",
+  "plan": {
+    "name": "movie-engagement-synthetic-data",
+    "nodes": [
+      {"id": "synth", "type": "synth-distilabel", "needs": [], "inputs": {
+        "pipeline_template": "structured", "teacher_model": "nvidia/nemotron-3-super-120b-a12b",
+        "n_samples": 500, "max_usd": 0.25, "max_tokens": 2500,
+        "row_schema": {"type": "object", "additionalProperties": false,
+                       "required": ["user_id", "movie_title", "action", "timestamp", "device"],
+                       "properties": {"user_id": {"type": "string"}, "movie_title": {"type": "string"},
+                                      "action": {"enum": ["like", "share", "subscribe"]},
+                                      "timestamp": {"type": "string", "format": "date-time"},
+                                      "device": {"enum": ["mobile", "tv", "web", "tablet"]}}},
+        "instructions": "Events of a streaming service over the last 30 days. About 60% like, 30% share, 10% subscribe; devices about 45% mobile, 30% tv, 20% web, 5% tablet; around 150 distinct users (ids like u_00042), some far more active than others; real, varied movie titles from several decades and genres; ISO-8601 UTC timestamps with more events in the evening."}},
+      {"id": "prep", "type": "data-prep", "needs": ["synth"], "inputs": {
+        "dataset": "${{ nodes.synth.outputs.dataset }}", "format": "structured"}}
+    ]
+  }
+}

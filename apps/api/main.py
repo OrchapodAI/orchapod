@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.database import AsyncSessionLocal, create_tables
 from api.executor.run_workflow import sweep
 from api.services.events import event_bus
-from api.routes import workflows, runs, models, internal, ws, inference, model_registry, artifacts
+from api.routes import agent, workflows, runs, models, internal, ws, inference, model_registry, artifacts
 from packages.providers.vastai import register_providers
 
 
@@ -60,6 +60,7 @@ app.include_router(model_registry.router,  prefix="/models",    tags=["models"])
 app.include_router(internal.router,        prefix="/internal",  tags=["internal"])
 app.include_router(inference.router,       prefix="/inference", tags=["inference"])
 app.include_router(artifacts.router,       prefix="/artifacts", tags=["artifacts"])
+app.include_router(agent.router,           prefix="/agent",     tags=["agent"])
 
 # WebSocket
 app.include_router(ws.router, tags=["websocket"])

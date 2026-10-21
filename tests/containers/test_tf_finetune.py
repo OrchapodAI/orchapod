@@ -215,3 +215,12 @@ def test_estimate_over_the_node_budget_fails_before_any_call(node, tf_routes, mo
     with pytest.raises(SystemExit):
         node()  # ~65 tokens × 2 epochs × $0.001
     assert seen == [] and "ORCHAPOD_MAX_COST_USD" in last_error()
+
+
+def test_a_finished_job_is_not_cancelled_when_a_later_call_fails(node, tf_routes):
+    seen = tf_routes(ft, routes(get=job("succeeded", trained_tokens=4000), events=httpx.Response(401)))
+    with pytest.raises(SystemExit):
+        node()
+    assert last_error().startswith("token_factory auth 401")  # the real error stays the node's last ERROR line
+    assert not any(r.url.path.endswith("/cancel") for r in seen)
+    ft.cost.add.assert_called_once_with("token_factory", LLAMA, trained_tokens=4000)

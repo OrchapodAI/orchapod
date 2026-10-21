@@ -36,15 +36,16 @@ def fetch(uri: str, name: str, workdir: Path) -> Path | None:
     return path if path.read_bytes().strip() else None
 
 
-def poll(tf: TokenFactory, job: dict, deadline: float) -> dict:
-    """Poll until the job is done: steps → log.progress, new job events → the log."""
+def poll(tf: TokenFactory, job: dict, deadline: float) -> None:
+    """Poll until the job is done: steps → log.progress, new job events → the log. Updates `job` in place, so the
+    caller's `finally` sees the last status even when polling stops early."""
     seen = set()
     while job["status"] not in DONE:
         if time.monotonic() > deadline:
             fail(f"timeout: Token Factory job {job['id']} is still {job['status']} after timeout_min; cancelling it")
         time.sleep(POLL_S)
         try:
-            job = tf.fine_tuning.get(job["id"])
+            job.update(tf.fine_tuning.get(job["id"]))
             for event in sorted(tf.fine_tuning.events(job["id"]), key=lambda e: str(e.get("created_at"))):
                 if (key := (event.get("created_at"), event.get("message"))) not in seen:
                     seen.add(key)
@@ -55,7 +56,6 @@ def poll(tf: TokenFactory, job: dict, deadline: float) -> dict:
             log.warn(f"poll failed, next try in {POLL_S} s: {e}")
             continue
         log.progress(job.get("trained_steps") or 0, job.get("total_steps") or 0, extra={"phase": job["status"]})
-    return job
 
 
 def main():
@@ -93,7 +93,7 @@ def main():
             log.warn(f"create failed ({e}), but {job['id']} carries our suffix {suffix}: continuing with it")
         job_id = job["id"]
         log.info(f"Token Factory job {job_id}: {model}, hyperparameters {hp}, validation file {val_id}")
-        job = poll(tf, job, deadline)
+        poll(tf, job, deadline)
         if job["status"] != "succeeded":
             fail(f"Token Factory job {job_id} {job['status']}: {(job.get('error') or {}).get('message') or 'no message'}")
 

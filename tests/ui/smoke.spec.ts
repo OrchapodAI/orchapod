@@ -106,7 +106,7 @@ test("templates: one click runs intent #2 to a finished run with its dataset car
 // on real STUB data, and by the next test on a run served from a fixture, which needs neither judge-eval nor POST /compare.
 async function checkEvalView(page: Page): Promise<void> {
   await page.getByRole("button", { name: "eval", exact: true }).click({ timeout: 180_000 }); // the tab appears when judge-eval is done
-  await expect(page.getByText("Win rate, tuned vs base", { exact: true })).toBeVisible();
+  await expect(page.getByText("Win rate, tuned vs base")).toBeVisible(); // not exact: the label has a STUB pill beside it
   await expect(page.getByText(/Consistency/).first()).toBeVisible();
   await expect(page.getByText("Judged samples", { exact: true })).toBeVisible(); // not "Loading the judged samples…"
   await page.locator("details > summary").first().click(); // a judged sample opens with both orders' reasoning

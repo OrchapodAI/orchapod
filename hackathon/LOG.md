@@ -276,3 +276,8 @@ worktrees:
   - Added test_every_shipped_template_plans_without_errors_at_both_scales: templates #1 and #3 were otherwise guarded only by the Docker e2e.
   - Ledger: qa-w5 fix rounds 0/5. Merged; make check green (737 + web 27). Item 3 (the preempted-Job pin) waits on backend-w5.
   - Unverified until the first CI push: whether ~20 GB fits after the clean-up, and whether the gha cache export copes with 20 GB.
+- 2026-10-21T15:25Z ml-w5 reported DONE: 6 commits b904da4..f50a311 on 0188074; make check 754; 10 rules mutation-tested; $0.
+  - vllm-serve names its endpoint orchapod-<run8>-<node_id>; deletes (never adopts) a leftover found before the create and waits for the name to free; logs the name at WARN; finds and deletes a lost create in finally; bills from just before the create.
+  - Minors done.
+  - Open: (a) at defaults vllm-serve needs $1.16 left vs R14's $1.125 after 25 min of H100, so Lane B needs keep_alive_min ≤ 28 → R14 amendment at merge; (b) the pre-create find() runs the 0/15/45 s recovery loop on the normal path (+45 s); a single lookup suffices (asked of the review).
+  - Review dispatched (opus, spend-safety).

@@ -29,7 +29,9 @@ import httpx
 CAP_USD = 3.0  # ORCHAPOD_MAX_RUN_USD: a plan estimated above it can never run
 # The caps are pinned so a shell's ORCHAPOD_* cannot change the verdict; the UI is anonymous, so full scale is ANON_SCALE=1.
 FULL_CAPS = {"ORCHAPOD_ANON_SCALE": "1", "ORCHAPOD_MAX_RUN_USD": f"{CAP_USD:g}", "ORCHAPOD_MAX_DAY_USD": "15"}
-INTENTS = {"1": "tf-finetune", "2": "structured", "3": "quantize"}  # what each canonical plan contains
+# The slugs of the three canonical templates (apps/api/agent/templates/1-…, 2-…, 3-…). Other templates may exist (a fourth also
+# fine-tunes), so a plan's shape cannot tell them apart; the default run covers these three and no others.
+INTENTS = {"1": "real-estate-compliance", "2": "movie-engagement", "3": "maths-quantize"}
 
 VLLM = ("ml-w4: vllm-serve is not to contract yet (lora_adapter input, model_ref and base_model_ref outputs, runtime api; "
         "contracts \"vllm-serve\")")
@@ -50,10 +52,8 @@ EVAL_KEYS = ("n", "judged", "wins", "ties", "losses", "errors", "win_rate", "con
 # ---------------------------------------------------------------------------
 
 def canonical(templates: list[dict], number: str) -> dict | None:
-    """The template of canonical intent 1, 2 or 3, found by what its plan contains (not by slug)."""
-    if number == "2":
-        return demo.find_intent2(templates)
-    return next((t for t in templates if INTENTS[number] in {n["type"] for n in demo.plan_of(t)["nodes"]}), None)
+    """The template of canonical intent 1, 2 or 3."""
+    return next((t for t in templates if t["slug"] == INTENTS[number]), None)
 
 
 def skip_reasons(errors: list[str], plan: dict) -> list[str] | None:
@@ -183,7 +183,7 @@ def run_all(c: httpx.Client, which: str | None, strict: bool) -> int:
     for number in [which] if which in INTENTS else [] if which else list(INTENTS):
         template = canonical(templates, number)
         if template is None:
-            return demo.fail(f"{len(templates)} templates, none is canonical intent #{number} (a plan with {INTENTS[number]})")
+            return demo.fail(f"{len(templates)} templates, none is canonical intent #{number} (slug {INTENTS[number]!r})")
         todo.append((f"intent #{number}", template["intent"], template))
     if which and which not in INTENTS:
         todo.append(("free-text intent", which, None))

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import e2e_agent as agent
+import e2e_demo as demo
 import httpx
 import pytest
 
@@ -13,6 +14,9 @@ ROOT = Path(__file__).resolve().parents[2]
 SHIPPED = [json.loads(f.read_text()) for f in sorted((ROOT / "apps/api/agent/templates").glob("*.json"))]
 TEMPLATES = [{**t, "estimate": planner.estimate(t["plan"])[0]} for t in SHIPPED]  # what GET /agent/templates serves
 I1, I2, I3 = (agent.canonical(TEMPLATES, n) for n in "123")
+# data-w4's fourth template: it fine-tunes like #1, and a later template must neither steal an intent nor be run by default
+FOURTH = {**I1, "slug": "nebius-docs-specialist", "title": "Llama 8B tuned as a Nebius docs specialist",
+          "intent": "Distill a Nebius docs specialist: fine-tune Llama 3.1 8B on the Nebius docs"}
 
 # What the planner says about template #1 with ml-w3 merged and vllm-serve not yet to contract (ml-w4); template #3 has no errors.
 ERRORS_1 = ["serve: unknown input 'lora_adapter'",
@@ -21,16 +25,16 @@ ERRORS_1 = ["serve: unknown input 'lora_adapter'",
             "evaluate: tuned_model_ref: serve (vllm-serve) has no output 'model_ref'"]
 
 
-def fake_api(errors_by_intent=None, plan_for=None, status=200):
+def fake_api(errors_by_intent=None, plan_for=None, status=200, templates=TEMPLATES):
     """GET /agent/templates and POST /agent/plan the way the STUB planner answers them (plan_for overrides the plan)."""
     errors_by_intent = errors_by_intent or {}
 
     def handler(request):
         if request.url.path == "/agent/templates":
-            return httpx.Response(200, json=TEMPLATES)
+            return httpx.Response(200, json=templates)
         if request.url.path == "/agent/plan":
             intent = json.loads(request.content)["intent"]
-            t = next(t for t in TEMPLATES if t["intent"] == intent)
+            t = next(t for t in templates if t["intent"] == intent)
             body = {"plan": (plan_for or {}).get(intent, t["plan"]), "rationale": "", "estimate": t["estimate"], "warnings": [],
                     "errors": errors_by_intent.get(intent, [])}
             return httpx.Response(status, json=body)
@@ -41,11 +45,25 @@ def fake_api(errors_by_intent=None, plan_for=None, status=200):
 
 # --- which template is which intent ---------------------------------------------------------------------------------------
 
-def test_canonical_intents_are_found_by_what_their_plan_contains():
-    assert {t["slug"] for t in (I1, I2, I3)} == {t["slug"] for t in TEMPLATES}, "each template is exactly one canonical intent"
-    assert any(n["type"] == "tf-finetune" for n in I1["plan"]["nodes"])
+def test_each_canonical_intent_has_its_own_template_and_extra_templates_are_allowed():
+    chosen = [I1, I2, I3]
+    assert all(chosen) and len({t["slug"] for t in chosen}) == 3, "each canonical intent has its own template"
+    assert {t["slug"] for t in chosen} <= {t["slug"] for t in TEMPLATES}  # canonical ⊆ shipped
+    assert any(n["type"] == "tf-finetune" for n in I1["plan"]["nodes"])  # the slugs mean what agent_knowledge.md says
     assert any(n["type"] == "quantize" for n in I3["plan"]["nodes"])
+    assert I2 is demo.find_intent2(TEMPLATES), "the template e2e_demo runs as intent #2 is canonical intent #2"
+    for order in ([FOURTH, *TEMPLATES], [*TEMPLATES, FOURTH]):  # a fourth template that also fine-tunes steals nothing
+        assert [agent.canonical(order, n) for n in "123"] == chosen
     assert agent.canonical([], "1") is None and agent.canonical([I1, I2], "3") is None
+
+
+def test_the_default_run_covers_the_three_canonical_intents_and_no_other_template(capsys, monkeypatch):
+    errors = {I1["intent"]: ERRORS_1, I2["intent"]: ["synth: boom"], I3["intent"]: ["gsm8k: boom"]}  # none reaches a run
+    monkeypatch.setattr(demo, "preflight", lambda: ["no stack in this test"])  # a fourth intent would stop here, at once, not in Docker
+    api = fake_api(errors, templates=[*TEMPLATES, FOURTH])
+    assert agent.run_all(api, None, strict=False) == 1
+    out = capsys.readouterr().out
+    assert out.count("--- intent #") == 3 and "nebius" not in out.lower()
 
 
 # --- SKIP: only the named gaps -------------------------------------------------------------------------------------------

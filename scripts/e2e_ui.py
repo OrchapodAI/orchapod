@@ -42,9 +42,11 @@ def web_env(api_url: str, environ) -> dict[str, str]:
 
 
 def playwright_env(web_url: str, api_url: str, pending: dict, strict: bool, environ) -> dict[str, str]:
-    """What tests/ui reads: where the app and the API are, what cannot run yet, and whether that fails."""
+    """What tests/ui reads: where the app and the API are, what cannot run yet, which templates are the canonical intents, and
+    whether a SKIP fails."""
     env = {k: v for k, v in environ.items() if k not in demo.PAID}
     return env | {"E2E_WEB_URL": web_url, "E2E_API_URL": api_url, "E2E_PENDING": json.dumps(pending),
+                  "E2E_SLUGS": json.dumps({n: agent.INTENTS[n] for n in SPEC_INTENTS}),
                   "E2E_STRICT": "1" if strict else "", "E2E_OUT": str(UI / "test-results")}
 
 
@@ -61,7 +63,7 @@ def ui_pending(c: httpx.Client) -> tuple[dict[str, list[str]], set[str]]:
     for number in SPEC_INTENTS:
         template = agent.canonical(templates, number)
         if template is None:
-            raise RuntimeError(f"none of the {len(templates)} templates is canonical intent #{number}")
+            raise RuntimeError(f"none of the {len(templates)} templates is canonical intent #{number} (slug {agent.INTENTS[number]!r})")
         reply = demo.call(c, "POST", "/agent/plan", json={"intent": template["intent"]})
         if reasons := agent.skip_reasons(reply["errors"], reply["plan"]):
             pending[number] = reasons

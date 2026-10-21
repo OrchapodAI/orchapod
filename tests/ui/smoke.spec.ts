@@ -5,6 +5,8 @@ const API = process.env.E2E_API_URL ?? "";
 const STRICT = process.env.E2E_STRICT === "1";
 // canonical intent -> why it cannot run yet, from the planner's own errors (scripts/e2e_agent.py PENDING)
 const PENDING: Record<string, string[]> = JSON.parse(process.env.E2E_PENDING || "{}");
+// canonical intent -> the slug of its template (scripts/e2e_agent.py INTENTS): later templates may fine-tune too
+const SLUGS: Record<string, string> = JSON.parse(process.env.E2E_SLUGS || "{}");
 
 type Template = { slug: string; title: string; intent: string; plan: { name: string; nodes: { type: string; inputs?: Record<string, unknown> }[] } };
 
@@ -18,9 +20,8 @@ function pending(why: string | string[]): never {
 
 async function template(n: 1 | 2): Promise<Template> {
   const all: Template[] = await (await fetch(`${API}/agent/templates`)).json();
-  const found = all.find((t) => t.plan.nodes.some((x) => (n === 1 ? x.type === "tf-finetune"
-    : x.type === "synth-distilabel" && x.inputs?.pipeline_template === "structured")));
-  if (!found) throw new Error(`none of the ${all.length} templates is canonical intent #${n}`);
+  const found = all.find((t) => t.slug === SLUGS[n]);
+  if (!found) throw new Error(`none of the ${all.length} templates has the slug ${SLUGS[n]} of canonical intent #${n}`);
   return found;
 }
 

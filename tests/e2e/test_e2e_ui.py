@@ -29,6 +29,7 @@ def test_playwright_env_says_where_the_app_is_what_cannot_run_and_whether_that_f
     env = ui.playwright_env("http://127.0.0.1:3100", "http://127.0.0.1:8003", {"1": ["ml-w4: vllm-serve"]}, True, SHELL)
     assert env["E2E_WEB_URL"] == "http://127.0.0.1:3100" and env["E2E_API_URL"] == "http://127.0.0.1:8003"
     assert json.loads(env["E2E_PENDING"]) == {"1": ["ml-w4: vllm-serve"]} and env["E2E_STRICT"] == "1"
+    assert json.loads(env["E2E_SLUGS"]) == {"1": "real-estate-compliance", "2": "movie-engagement"}  # the spec drives these two
     assert ui.playwright_env("w", "a", {}, False, SHELL)["E2E_STRICT"] == ""  # blank, so `=== "1"` is false
     assert not {"NEBIUS_API_KEY", "TAVILY_API_KEY", "HF_TOKEN", "VASTAI_API_KEY"} & set(env)
 

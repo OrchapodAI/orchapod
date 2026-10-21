@@ -27,8 +27,9 @@ from sqlmodel import select
 from api.agent.planner import Intent, make_plan
 from api.database import get_session
 from api.models.db import Run, Workflow, utcnow
-from api.executor.dag import workflow_to_graph_json
+from api.executor.dag import load_yaml, workflow_to_graph_json
 from api.services import budget, ratelimit
+from api.services.redact import without_secrets
 
 router = APIRouter()
 
@@ -74,14 +75,15 @@ class PromptRequest(BaseModel):
 @router.post("", response_model=WorkflowOut, status_code=status.HTTP_201_CREATED, dependencies=WRITE)
 async def create_workflow(body: WorkflowCreate, db: Session):
     try:
-        graph_json = workflow_to_graph_json(body.yaml)
+        text = _stored(body.yaml)
+        graph_json = workflow_to_graph_json(text)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Invalid workflow YAML: {e}")
 
     workflow = Workflow(
         user_id=body.user_id or uuid.uuid4(),
         name=body.name,
-        yaml=body.yaml,
+        yaml=text,
         graph_json=graph_json,
     )
     db.add(workflow)
@@ -120,10 +122,11 @@ async def update_workflow(workflow_id: uuid.UUID, body: WorkflowUpdate, db: Sess
 
     if body.yaml is not None:
         try:
-            graph_json = workflow_to_graph_json(body.yaml)
+            text = _stored(body.yaml)
+            graph_json = workflow_to_graph_json(text)
         except Exception as e:
             raise HTTPException(status_code=422, detail=f"Invalid workflow YAML: {e}")
-        workflow.yaml = body.yaml
+        workflow.yaml = text
         workflow.graph_json = graph_json
         workflow.version += 1
 
@@ -150,6 +153,7 @@ async def create_workflow_from_prompt(body: PromptRequest, db: Session,
     """The Orchapod Agent's planner drafts the workflow (same rules as POST /agent/plan); the canvas opens it,
     errors and all, as long as it compiles."""
     out = await make_plan(body.prompt, db, scale)
+    out["plan"] = without_secrets(out["plan"])
     yaml_str = yaml.safe_dump(out["plan"], sort_keys=False)
     try:
         graph_json = workflow_to_graph_json(yaml_str) if out["plan"].get("nodes") else None
@@ -173,6 +177,13 @@ async def create_workflow_from_prompt(body: PromptRequest, db: Session,
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
+
+def _stored(text: str) -> str:
+    """The YAML to store: aliases refused (load_yaml), secret-looking node inputs dropped; re-dumped only if one was."""
+    spec = load_yaml(text)
+    clean = without_secrets(spec)
+    return text if clean == spec else yaml.safe_dump(clean, sort_keys=False)
+
 
 async def _read_only_if_run(db: AsyncSession, workflow_id: uuid.UUID, is_admin: bool) -> None:
     """409 for an anonymous caller once the workflow has runs: there is no user auth (D6), so anyone could otherwise

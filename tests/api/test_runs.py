@@ -65,8 +65,8 @@ async def test_deploy_creates_workflow_and_run_in_db(client, db, no_bg_tasks, ad
 
 
 async def test_deploy_never_stores_an_hf_token(client, db, no_bg_tasks, admin):
-    """Nodes get HF_TOKEN from the executor's env (hf-download and quantize take no hf_token input), so a token in a
-    deploy request goes nowhere: never into the stored workflow, its graph or the run."""
+    """The executor forwards HF_TOKEN from the API's env to every node, so a deploy needs no token; one sent anyway must
+    not reach the stored workflow, its graph or the run (node schemas still declare hf_token inputs: report)."""
     import json
     from sqlmodel import select
     from api.models.db import Run, Workflow

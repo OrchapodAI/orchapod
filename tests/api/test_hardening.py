@@ -276,3 +276,56 @@ async def test_writes_share_a_bucket(client, limits):
         assert codes == [200, 204, 404, 404, 422]  # with the 5 creates, each took a token
         assert (await a.post("/workflows", json={"name": "w", "yaml": DRAFT})).status_code == 429
         assert (await a.post("/agent/plan", json={"intent": "x"})).status_code == 200  # the other buckets are apart
+
+
+# --- secrets in node inputs ------------------------------------------------------
+
+SECRETS = {"hf_token": "hf_SECRET", "api_key": "sk-SECRET", "max_tokens": 5, "api_key_env": "NEBIUS_API_KEY"}
+
+
+def stored(text):
+    assert "SECRET" not in text and "hf_token" not in text  # gone, not redacted: a node must not get "[redacted]"
+    return text
+
+
+async def test_secret_looking_inputs_are_dropped_before_a_workflow_is_stored(client, db, monkeypatch):
+    import yaml
+    from api.agent import planner
+    from api.models.db import AgentRun, Workflow
+    from sqlmodel import select
+
+    spec = {"name": "w", "nodes": [{"id": "s", "type": "vllm-serve", "inputs": {"model": "m", **SECRETS}}]}
+    r = await client.post("/workflows", json={"name": "w", "yaml": yaml.safe_dump(spec)})
+    inputs = yaml.safe_load(stored(r.json()["yaml"]))["nodes"][0]["inputs"]
+    assert inputs == {"model": "m", "max_tokens": 5, "api_key_env": "NEBIUS_API_KEY"}  # counts and env names stay
+    r = await client.put(f"/workflows/{r.json()['id']}", json={"yaml": yaml.safe_dump(spec)})
+    assert r.status_code == 200 and stored(r.json()["yaml"])
+
+    async def plan_with_a_token(*_):
+        return {"plan": spec, "rationale": "", "estimate": {}, "warnings": [], "errors": []}
+    monkeypatch.setattr("api.routes.workflows.make_plan", plan_with_a_token)
+    stored((await client.post("/workflows/from-prompt", json={"prompt": "serve m"})).json()["yaml"])
+
+    monkeypatch.setenv("ORCHAPOD_ADMIN_TOKEN", "s3cret")  # vllm-serve rents a GPU: admin only
+    monkeypatch.setattr(planner, "get_providers", lambda: {"nebius": object()})
+    monkeypatch.setattr("api.executor.run_workflow.launch", lambda *_: None)
+    plan = {"name": "p", "nodes": [{"id": "s", "type": "vllm-serve", "needs": [], "inputs": {"model": "m", "hf_token": "hf_SECRET"}}]}
+    r = await client.post("/agent/run", json={"intent": "x", "plan": plan}, headers={"X-Orchapod-Admin": "s3cret"})
+    assert r.status_code == 201
+    for w in await db.scalars(select(Workflow)):
+        stored(w.yaml + str(w.graph_json))
+    stored(str([a.plan for a in await db.scalars(select(AgentRun))]))
+
+
+async def test_node_and_run_inputs_are_redacted_on_the_way_out(client, db):
+    from api.models.db import NodeRun, Run
+    run = Run(user_id=uuid.uuid4(), inputs={"hf_token": "hf_SECRET", "dataset": "hf://x"})
+    db.add(run)
+    await db.flush()
+    db.add(NodeRun(run_id=run.id, node_id="s", node_type="vllm-serve", inputs={"model": "m", "hf_token": "hf_SECRET"}))
+    await db.commit()  # stored before ingest dropped such inputs
+
+    node = (await client.get(f"/runs/{run.id}/nodes")).json()[0]
+    assert node["inputs"] == {"model": "m", "hf_token": "[redacted]"}
+    assert (await client.get(f"/runs/{run.id}")).json()["inputs"] == {"hf_token": "[redacted]", "dataset": "hf://x"}
+    assert "SECRET" not in (await client.get(f"/runs/{run.id}/nodes/s")).text + (await client.get("/runs")).text

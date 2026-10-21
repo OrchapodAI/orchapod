@@ -320,7 +320,7 @@ def _run_out(r: Run) -> RunOut:
         workflow_id=r.workflow_id,
         user_id=r.user_id,
         status=r.status,
-        inputs=r.inputs or {},
+        inputs=redact(r.inputs or {}),
         cost_usd=float(r.cost_usd) if r.cost_usd is not None else None,
         started_at=r.started_at,
         finished_at=r.finished_at,
@@ -338,7 +338,7 @@ def _node_run_out(n: NodeRun) -> NodeRunOut:
         status=n.status,
         started_at=n.started_at,
         finished_at=n.finished_at,
-        inputs=n.inputs or {},
+        inputs=redact(n.inputs or {}),  # resolved inputs, stored before ingest dropped secret-looking ones
         outputs=n.outputs or {},
         logs_uri=getattr(n, "logs_uri", None),
         error=n.error,

@@ -30,6 +30,7 @@ from api.executor.dag import workflow_to_graph_json
 from api.models.db import AgentRun, Run, RunStatus, Workflow
 from api.routes.runs import TERMINAL, run_summary
 from api.services import budget, ratelimit
+from api.services.redact import without_secrets
 
 router = APIRouter()
 
@@ -60,7 +61,7 @@ async def run(body: RunRequest, db: Session, scale: Scale):
     errors, _, estimate = planner.review(body.plan)
     if errors:
         return JSONResponse(status_code=422, content={"detail": "the plan has errors", "errors": errors})
-    plan = planner.Plan.model_validate(body.plan).model_dump()  # extra keys (resources, ...) are dropped
+    plan = without_secrets(planner.Plan.model_validate(body.plan).model_dump())  # extra keys (resources, ...) go too
     budget.gpu_guard((n["type"] for n in plan["nodes"]), scale)
     await budget.guard(db, scale, need=estimate["usd"])
 

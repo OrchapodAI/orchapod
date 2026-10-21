@@ -7,7 +7,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 3. Spike 4 — DONE: Lane B student = nvidia/Llama-3.1-Nemotron-Nano-8B-v1 (DECISION below).
 4. Ponytail audit — DONE; triaged into the board below (audit: hackathon/briefs/2026-10-20-ponytail-audit-report.md).
 5. Spikes 1–3 once keys land: platform (TF train → deploy → chat; Tavily extract), backend (Nemotron Super guided-JSON plan).
-6. Wave 1 (hackathon/briefs/2026-10-20-wave1.md) — IN_PROGRESS: platform-w1, backend-w1, data-w1, ml-w1, frontend-w1, qa-w1, devrel-w1. Wave 2 after platform's clients merge: synth grounded/structured + web-research (data), tf-finetune/tf-deploy/judge-eval (ml), Agent API + budget + /compare (backend), quality_filter, config.py migration.
+6. Wave 1 merged (platform, backend, data, ml, frontend, devrel); qa-w1 rebasing. Wave 2 (hackathon/briefs/2026-10-21-wave2.md) — IN_PROGRESS: platform-w2, backend-w2, data-w2, ml-w2, frontend-w2, devrel-w2; qa-w2 after qa-w1 merges. G1 Oct 24: golden path green from the UI + intent #2 from the agent chat.
 
 ## Board (status ∈ TODO | IN_PROGRESS(<agent>, <branch>) | REVIEW | DONE | BLOCKED(<why>))
 ### orchestrator

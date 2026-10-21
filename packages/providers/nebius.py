@@ -28,6 +28,7 @@ import time
 from typing import AsyncIterator
 
 import httpx
+from orchapod.prices import PRICES
 
 from .base import GPUSpec, Quote, Pod, ProvisionError
 
@@ -46,14 +47,6 @@ _GPU_MAP: dict[str, str] = {
     "A100":      "gpu-a100",
     "A100_80GB": "gpu-a100",
     "4090":      "gpu-l40s",   # closest Nebius consumer-class GPU
-}
-
-# Approximate on-demand prices USD/hr (eu-north1, 2026)
-_PRICES: dict[str, float] = {
-    "gpu-h100-sxm": 2.49,
-    "gpu-h200-sxm": 3.10,
-    "gpu-a100":     1.89,
-    "gpu-l40s":     0.99,
 }
 
 # Disk image — Nebius-maintained PyTorch image with CUDA drivers
@@ -93,7 +86,9 @@ class NebiusProvider:
 
     async def quote(self, gpu_spec: GPUSpec) -> Quote:
         gpu_platform = _GPU_MAP.get(gpu_spec.gpu_type, "gpu-h100-sxm")
-        price = _PRICES.get(gpu_platform, 2.49)
+        price = PRICES["nebius_serverless"].get(gpu_platform)  # the one table (R5/R16)
+        if price is None:  # unpriced fails closed
+            raise LookupError(f"no price for nebius_serverless {gpu_platform} in orchapod.prices.PRICES")
         # Nebius H100 instances are generally available in eu-north1
         return Quote(
             provider="nebius",

@@ -274,7 +274,8 @@ def poll_run(c: httpx.Client, run_id: str, path: str, done=lambda reply: reply["
     if not done(reply):
         r = c.post(f"/runs/{run_id}/cancel", headers={"X-Orchapod-Cancel-Token": cancel_token}, timeout=90)
         if r.is_error and r.status_code != 409:  # 409: it ended while we asked; anything else leaves it running
-            raise RuntimeError(f"POST /runs/{run_id}/cancel -> HTTP {r.status_code}: {r.text[:300]}")
+            raise RuntimeError(f"run {run_id} did not end within {LIMIT_S} s, and POST /runs/{run_id}/cancel -> HTTP "
+                               f"{r.status_code}: {r.text[:300]}")
     return reply, seconds
 
 

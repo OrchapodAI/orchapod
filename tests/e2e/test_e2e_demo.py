@@ -318,7 +318,7 @@ def test_a_cancel_the_api_refuses_is_a_failure_but_a_run_that_just_ended_is_not(
 
         return httpx.Client(base_url="http://api", transport=httpx.MockTransport(api))
 
-    with pytest.raises(RuntimeError, match="POST /runs/r1/cancel -> HTTP 403: .*cancel token"):
+    with pytest.raises(RuntimeError, match="run r1 did not end within 0 s, and POST /runs/r1/cancel -> HTTP 403: .*cancel token"):
         e2e.poll_run(client(403), "r1", "/runs/r1/summary", cancel_token="wrong")  # it would run on: say so, never "so it was cancelled"
     reply, _ = e2e.poll_run(client(409), "r1", "/runs/r1/summary", cancel_token="tok-1")  # 409: it ended while we asked
     assert reply["status"] == "running"

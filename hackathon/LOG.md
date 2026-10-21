@@ -330,3 +330,4 @@ worktrees:
   - Merge AFTER backend-w5 (on today's API start returns no token, so Cancel would be disabled everywhere).
   - RULING on its question: the golden-run link matches the workflow name exactly (substring also lists '(copy)' workflows).
   - Review dispatched (sonnet).
+- 2026-10-21T16:48Z frontend-w5 review (sonnet): token boundary tight (no URL/log/toast/props leak; sessionStorage XSS exposure accepted for a no-auth demo; never cleared before the tab closes, because retry keeps the token); selectors stable. Needs fixes: the exact-match ruling was unmet → the orchestrator did it in frontend-w5's branch (runShown in lib/runEvents.ts + a test; web 30/30, tsc clean). Minors parked: a second copy collides on name (no unique constraint; harmless); the page-level 409 flow is untested beyond the client → qa-w6 smoke case; README:182 line kept. Merge after backend-w5.

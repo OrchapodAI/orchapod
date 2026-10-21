@@ -267,17 +267,23 @@ def five_pairs():
     return handler
 
 
+SPLITS = {20: (16, 2, 2), 100: (80, 10, 10), 6: (5, 0, 1), 30: (24, 3, 3)}  # rows → train/eval/test at 0.8/0.1/0.1
+
+
 @pytest.mark.parametrize("pairs", [1, 5], ids=["stub-teacher", "five-pair-teacher"])
-def test_intent1_data_half_through_the_real_sdk(monkeypatch, sdk, teacher, pairs):
-    """Intent #1's template, its three data nodes in STUB, each reading the URIs the previous one registered. The STUB
-    teacher answers one pair per passage, so every source has one row; the five-pair teacher (MockTransport, synth
-    only) gives every source five rows, which is where the split's source_url stratification shows."""
+@pytest.mark.parametrize("slug, reduced", [("1-real-estate-compliance", False), ("4-nebius-docs-specialist", False),
+                                           ("4-nebius-docs-specialist", True)], ids=["intent1", "docs", "docs-reduced"])
+def test_template_data_half_through_the_real_sdk(monkeypatch, sdk, teacher, pairs, slug, reduced):
+    """A template's three data nodes in STUB (intent #1; the Nebius docs specialist, also with its reduced_inputs as
+    "Run it yourself" posts it), each reading the URIs the previous one registered. The STUB teacher answers one pair
+    per passage, so every source has one row; the five-pair teacher (MockTransport, synth only) gives every source five
+    rows, which is where the split's source_url stratification shows."""
     from api.executor.run_workflow import _resolve_inputs  # the executor's own ref resolution
 
     run, read = sdk
     if pairs == 5:
         teacher(five_pairs())
-    template = json.loads((ROOT / "apps/api/agent/templates/1-real-estate-compliance.json").read_text())
+    template = json.loads((ROOT / f"apps/api/agent/templates/{slug}.json").read_text())
     nodes = [n for n in template["plan"]["nodes"] if n["type"] in DATA_NODES]
     assert [n["id"] for n in nodes] == ["research", "synth", "prep"]
     out = {}
@@ -288,25 +294,27 @@ def test_intent1_data_half_through_the_real_sdk(monkeypatch, sdk, teacher, pairs
             monkeypatch.setenv("STUB", "1")
         upstream = {node: SimpleNamespace(outputs={name: uri for name, (uri, _, _) in registered.items()})
                     for node, registered in out.items()}  # NodeRun.outputs: the URIs each node registered
-        out[n["id"]] = run(n["id"], DATA_NODES[n["type"]], _resolve_inputs(n["inputs"], SimpleNamespace(inputs={}), upstream))
+        inputs = {**n["inputs"], **(template["reduced_inputs"].get(n["id"], {}) if reduced else {})}  # planner.reduced
+        out[n["id"]] = run(n["id"], DATA_NODES[n["type"]], _resolve_inputs(inputs, SimpleNamespace(inputs={}), upstream))
 
     corpus, dataset = read(out["research"]["corpus"][0]), read(out["synth"]["dataset"][0])
-    urls = {p["url"] for p in corpus}
-    assert len(corpus) == len(urls) == 20  # 5 queries × ⌈20 / 5⌉ stub pages of one passage each
-    assert len(dataset) == 20 * pairs and {(r["context"], r["source_url"]) for r in dataset} == {(p["text"], p["url"]) for p in corpus}
+    urls, pages, seeds = {p["url"] for p in corpus}, 6 if reduced else 20, nodes[0]["inputs"].get("seed_urls")
+    assert len(corpus) == len(urls) == pages  # stub pages of one passage each: 5 queries × ⌈20 / 5⌉, or one per seed
+    assert not seeds or urls == set(seeds[:pages])  # max_pages reads the first seeds
+    assert len(dataset) == pages * pairs and {(r["context"], r["source_url"]) for r in dataset} == {(p["text"], p["url"]) for p in corpus}
 
     prep = out["prep"]
     kept, train, ev, test = (read(prep[name][0]) for name in ("dataset", "train_jsonl", "eval_jsonl", "test_jsonl"))
-    assert kept == dataset and (len(train), len(ev), len(test)) == (16 * pairs, 2 * pairs, 2 * pairs)  # 0.8/0.1/0.1
+    assert kept == dataset and (len(train), len(ev), len(test)) == SPLITS[pages * pairs] and test  # judge-eval's rows
     assert all(set(r) == {"messages"} and dp.tf_valid(r["messages"]) for r in train + ev)  # tf-finetune's files
     assert all(r in dataset for r in test)  # judge-eval's rows keep context and source_url
     source = {json.dumps(r["messages"]): r["source_url"] for r in dataset}
     spread = Counter((source[json.dumps(r["messages"])], part) for part, rows in (("train", train), ("held", ev + test))
                      for r in rows)
-    assert Counter((spread[u, "train"], spread[u, "held"]) for u in urls) == (
-        {(4, 1): 20} if pairs == 5 else {(1, 0): 16, (0, 1): 4})  # five-row sources: 4 train + 1 held out, every one
+    assert Counter((spread[u, "train"], spread[u, "held"]) for u in urls) == (  # five-row sources: 4 train + 1 held out
+        {(4, 1): pages} if pairs == 5 else {(1, 0): len(train), (0, 1): pages - len(train)})
     _, kind, metrics = prep["metrics_json"]
-    assert (kind, metrics["stub"], metrics["total"], metrics["near_dupes"]) == ("metrics", True, 20 * pairs, 0)
+    assert (kind, metrics["stub"], metrics["total"], metrics["near_dupes"]) == ("metrics", True, pages * pairs, 0)
     assert {name: kind for name, (_, kind, _) in prep.items()} == {
         "dataset": "dataset", "test_jsonl": "dataset", "train_jsonl": "dataset", "eval_jsonl": "dataset",
         "metrics_json": "metrics"}

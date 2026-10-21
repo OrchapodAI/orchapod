@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import json
+import re
 import uuid
 from decimal import Decimal
 from types import SimpleNamespace
@@ -27,6 +28,7 @@ INTENTS = [  # the /agent page's examples (apps/web/app/agent/page.tsx)
     "Generate synthetic data of movie likes, shares and subscribes",
     "Quantize a model which is an expert in maths",
 ]
+DOCS = "Distill a Nebius docs specialist: fine-tune Llama 3.1 8B on the Nebius AI Cloud and Token Factory docs"  # golden path
 GOOD = {"name": "qa-data", "nodes": [  # valid with the nodes on this branch's base
     {"id": "synth", "type": "synth-distilabel", "needs": [], "inputs": {"pipeline_template": "self-instruct", "n_samples": 100}},
     {"id": "prep", "type": "data-prep", "needs": ["synth"], "inputs": {"dataset": "${{ nodes.synth.outputs.dataset }}"}},
@@ -83,10 +85,10 @@ def answer(plan, rationale="r"):
 
 # --- templates and STUB ----------------------------------------------------------
 
-async def test_templates_are_the_three_canonical_intents(client):
+async def test_templates_are_the_three_canonical_intents_and_the_docs_specialist(client):
     templates = (await client.get("/agent/templates")).json()
 
-    assert [t["intent"] for t in templates] == INTENTS
+    assert [t["intent"] for t in templates] == INTENTS + [DOCS]
     for t in templates:
         assert {"slug", "title", "intent", "plan", "estimate"} <= set(t)
         assert set(t["estimate"]["by_node"]) == {n["id"] for n in t["plan"]["nodes"]}
@@ -105,12 +107,13 @@ async def test_run_it_yourself_clones_each_template_at_reduced_scale(client, mon
             assert cut["inputs"] == {**full["inputs"], **t["reduced_inputs"].get(full["id"], {})}  # ... smaller inputs
         assert set(t["reduced_inputs"]) <= {n["id"] for n in t["plan"]["nodes"]}
         assert 0 < small["estimate"]["usd"] < t["estimate"]["usd"]
-    assert [round(t["reduced"]["estimate"]["usd"], 2) for t in templates] == [0.83, 0.03, 0.02]  # gpu-l40s-a at $1.55/h
+    # gpu-l40s-a at $1.55/h; the docs specialist is mostly tf-finetune's typical $0.50 until spike 1 prices it
+    assert [round(t["reduced"]["estimate"]["usd"], 2) for t in templates] == [0.83, 0.03, 0.02, 0.55]
     # fits: the reduced plan's estimate within the caller's run cap ($3 x ORCHAPOD_ANON_SCALE 0.1 when anonymous)
-    assert [t["fits"] for t in templates] == [False, True, True]  # real-estate is admin-only at the default scale
+    assert [t["fits"] for t in templates] == [False, True, True, False]  # real-estate and docs: admin-only by default
     monkeypatch.setenv("ORCHAPOD_ADMIN_TOKEN", "s3cret")
     admin = (await client.get("/agent/templates", headers={"X-Orchapod-Admin": "s3cret"})).json()
-    assert [t["fits"] for t in admin] == [True, True, True]
+    assert [t["fits"] for t in admin] == [True, True, True, True]
 
     launched = []  # intent #2 at reduced scale runs for an anonymous caller ($3 x 0.1 run cap)
     monkeypatch.setattr(ex, "launch", lambda run_id, scale: launched.append(scale))
@@ -124,19 +127,30 @@ def test_intent_2_runs_on_the_nodes_that_exist():
     assert planner.review(planner.templates()[1]["plan"])[:2] == ([], [])
 
 
+def test_the_docs_specialist_validates_at_both_scales_on_10_to_20_docs_pages():
+    t = planner.templates()[3]
+    for plan in (t["plan"], planner.reduced(t)["plan"]):
+        assert planner.review(plan)[0] == []  # warnings only: the fine-tune price and tf-deploy wait on spike 1
+    seeds = t["plan"]["nodes"][0]["inputs"]["seed_urls"]
+    assert 10 <= len(set(seeds)) == len(seeds) <= 20
+    assert all(re.fullmatch(r"https://docs\.(tokenfactory\.)?nebius\.com(/[a-z0-9-]+)+", u) for u in seeds), seeds
+
+
 async def test_stub_plans_with_the_closest_template_and_calls_nothing(client, monkeypatch):
     monkeypatch.setenv("STUB", "1")
     monkeypatch.delenv("NEBIUS_API_KEY")
     monkeypatch.setattr(budget, "control_plane", None)  # a model call would crash
     templates = planner.templates()
 
-    for intent, t in zip(INTENTS, templates):
+    for intent, t in zip(INTENTS + [DOCS], templates, strict=True):  # each intent maps to its own template
         r = await client.post("/agent/plan", json={"intent": intent})
         assert r.status_code == 200
         assert set(r.json()) == {"plan", "rationale", "estimate", "warnings", "errors"}
         assert r.json()["plan"] == t["plan"] and r.json()["rationale"].startswith("STUB=1")
     r = await client.post("/agent/plan", json={"intent": "make me a GGUF of a math model"})
     assert r.json()["plan"] == templates[2]["plan"]
+    r = await client.post("/agent/plan", json={"intent": "Distill a docs specialist"})  # PLAN's name for the golden path
+    assert r.json()["plan"] == templates[3]["plan"]
 
 
 async def test_plan_refuses_bad_intents_the_kill_switch_and_a_missing_key(client, monkeypatch):

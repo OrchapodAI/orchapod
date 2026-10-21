@@ -208,3 +208,8 @@ worktrees:
   - qa-w4 never touches orchapod/* images or the stack.
   - Orchestrator: `make check E2E=1` on the merged tree started (background).
 - 2026-10-21T14:06Z INTEGRATION `make check E2E=1` on 75d0c6d (wave 3 complete + frontend/platform/data-w4): exit 0. 675 passed. e2e_demo intent #2 PASS (run 89bc38b5, 18 s, $0, dataset downloadable). e2e_agent: #2 PASS (run aff65930, 6 s, $0, estimate $0.15, report ready), #3 PASS (run 7f51f89c, 8 s, $0, estimate $0.096, report ready), #1 SKIP (vllm-serve = ml-w4). All orchapod/<node>:dev images rebuilt from this tree.
+- 2026-10-21T14:11Z backend-w4 re-review (opus, security): all 10 ADDRESSED. Re-attacked: exact burst under asyncio across 4 buckets; aliases refused before any expansion on every YAML entry point, merge keys included; 409 on every write path; gpu guard on all 4 launch callers; /health single-flight. Minors fixed by the orchestrator in 040d2de: workflow YAML capped at 256k chars (4 parses per save measured 4.3 s at 1 MB); secret inputs dropped at any depth; run_cost contract line. Ledger: backend-w4 fix rounds 1/5, 0 open. Merged.
+  - Merge-time work by the orchestrator: prod api healthcheck + watchdog → /livez (pinned by a test); the env scan covers config.env reads (+ DEFAULTS); the drift guard follows `_FORWARD` → `FORWARD`.
+  - make check green: 702 passed + web 27.
+  - Parked (P2, D6+): anonymous POST /runs/{id}/cancel can cancel others' runs (write bucket only); executor-level gpu refusal for scale < 1 (defense in depth); recursive strip done; R22 misses HFToken/APIToken/access_key_id.
+  - Follow-ups for others: canvas 'save a copy' on 409 (frontend); RunOut.workflow_name for the golden-run link (backend+frontend); hf_token schema fields (owners).

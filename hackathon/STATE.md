@@ -4,7 +4,7 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 ## Next actions (in order)
 1. Hari: NEBIUS_API_KEY and TAVILY_API_KEY into ~/src/orchapod-hack/.env — both lines still empty on disk (2026-10-21T02:37Z); the hidden-input command is in chat. Unblocks spikes 1–3 and every live check.
 2. Spikes 1–3 (hackathon/briefs/2026-10-22-spikes.md; worktrees spike1–3 at c164e4e) — dispatch the moment the key lands.
-3. Wave 3: COMPLETE. Wave 4 (hackathon/briefs/2026-10-23-wave4.md): MERGED frontend-w4, platform-w4, data-w4; RE-REVIEW backend-w4 (security); IN_PROGRESS ml-w4; next qa-w4 (failure drills, fresh-clone dry run).
+3. Wave 3: COMPLETE. Wave 4 (hackathon/briefs/2026-10-23-wave4.md): MERGED frontend-w4, platform-w4, data-w4, backend-w4; IN_PROGRESS ml-w4, qa-w4.
 4. After wave 3: shared fence() (platform), apps/api/config.py (platform), vllm-serve rewrite (ml), `make check E2E=1` + Playwright smoke on the merged branch, D6 hardening (anonymous budget ceiling).
 5. G1 Oct 24: golden path green from the UI (needs spike 1's deploy answer) + intent #2 from the agent chat (STUB green 2026-10-21; live waits on the key).
 
@@ -64,7 +64,8 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [x] P0 D3 agent validate → run → monitor → report; POST /agent/run, GET /agent/runs/{id}/report — DONE (backend-w2)
 - [x] P0 D4 POST /compare; golden-run fixture (`make demo`); reduced-scale templates with `fits`; artifact meta redaction (R21/R22) — DONE (backend-w3)
 - [ ] P1 backend follow-ups (after backend-w4): planner STUB matching ignores stopwords (+ near-miss tests); price tf-finetune from estimated trained tokens instead of TYPICAL $0.50 (decides `fits` for the docs and real-estate templates); SDK cost_json no longer waits on worker-thread joins at exit — TODO
-- [ ] P1 D5 Serverless Job runtime · P0 D6 public-demo hardening (anon read, rate limits, CORS, health) — TODO
+- [x] P0 D6 public-demo hardening: CORS allow-list, per-IP buckets (plan/run/compare/write), deep /health + /livez, kill switch per request, YAML aliases + 256k cap, extend deleted, read-only run workflows, gpu admin-only, secrets dropped at ingest — DONE (backend-w4); P2 left: anonymous cancel of others' runs, executor-level gpu refusal
+- [ ] P1 D5 Serverless Job runtime — TODO
 ### frontend
 - [x] P0 D2 palette: hidden nodes without containers; Research/Fine-tune/Deploy/Evaluate forms; R13 JSON inputs — DONE
 - [x] P0 D2 /agent page: chat box, plan card (Edit/Run), live run view, report card — DONE

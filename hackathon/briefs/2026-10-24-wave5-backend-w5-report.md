@@ -242,3 +242,65 @@
 ### Notes
 - After the merge, delete run_workflow.py's `TOKEN` fallback; the import from packages/providers/nebius.py is then always found.
 - **Still open, with a `ponytail:` note:** a job that never got capacity is billed its provision-to-teardown wait (over, never under). Skipping that bill would need platform's `pod.error` code to be parsed.
+
+---
+
+## Fix round 2 (Orchestrator re-review; all 6 items done)
+### Commits (tip f1139a9)
+| SHA | Items | What |
+| --- | --- | --- |
+| 6e6c8ec | all | docs(contracts): the round's lines, in their own commit |
+| 6d1859d | 1, 5 | A registration never extends an endpoint's life; only 400, 401 or 403 end the delete retries |
+| 99b01d3 | 2, 4 | A gpu pod's bill runs inside its shielded teardown, in a session of its own |
+| 75fe59a | 3 | A cost_json usd that is not finite, or is above 2 × ORCHAPOD_MAX_RUN_USD, gets 422 and a log line |
+| cb7b2d2 | 6 | cost_json rows group by the attempt the executor names (`ORCHAPOD_ATTEMPT`), not by arrival time |
+| f1139a9 | 6 | **Outside my paths, for approval:** `ORCHAPOD_ATTEMPT` added to tests/providers/test_env_example.py's executor-set allow-list (beside `ORCHAPOD_RUN_ID` and `ORCHAPOD_NODE_ID`). Without it, `make check` fails on the new name the SDK reads |
+
+### Per item
+1. **Re-register extension (Important).**
+   - A registration's expiry is now the earliest of its own and every live row's for that `endpoint_id`.
+   - A sooner one takes over: earlier rows get `superseded_at` and their timers are cancelled.
+   - Otherwise the earlier timer stands, untouched, and the new row is recorded with the earlier expiry and `superseded_at`, unarmed. The reply's `expires_at` says so.
+   - Test, the reviewer's attack: another run's node re-registers run A's ep-1 with keep_alive 120, three times. Each reply gives A's expiry, the one live row and timer stay A's, and a shorter registration still takes over.
+2. **The rollback stranded runs.**
+   - The bill opens its own `AsyncSessionLocal()` session, so a failure never expires the executor's run and NodeRuns. The old rollback, and the comment that came with it, are gone.
+   - The test injects a failure after the bill's first query (the reviewer's case; one injected before any SQL did not reproduce it) on a gpu → cpu run. The old code raised MissingGreenlet and left the run RUNNING; now the run succeeds and logs "not billed".
+3. **Insane reports.** A `usd` that is NaN, ±inf, "1e999", not a number, or above $6 (2 × the $3 run cap) gets 422 and a warning naming the run and node; exactly $6 is still accepted.
+4. **Double cancel.**
+   - The bill is now `_terminate`'s `then` step, inside the tracked, shielded teardown task.
+   - A second Cancel in the grace stops only the executor's wait. `busy()` also covers the bill, so a Retry waits for it.
+   - Test: two cancels, then the grace ends → $2.25 billed. Moving the bill back after `_terminate` fails the test.
+5. **Stop codes.** Delete retries stop only on 400, 401 and 403. 408, 409, 429, 499 and 5xx are retried, each tested; 404 is done.
+6. **Attempts.**
+   - The executor passes `ORCHAPOD_ATTEMPT` (when the attempt started, ISO).
+   - The SDK echoes it in cost_json metadata, the executor's bill carries it, and /internal/artifact groups a node's rows by it. An untagged report falls back to the current attempt.
+   - Done as code, not a note. It is small: about 10 lines across the four files, plus the env-table row.
+   - Test: attempt 1 is billed $2.25; during attempt 2 its $3.00 flush lands; total $7.50 (3.00 + 4.50). Arrival-time grouping gives $6.75.
+
+### Proof
+- **`make check`** on f1139a9: exit 0. `All checks passed!`, `749 passed`, web `pass 27`, `SKIP stub e2e`.
+- **Dry merge** with NebiusHackathon @ ef39dfd. Still one conflict, `apps/api/routes/internal.py`: take this branch's side (NebiusHackathon's only edit there is 18fcc8e, already contained). tests/providers/test_env_example.py auto-merges.
+  - Merged tree: ruff clean, `840 passed, 1 skipped`. Only the `.git`-dependent hosting test is deselected; qa-w4's drills pass.
+- **Mutations this round: 10 of 10 caught.** Every new test also failed on the old code first: MissingGreenlet for the stranded run, and a cost of None after two cancels.
+
+  | Item | Count | Mutations |
+  | --- | --- | --- |
+  | 1 | 3 | every registration takes over, the expiry is not clamped, a second timer |
+  | 5 | 1 | round 1's 4xx rule |
+  | 4 | 1 | the bill after `_terminate` (round 1's placement) |
+  | 3 | 2 | no size cap, no finite check |
+  | 6 | 2 | arrival time decides the attempt, the SDK does not echo it |
+  | Lock | 1 | without the lock: the race test, now on a file database so each session has its own connection, as in production |
+
+- **gitleaks** 23b0a57..HEAD: no leaks.
+
+### Contract lines changed (6e6c8ec)
+- Node SDK: the executor env adds `ORCHAPOD_ATTEMPT`, and cost_json metadata carries `attempt`.
+- The billing bullet: rows group by attempt; the bill is part of the teardown task, in its own session; an insane `usd` gets 422.
+- /internal/ttl: never extend, where a sooner registration takes over, or else the earlier timer stands and the new row is recorded superseded; the stop codes are 400, 401 and 403.
+- docs/NODE_CONTRACT.md: an `ORCHAPOD_ATTEMPT` row in the env table.
+
+### Noticed, not changed (for the Orchestrator)
+- /compare trusts any URL registered through /internal/ttl.
+  - Every node holds ORCHAPOD_INTERNAL_SECRET, gpu Jobs running third-party code included. Such a node could register its own URL under a fresh endpoint id, and a visitor's /compare would then send ORCHAPOD_ENDPOINT_TOKEN there.
+  - A fix needs either the registering node to be a vllm-serve node of a live run, or a check that the URL matches what `endpoints.get(endpoint_id)` returns. Not done: neither was asked for.

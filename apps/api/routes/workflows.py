@@ -29,6 +29,7 @@ from api.database import get_session
 from api.models.db import Workflow, utcnow
 from api.executor.dag import workflow_to_graph_json
 from api.services import budget
+from api.services.ratelimit import limit
 
 router = APIRouter()
 
@@ -138,7 +139,8 @@ async def delete_workflow(workflow_id: uuid.UUID, db: Session):
     await db.delete(workflow)
 
 
-@router.post("/from-prompt", response_model=WorkflowOut, status_code=status.HTTP_201_CREATED)
+@router.post("/from-prompt", response_model=WorkflowOut, status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(limit("plan"))])
 async def create_workflow_from_prompt(body: PromptRequest, db: Session,
                                       scale: float = Depends(budget.scale)):
     """The Orchapod Agent's planner drafts the workflow (same rules as POST /agent/plan); the canvas opens it,

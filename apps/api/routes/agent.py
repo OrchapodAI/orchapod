@@ -30,6 +30,7 @@ from api.executor.dag import workflow_to_graph_json
 from api.models.db import AgentRun, Run, RunStatus, Workflow
 from api.routes.runs import TERMINAL, run_summary
 from api.services import budget
+from api.services.ratelimit import limit
 
 router = APIRouter()
 
@@ -46,13 +47,13 @@ class RunRequest(BaseModel):
     plan: dict[str, Any]  # review() reports its shape errors in the contract's {"detail", "errors"}
 
 
-@router.post("/plan")
+@router.post("/plan", dependencies=[Depends(limit("plan"))])
 async def plan(body: PlanRequest, db: Session, scale: Scale):
     """→ {plan, rationale, estimate, warnings, errors}; the UI disables Run while errors is non-empty."""
     return await planner.make_plan(body.intent, db, scale)
 
 
-@router.post("/run", status_code=201)
+@router.post("/run", status_code=201, dependencies=[Depends(limit("run"))])
 async def run(body: RunRequest, db: Session, scale: Scale):
     """503 kill switch; 422 {detail, errors} when the plan fails validation; 402 when its estimate is over budget."""
     if budget.kill_switch():

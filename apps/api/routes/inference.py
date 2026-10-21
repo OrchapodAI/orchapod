@@ -22,6 +22,7 @@ from sqlmodel import select
 
 from api.database import get_session
 from api.services import budget
+from api.services.ratelimit import limit
 from api.models.db import Workflow, Run, NodeRun, NodeStatus, RunStatus, Artifact, ArtifactKind
 
 router = APIRouter()
@@ -74,7 +75,8 @@ class EndpointOut(BaseModel):
 # POST /inference/deploy
 # ---------------------------------------------------------------------------
 
-@router.post("/deploy", response_model=DeployResponse, status_code=http_status.HTTP_202_ACCEPTED)
+@router.post("/deploy", response_model=DeployResponse, status_code=http_status.HTTP_202_ACCEPTED,
+             dependencies=[Depends(limit("run"))])
 async def deploy_model(body: DeployRequest, db: Session, scale: float = Depends(budget.scale)):
     """
     One-click model deployment. Creates a minimal workflow and starts a run immediately.

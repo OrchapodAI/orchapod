@@ -36,6 +36,7 @@ from api.executor import run_workflow as executor
 from api.models.db import AgentRun, Run, NodeRun, RunStatus, NodeStatus, Workflow, Artifact, ArtifactKind, utcnow
 from api.services import budget
 from api.services.events import event_bus
+from api.services.ratelimit import limit
 from api.services.redact import redact
 
 router = APIRouter()
@@ -115,7 +116,7 @@ async def create_run(body: RunCreate, db: Session):
     return _run_out(run)
 
 
-@router.post("/{run_id}/start", response_model=RunOut)
+@router.post("/{run_id}/start", response_model=RunOut, dependencies=[Depends(limit("run"))])
 async def start_run(run_id: uuid.UUID, db: Session, scale: Scale):
     """409 unless pending; 503 kill switch; 402 when no budget is left (caps × the caller's scale)."""
     run = await db.get(Run, run_id)
@@ -152,7 +153,8 @@ async def cancel_run(run_id: uuid.UUID, db: Session):
     return _run_out(run)
 
 
-@router.post("/{run_id}/nodes/{node_id}/retry", response_model=RunOut, status_code=status.HTTP_202_ACCEPTED)
+@router.post("/{run_id}/nodes/{node_id}/retry", response_model=RunOut, status_code=status.HTTP_202_ACCEPTED,
+             dependencies=[Depends(limit("run"))])
 async def retry_node(run_id: uuid.UUID, node_id: str, db: Session, scale: Scale):
     """Re-run the run's failed node (same row, outputs kept), then continue downstream."""
     run = await db.get(Run, run_id)

@@ -48,12 +48,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
 def cors() -> dict:
     """CORSMiddleware options from ORCHAPOD_CORS_ORIGINS: exact origins, comma-separated; blank = this machine's pages on
     any port (`next dev` moves to 3001 when 3000 is taken). No credentials: the web app sends none, so a `*` never
     comes with them."""
     origins = [o.strip() for o in config.env("ORCHAPOD_CORS_ORIGINS").split(",") if o.strip()]
-    return {"allow_origins": origins, "allow_methods": ["*"], "allow_headers": ["*"],
+    return {"allow_origins": origins, "allow_methods": ["*"], "allow_headers": ["*"], "expose_headers": ["Retry-After"],
             "allow_origin_regex": None if origins else r"https?://(localhost|127\.0\.0\.1)(:\d+)?"}
 
 

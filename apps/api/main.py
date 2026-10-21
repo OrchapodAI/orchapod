@@ -9,6 +9,7 @@ Start: uvicorn api.main:app --reload
 
 from __future__ import annotations
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
 
@@ -18,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.database import AsyncSessionLocal, create_tables
 from api.executor.run_workflow import sweep
 from api.services.events import event_bus
+from api.services.storage import ensure_bucket_exists
 from api.routes import agent, workflows, runs, models, internal, ws, inference, model_registry, artifacts
 from packages.providers.vastai import register_providers
 
@@ -29,6 +31,8 @@ async def lifespan(app: FastAPI):
     await event_bus.connect()
     async with AsyncSessionLocal() as db:
         await sweep(db)  # runs a restart left mid-flight fail; their pods are terminated
+    # MinIO in dev starts without the bucket; off the event loop, so a slow or absent store never delays startup
+    asyncio.get_running_loop().run_in_executor(None, ensure_bucket_exists)
 
     register_providers(vastai_key=os.environ.get("VASTAI_API_KEY", ""))
 

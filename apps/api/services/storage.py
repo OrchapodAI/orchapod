@@ -24,7 +24,8 @@ def _get_client():
         aws_access_key_id=os.environ.get("ORCHAPOD_R2_ACCESS_KEY") or "orchapod",
         aws_secret_access_key=os.environ.get("ORCHAPOD_R2_SECRET_KEY") or "orchapod_dev",
         region_name=os.environ.get("ORCHAPOD_R2_REGION") or "auto",
-        config=Config(signature_version="s3v4"),
+        # presigning needs no network; the short timeouts bound ensure_bucket_exists when the store is down
+        config=Config(signature_version="s3v4", connect_timeout=5, read_timeout=10, retries={"max_attempts": 2}),
     )
 
 

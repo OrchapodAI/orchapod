@@ -2,17 +2,10 @@
 
 from __future__ import annotations
 
-import sys
 import time
 
 import httpx
 import pytest
-
-# tests/containers/test_unsloth_train.py leaves a fake, non-package `orchapod` in sys.modules for the rest of the
-# session. Import the real price table past it, then put the fakes back for that file's run-time lookups.
-_fakes = {name: sys.modules.pop(name) for name in list(sys.modules) if name.split(".")[0] == "orchapod"}
-import orchapod.prices  # noqa: E402,F401
-sys.modules.update(_fakes)
 
 
 @pytest.fixture(autouse=True)

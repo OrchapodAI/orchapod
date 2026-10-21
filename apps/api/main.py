@@ -15,7 +15,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.database import create_tables
+from api.database import AsyncSessionLocal, create_tables
+from api.executor.run_workflow import sweep
 from api.services.events import event_bus
 from api.routes import workflows, runs, models, internal, ws, inference, model_registry, artifacts
 from packages.providers.vastai import register_providers
@@ -26,6 +27,8 @@ async def lifespan(app: FastAPI):
     # Startup
     await create_tables()
     await event_bus.connect()
+    async with AsyncSessionLocal() as db:
+        await sweep(db)  # runs a restart left mid-flight fail; their pods are terminated
 
     register_providers(vastai_key=os.environ.get("VASTAI_API_KEY", ""))
 

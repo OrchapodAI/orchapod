@@ -60,6 +60,7 @@ async def client(db):
     from unittest.mock import AsyncMock
     from api.main import app
     from api.database import get_db, get_session
+    from api.routes.internal import INTERNAL_SECRET
 
     async def override_db():
         yield db
@@ -73,7 +74,8 @@ async def client(db):
     with patch("api.main.register_providers"), \
          patch("api.services.events.event_bus.publish", new=AsyncMock(return_value=None)):
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
+            transport=ASGITransport(app=app), base_url="http://test",
+            headers={"X-Orchapod-Secret": INTERNAL_SECRET},  # /internal/* is never open (R2)
         ) as ac:
             yield ac
 

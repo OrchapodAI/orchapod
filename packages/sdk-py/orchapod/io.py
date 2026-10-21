@@ -2,30 +2,40 @@
 packages/sdk-py/orchapod/io.py
 
 Node I/O SDK — used INSIDE every container.
-Handles reading inputs from env vars and uploading outputs to Cloudflare R2.
+Handles reading inputs from env vars and uploading outputs to object storage (R2/S3).
 
 Every node's run.py imports from here:
     from orchapod import io, log
 
-The contract (from NODE_CONTRACT.md):
+The contract (docs/NODE_CONTRACT.md, docs/contracts.md "Node SDK"):
   - Inputs arrive via ORCHAPOD_NODE_INPUTS (JSON-encoded dict)
-  - Outputs are written locally then uploaded to R2 by this SDK
-  - Artifact URIs follow: runs/{run_id}/{node_id}/{artifact_name}
-  - Nodes never read from each other directly — only via R2 URIs
+  - Outputs are written locally then uploaded by this SDK
+  - Artifact URIs follow: r2://${ORCHAPOD_R2_BUCKET}/runs/{run_id}/{node_id}/{name}
+  - Nodes never read from each other directly — only via r2:// URIs
+  - cost_json is written at exit (normal, exception or SIGTERM)
 """
 
 from __future__ import annotations
+import atexit
 import json
 import os
+import re
+import signal
+import sys
 import tempfile
+import time
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Literal
 
 import boto3  # R2 is S3-compatible
 
+from orchapod import cost, log
+
 
 ArtifactKind = Literal["dataset", "model", "metrics", "log", "endpoint"]
+
+_NAME = re.compile(r"[a-z][a-z0-9_]*")  # refs split on dots, so names have none
 
 
 @dataclass
@@ -46,20 +56,21 @@ class Inputs:
 def read_inputs() -> Inputs:
     """
     Read node inputs from the ORCHAPOD_NODE_INPUTS environment variable.
-    Called at the top of every node's run.py.
+    Called at the top of every node's run.py; it also arms the exit hooks (cost_json, SIGTERM).
     """
     raw = os.environ.get("ORCHAPOD_NODE_INPUTS")
     if not raw:
         raise RuntimeError("ORCHAPOD_NODE_INPUTS not set — are you running inside a pod?")
+    _arm()
     return Inputs(_data=json.loads(raw))
 
 
 def local_path(artifact_name: str) -> Path:
     """
     Return a local path where the node should write an output artifact.
-    The SDK uploads from this path to R2 when write_output() is called.
+    The SDK uploads from this path when write_output() is called.
     """
-    outputs_dir = Path(os.environ.get("ORCHAPOD_NODE_OUTPUTS_DIR", "/tmp/orchapod_outputs"))
+    outputs_dir = Path(os.environ.get("ORCHAPOD_NODE_OUTPUTS_DIR") or "/tmp/orchapod_outputs")
     outputs_dir.mkdir(parents=True, exist_ok=True)
     return outputs_dir / artifact_name
 
@@ -71,15 +82,15 @@ def write_output(
     metadata: dict | None = None,
 ) -> str:
     """
-    Upload a local file or directory to R2 and register it with the control plane.
-    Returns the R2 URI: r2://orchapod-artifacts/runs/{run_id}/{node_id}/{name}
+    Upload a local file or directory and register it with the control plane.
+    Returns the URI: r2://${ORCHAPOD_R2_BUCKET}/runs/{run_id}/{node_id}/{name}
 
-    The control plane picks up this output via the webhook and updates NodeRun.outputs.
+    The control plane records it in NodeRun.outputs, so `${{ nodes.<id>.outputs.<name> }}` resolves to it.
     """
-    run_id   = os.environ["ORCHAPOD_RUN_ID"]
-    node_id  = os.environ["ORCHAPOD_NODE_ID"]
-    r2_key   = f"runs/{run_id}/{node_id}/{name}"
-    r2_uri   = f"r2://orchapod-artifacts/{r2_key}"
+    if not _NAME.fullmatch(name):
+        raise ValueError(f"output name {name!r} must match ^[a-z][a-z0-9_]*$")
+    r2_key = f"runs/{os.environ['ORCHAPOD_RUN_ID']}/{os.environ['ORCHAPOD_NODE_ID']}/{name}"
+    r2_uri = f"r2://{_bucket()}/{r2_key}"
 
     _upload_to_r2(local_path=Path(local_path), r2_key=r2_key)
     _notify_control_plane(name=name, uri=r2_uri, kind=kind, metadata=metadata or {})
@@ -87,69 +98,131 @@ def write_output(
     return r2_uri
 
 
+def write_metrics(metrics: dict) -> str:
+    """
+    Write metrics_json (kind metrics), with `stub` filled in from STUB. The dict also travels
+    as metadata when it is <= 16 KB, so the API reads it from the DB; otherwise {"truncated": true}.
+    """
+    metrics = {"stub": os.environ.get("STUB") == "1", **metrics}
+    path = local_path("metrics_json")
+    path.write_text(json.dumps(metrics))
+    small = path.stat().st_size <= 16 * 1024
+    return write_output("metrics_json", path, "metrics", metrics if small else {"truncated": True})
+
+
 def download_input(uri: str, local_dir: Path | str | None = None) -> Path:
     """
-    Download a single artifact from R2 to a local path.
+    Download a single artifact to a local path.
     Used when a node receives a model or dataset URI as input.
     """
     local_dir = Path(local_dir or tempfile.mkdtemp())
     local_dir.mkdir(parents=True, exist_ok=True)
     artifact_name = uri.split("/")[-1]
     dest = local_dir / artifact_name
-    r2_key = uri.replace("r2://orchapod-artifacts/", "")
-    _download_from_r2(r2_key=r2_key, dest=dest)
+    _download_from_r2(r2_key=_key(uri), dest=dest)
     return dest
 
 
 def download_directory(uri_prefix: str, local_dir: Path | str) -> Path:
     """
-    Download all R2 objects under a key prefix into a local directory.
-    Used for checkpoint resume — the checkpoint is a directory, not a single file.
+    Download all objects under a key prefix into a local directory.
+    Used for directory artifacts (adapters, checkpoints).
     """
     local_dir = Path(local_dir)
     local_dir.mkdir(parents=True, exist_ok=True)
-    r2_prefix = uri_prefix.replace("r2://orchapod-artifacts/", "").rstrip("/")
-    _download_dir_from_r2(r2_prefix=r2_prefix, local_dir=local_dir)
+    _download_dir_from_r2(r2_prefix=_key(uri_prefix).rstrip("/"), local_dir=local_dir)
     return local_dir
+
+
+# ---------------------------------------------------------------------------
+# Exit hooks: armed by read_inputs() in the node's main process only, so pytest and
+# spawned worker processes (which never call it) do not write cost_json.
+# ---------------------------------------------------------------------------
+
+_armed = False
+
+
+def _arm() -> None:
+    global _armed
+    if _armed:
+        return
+    _armed = True
+    atexit.register(_write_cost)                # runs after normal exit, uncaught exceptions and SystemExit
+    signal.signal(signal.SIGTERM, _sigterm)     # cancel/timeout: docker stop sends SIGTERM, kills after 30 s
+    sys.excepthook = _excepthook
+
+
+def _sigterm(signum, frame):
+    raise SystemExit(143)  # unwinds the node's `finally` blocks, which cancel remote jobs
+
+
+def _excepthook(exc_type, exc, tb) -> None:
+    log.error(f"{exc_type.__name__}: {exc}")  # the executor shows the last ERROR line
+    sys.__excepthook__(exc_type, exc, tb)
+
+
+def _write_cost() -> None:
+    summary = cost.summary()
+    path = local_path("cost_json")
+    path.write_text(json.dumps(summary))
+    try:
+        write_output("cost_json", path, "metrics", {"usd": summary["usd"]})
+    except Exception as e:
+        log.error(f"cost_json not registered: {e}")
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+def _bucket() -> str:
+    return os.environ.get("ORCHAPOD_R2_BUCKET") or "orchapod-artifacts"
+
+
+def _key(uri: str) -> str:
+    """r2://<bucket>/<key> → <key>."""
+    return uri.split("/", 3)[3] if uri.startswith("r2://") else uri
+
+
 def _get_r2_client():
     return boto3.client(
         "s3",
-        endpoint_url=os.environ["ORCHAPOD_R2_ENDPOINT"],
-        aws_access_key_id=os.environ["ORCHAPOD_R2_ACCESS_KEY"],
-        aws_secret_access_key=os.environ["ORCHAPOD_R2_SECRET_KEY"],
-        region_name="auto",
+        endpoint_url=os.environ.get("ORCHAPOD_R2_ENDPOINT") or "http://localhost:9000",
+        aws_access_key_id=os.environ.get("ORCHAPOD_R2_ACCESS_KEY") or "orchapod",
+        aws_secret_access_key=os.environ.get("ORCHAPOD_R2_SECRET_KEY") or "orchapod_dev",
+        region_name=os.environ.get("ORCHAPOD_R2_REGION") or "auto",
     )
 
 
 def _upload_to_r2(local_path: Path, r2_key: str) -> None:
     client = _get_r2_client()
-    bucket = os.environ.get("ORCHAPOD_R2_BUCKET", "orchapod-artifacts")
     if local_path.is_dir():
         for f in local_path.rglob("*"):
             if f.is_file():
                 rel = f.relative_to(local_path)
-                client.upload_file(str(f), bucket, f"{r2_key}/{rel}")
+                _upload_file(client, f, f"{r2_key}/{rel}")
     else:
-        client.upload_file(str(local_path), bucket, r2_key)
+        _upload_file(client, local_path, r2_key)
+
+
+def _upload_file(client, path: Path, key: str) -> None:
+    # upload_file's thread pool is refused at interpreter exit, where cost_json is written; a file
+    # below the 8 MiB multipart threshold goes up as one plain PUT instead.
+    if path.stat().st_size < 8 * 1024 * 1024:
+        with path.open("rb") as f:
+            client.put_object(Bucket=_bucket(), Key=key, Body=f)
+    else:
+        client.upload_file(str(path), _bucket(), key)
 
 
 def _download_from_r2(r2_key: str, dest: Path) -> None:
-    client = _get_r2_client()
-    bucket = os.environ.get("ORCHAPOD_R2_BUCKET", "orchapod-artifacts")
-    client.download_file(bucket, r2_key, str(dest))
+    _get_r2_client().download_file(_bucket(), r2_key, str(dest))
 
 
 def _download_dir_from_r2(r2_prefix: str, local_dir: Path) -> None:
     client = _get_r2_client()
-    bucket = os.environ.get("ORCHAPOD_R2_BUCKET", "orchapod-artifacts")
     paginator = client.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=bucket, Prefix=r2_prefix + "/"):
+    for page in paginator.paginate(Bucket=_bucket(), Prefix=r2_prefix + "/"):
         for obj in page.get("Contents", []):
             key = obj["Key"]
             rel = key[len(r2_prefix):].lstrip("/")
@@ -157,25 +230,15 @@ def _download_dir_from_r2(r2_prefix: str, local_dir: Path) -> None:
                 continue
             dest = local_dir / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
-            client.download_file(bucket, key, str(dest))
+            client.download_file(_bucket(), key, str(dest))
 
 
 def _notify_control_plane(name: str, uri: str, kind: str, metadata: dict) -> None:
-    import urllib.request
-    control_url = os.environ.get("ORCHAPOD_CONTROL_URL")
-    if not control_url:
-        return
-    run_id  = os.environ["ORCHAPOD_RUN_ID"]
-    node_id = os.environ["ORCHAPOD_NODE_ID"]
-    payload = json.dumps({
-        "run_id": run_id,
-        "node_id": node_id,
-        "artifact": {"name": name, "uri": uri, "kind": kind, "metadata": metadata},
-    }).encode()
-    req = urllib.request.Request(
-        f"{control_url}/internal/artifact",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    urllib.request.urlopen(req, timeout=10)
+    """Register the output; retries 3 times (after 1, 2 and 4 s), then raises."""
+    payload = {"artifact": {"name": name, "uri": uri, "kind": kind, "metadata": metadata}}
+    for delay in (1, 2, 4):
+        try:
+            return log.post("/internal/artifact", payload, timeout=10)
+        except Exception:
+            time.sleep(delay)
+    log.post("/internal/artifact", payload, timeout=10)

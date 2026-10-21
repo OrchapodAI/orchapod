@@ -4,7 +4,8 @@ apps/api/routes/artifacts.py
 Global artifact browser.
 
 Routes:
-  GET /artifacts   — list all artifacts across runs, with optional filters
+  GET /artifacts                — list all artifacts across runs, with optional filters
+  GET /artifacts/{id}/download  — 307 to a presigned GET URL valid for 1 h
 """
 
 from __future__ import annotations
@@ -13,13 +14,15 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from api.database import get_session
 from api.models.db import Artifact, ArtifactKind, NodeRun, Run, Workflow
+from api.services.storage import presigned_download_url, r2_uri_to_key
 
 router = APIRouter()
 
@@ -79,3 +82,12 @@ async def list_artifacts(
             created_at=artifact.created_at,
         ))
     return items
+
+
+@router.get("/{artifact_id}/download", status_code=307)
+async def download_artifact(artifact_id: uuid.UUID, db: Session):
+    """A stable download link (the summary and the cached report use it); the presigned URL lasts 1 h."""
+    artifact = await db.get(Artifact, artifact_id)
+    if not artifact or not artifact.uri.startswith("r2://"):
+        raise HTTPException(status_code=404, detail="No downloadable artifact")
+    return RedirectResponse(presigned_download_url(r2_uri_to_key(artifact.uri)), status_code=307)

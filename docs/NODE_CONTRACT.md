@@ -27,7 +27,12 @@ Every node is a Docker container that:
 | `ORCHAPOD_R2_SECRET_KEY` | R2 secret key |
 | `ORCHAPOD_R2_BUCKET` | R2 bucket name |
 | `ORCHAPOD_CONTROL_URL` | Control plane webhook base URL |
-| `ORCHAPOD_RESUME_CHECKPOINT_URI` | R2 URI of checkpoint to resume from (optional) |
+| `ORCHAPOD_RESUME_CHECKPOINT_URI` | R2 URI of checkpoint to resume from (optional; set on retry) |
+| `ORCHAPOD_R2_REGION` | Object storage region (`auto` for MinIO/R2, `eu-north1` on Nebius) |
+| `ORCHAPOD_INTERNAL_SECRET` | Sent by the SDK as `X-Orchapod-Secret` on every /internal call |
+| `ORCHAPOD_MAX_COST_USD` | Node budget: the smaller of the run and day budgets left; `cost.add` raises `BudgetExceeded` past it |
+| `STUB` | `1` = deterministic outputs, no paid calls |
+| Provider keys | `NEBIUS_API_KEY`, `NEBIUS_BASE_URL`, `TAVILY_API_KEY`, `HF_TOKEN`, `NEBIUS_PROJECT_ID`, `NEBIUS_IAM_TOKEN`, `ORCHAPOD_ENDPOINT_TOKEN` (docs/contracts.md "Config") |
 
 ## Artifact addressing
 
@@ -36,7 +41,7 @@ All artifacts are stored in R2 at:
 runs/{run_id}/{node_id}/{artifact_name}
 ```
 
-R2 URI format: `r2://orchapod-artifacts/runs/{run_id}/{node_id}/{artifact_name}`
+R2 URI format: `r2://${ORCHAPOD_R2_BUCKET}/runs/{run_id}/{node_id}/{artifact_name}`. Names match `^[a-z][a-z0-9_]*$` (refs split on dots); `write_output` rejects anything else.
 
 ## Standard run.py template
 
@@ -69,6 +74,8 @@ if __name__ == "__main__":
 ## Calling Token Factory and Tavily
 
 Only through `packages.providers`: `TokenFactory(on_usage=cost.add).chat(messages, model, json_schema=schema)` and `Tavily(on_usage=cost.add).extract(urls)`. The clients own retries, the $ of every call (`orchapod.prices.PRICES`; an unpriced model is refused before anything is sent), the rule that `NEBIUS_API_KEY` only goes to `NEBIUS_BASE_URL`, and `STUB=1` (deterministic fakes, no network). Every failure is a `ProviderError`; log `str(e)` as the node's last ERROR line.
+
+Cost, metrics and exit (docs/contracts.md "Node SDK"): record each billed call with `cost.add(provider, model, in_tokens, out_tokens, usd=None, **extra)` (clients take `on_usage=cost.add`) and call `io.write_metrics({...})` once. After `io.read_inputs()` the SDK writes `cost_json` at any exit: normal, an uncaught exception (logged as ERROR) or SIGTERM, which it raises as `SystemExit(143)` so your `finally` blocks run — cancel remote jobs there. Cancel and the `ORCHAPOD_NODE_TIMEOUT_S` backstop (5400 s) send SIGTERM and kill after 30 s; a failed node's error is `exit <code>: <last log.error line>`; `POST /runs/{id}/nodes/{node_id}/retry` re-runs the same NodeRun and continues downstream.
 
 ## Adding a new node
 

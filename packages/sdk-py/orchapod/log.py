@@ -1,8 +1,7 @@
 """
 packages/sdk-py/orchapod/log.py
 
-Structured logging for node containers.
-Streams log lines to the control plane via webhook → SSE → frontend run viewer.
+Structured logging for node containers: stdout plus the control plane's /internal webhooks.
 """
 
 from __future__ import annotations
@@ -12,34 +11,32 @@ import urllib.request
 from datetime import datetime, timezone
 
 
-_control_url = os.environ.get("ORCHAPOD_CONTROL_URL")
-_run_id      = os.environ.get("ORCHAPOD_RUN_ID", "local")
-_node_id     = os.environ.get("ORCHAPOD_NODE_ID", "local")
+def post(path: str, payload: dict, timeout: float = 3) -> None:
+    """POST payload (+ run_id, node_id) to the control plane with X-Orchapod-Secret.
+    Raises on failure; a no-op without ORCHAPOD_CONTROL_URL (local runs)."""
+    control_url = os.environ.get("ORCHAPOD_CONTROL_URL")
+    if not control_url:
+        return
+    body = {"run_id": os.environ.get("ORCHAPOD_RUN_ID", "local"),
+            "node_id": os.environ.get("ORCHAPOD_NODE_ID", "local"), **payload}
+    req = urllib.request.Request(
+        f"{control_url}{path}",
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json",
+                 "X-Orchapod-Secret": os.environ.get("ORCHAPOD_INTERNAL_SECRET", "")},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=timeout):
+        pass
 
 
-def _emit(level: str, message: str) -> None:
+def _emit(level: str, message: str, path: str = "/internal/log", payload: dict | None = None) -> None:
     ts = datetime.now(timezone.utc).isoformat()
-    line = f"[{ts}] [{level}] {message}"
-    print(line, flush=True)
-
-    if _control_url:
-        try:
-            payload = json.dumps({
-                "run_id": _run_id,
-                "node_id": _node_id,
-                "ts": ts,
-                "level": level,
-                "message": message,
-            }).encode()
-            req = urllib.request.Request(
-                f"{_control_url}/internal/log",
-                data=payload,
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            urllib.request.urlopen(req, timeout=3)
-        except Exception:
-            pass  # Never let logging crash the training run
+    print(f"[{ts}] [{level}] {message}", flush=True)
+    try:
+        post(path, payload or {"ts": ts, "level": level, "message": message})
+    except Exception:
+        pass  # Never let logging crash the training run
 
 
 def info(message: str)  -> None: _emit("INFO", message)
@@ -48,10 +45,10 @@ def error(message: str) -> None: _emit("ERROR", message)
 
 
 def progress(step: int, total: int, loss: float | None = None, extra: dict | None = None) -> None:
-    """Emit a structured training progress event (parsed by run viewer for charts)."""
+    """POST /internal/progress → a `progress` event (live loss chart, remote phase). Never raises."""
     msg = f"step={step}/{total}"
     if loss is not None:
         msg += f" loss={loss:.4f}"
     if extra:
         msg += " " + " ".join(f"{k}={v}" for k, v in extra.items())
-    _emit("PROGRESS", msg)
+    _emit("PROGRESS", msg, "/internal/progress", {"step": step, "total": total, "loss": loss, "extra": extra or {}})

@@ -226,6 +226,8 @@ def test_an_endpoint_left_by_an_earlier_attempt_is_deleted_and_a_fresh_one_creat
                             + [("find", NAME), ("find", NAME), ("create", NAME)])  # waits until the name is free
     assert out["model_ref"][1]["endpoint_id"] == "ep-1"  # never adopted
     assert "ep-old" in vs.log.warn.call_args_list[0].args[0]
+    # billed from the fresh endpoint's create: the 15 s spent waiting for the old one to go are not ours
+    assert vs.cost.add.call_args.kwargs["gpu_hours"] == pytest.approx((CREATE_S + 30) / 3600 + 0.5, abs=1e-4)
 
 
 def test_a_leftover_still_listed_15_min_after_its_delete_fails_before_any_create(node):

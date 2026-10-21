@@ -62,7 +62,10 @@ def load_rows(uri: str, fmt: str, hf_config: str | None = None, hf_split: str = 
 
 
 def read_file(path: Path) -> list:
-    if path.name.endswith(".csv"):  # every cell stays text ("", "NA", "4"); a row with extra cells is skipped
+    if path.name.endswith(".csv"):
+        # Every cell stays text ("", "NA", "4"); a short row's missing cells are None (null); a row with extra cells
+        # is skipped; a cell may pass csv's default 128 KB limit.
+        csv.field_size_limit(sys.maxsize)
         with open(path, encoding="utf-8-sig", newline="") as f:
             return [None if None in r else r for r in csv.DictReader(f)]
     rows = []
@@ -140,7 +143,7 @@ def near_dedupe(rows: list[dict]) -> list[dict]:
 
 
 def fence(tag: str, text: str) -> str:
-    while FENCE_TAGS.search(text):  # to a fixpoint: "</exa</example>mple>" must not reassemble a tag
+    while FENCE_TAGS.search(text):  # to a fixpoint: one pass turns "<<example/example>" into "</example>"
         text = FENCE_TAGS.sub("", text)
     return f"<{tag}>\n{text}\n</{tag}>\n"
 
@@ -155,13 +158,16 @@ def score_prompt(row: dict) -> str:
 
 def quality_filter(rows: list[dict]) -> tuple[list[dict], int]:
     """Lightning scores each row 1–5 (guided JSON); rows under MIN_SCORE are dropped. A call that still fails after
-    the client's retries keeps its row and is counted; auth, bad_request and quota are fatal. Returns (kept, failed)."""
+    the client's retries keeps its row and is counted, but more than max(2, 10 %) failures so far is fatal (thinking
+    left on, an outage: the dataset would pass unfiltered); auth, bad_request and quota are fatal at once.
+    Returns (kept, failed)."""
     tf, kept, failed = TokenFactory(on_usage=cost.add), [], 0
-    # ponytail: one call at a time (300 rows ≈ 2 min); a thread pool is the upgrade (cost.add is thread-safe)
+    # ponytail: one call at a time, ~0.4 s each: 300 rows ≈ 2 min, but ~13k rows reach the 5,400 s node backstop;
+    # a thread pool is the upgrade (cost.add is thread-safe)
     for i, row in enumerate(rows, 1):
         try:
             reply = tf.chat([{"role": "user", "content": score_prompt(row)}], LIGHTNING, max_tokens=64,
-                            json_schema=SCORE, thinking=False)["parsed"]
+                            json_schema=SCORE, thinking=False, read_timeout=30)["parsed"]  # a hang fails in 30 s
             score = reply.get("score") if isinstance(reply, dict) else None
             if type(score) is not int or not 1 <= score <= 5:  # guided JSON should prevent it; output is untrusted
                 raise ProviderError("token_factory", "bad_output", 200, f"{LIGHTNING} gave no 1–5 score: {reply!r:.80}")
@@ -170,6 +176,8 @@ def quality_filter(rows: list[dict]) -> tuple[list[dict], int]:
                 fail(str(e))
             failed += 1
             log.warn(str(e))
+            if failed > max(2, i // 10):
+                fail(f"quality filter: {failed} of {i} scoring calls failed, last: {e}")
             score = None
         if score is None or score >= MIN_SCORE:
             kept.append(row)
@@ -251,6 +259,8 @@ def main():
         else:
             log.info(f"quality filter: {LIGHTNING} scores {len(rows)} rows")
             rows, failed_calls = quality_filter(rows)
+            log.info(f"quality filter dropped {deduped - len(rows)} of {deduped} rows (score under {MIN_SCORE})"
+                     + (f"; {failed_calls} calls failed, their rows kept" if failed_calls else ""))
     if not rows:
         fail(f"0 rows after cleaning {inputs['dataset']} as {fmt}"
              + (f": the quality filter dropped all {deduped}" if deduped else ""))

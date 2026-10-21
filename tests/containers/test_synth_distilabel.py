@@ -9,6 +9,7 @@ import time
 import urllib.request
 from collections import Counter
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -224,9 +225,7 @@ def test_grounded_questions_that_lean_on_the_source_are_invalid(teacher, synth, 
     assert [r["messages"][0]["content"] for r in rows] == ["Who holds escrow funds?"] and m["invalid_rows"] == 2
 
 
-INTENT1 = json.loads((ROOT / "apps/api/agent/templates/1-real-estate-compliance.json").read_text())
 DATA_NODES = {"web-research": wr, "synth-distilabel": sd, "data-prep": dp}
-NODE_REF = re.compile(r"\$\{\{\s*nodes\.([^.\s}]+)\.outputs\.(\w+)\s*\}\}")  # the executor's _REF, node branch
 
 
 @pytest.fixture
@@ -273,10 +272,13 @@ def test_intent1_data_half_through_the_real_sdk(monkeypatch, sdk, teacher, pairs
     """Intent #1's template, its three data nodes in STUB, each reading the URIs the previous one registered. The STUB
     teacher answers one pair per passage, so every source has one row; the five-pair teacher (MockTransport, synth
     only) gives every source five rows, which is where the split's source_url stratification shows."""
+    from api.executor.run_workflow import _resolve_inputs  # the executor's own ref resolution
+
     run, read = sdk
     if pairs == 5:
         teacher(five_pairs())
-    nodes = [n for n in INTENT1["plan"]["nodes"] if n["type"] in DATA_NODES]
+    template = json.loads((ROOT / "apps/api/agent/templates/1-real-estate-compliance.json").read_text())
+    nodes = [n for n in template["plan"]["nodes"] if n["type"] in DATA_NODES]
     assert [n["id"] for n in nodes] == ["research", "synth", "prep"]
     out = {}
     for n in nodes:
@@ -284,9 +286,9 @@ def test_intent1_data_half_through_the_real_sdk(monkeypatch, sdk, teacher, pairs
             monkeypatch.delenv("STUB", raising=False)
         else:
             monkeypatch.setenv("STUB", "1")
-        inputs = {k: out[m[1]][m[2]][0] if isinstance(v, str) and (m := NODE_REF.fullmatch(v.strip())) else v
-                  for k, v in n["inputs"].items()}  # refs → the URIs registered upstream, as the executor does
-        out[n["id"]] = run(n["id"], DATA_NODES[n["type"]], inputs)
+        upstream = {node: SimpleNamespace(outputs={name: uri for name, (uri, _, _) in registered.items()})
+                    for node, registered in out.items()}  # NodeRun.outputs: the URIs each node registered
+        out[n["id"]] = run(n["id"], DATA_NODES[n["type"]], _resolve_inputs(n["inputs"], SimpleNamespace(inputs={}), upstream))
 
     corpus, dataset = read(out["research"]["corpus"][0]), read(out["synth"]["dataset"][0])
     urls = {p["url"] for p in corpus}

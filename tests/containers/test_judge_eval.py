@@ -310,7 +310,15 @@ def llama(node, monkeypatch, tmp_path):
     (bin_dir / "llama-server").chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}:{__import__('os').environ['PATH']}")
     monkeypatch.setattr(je, "LLAMA_PORTS", {"base": free_port(), "tuned": free_port()})
-    monkeypatch.setattr(je, "TokenFactory", TokenFactory)
+    timeouts = []
+
+    class Recording(TokenFactory):
+        def chat(self, messages, model, **kw):
+            timeouts.append(kw.get("read_timeout"))
+            return super().chat(messages, model, **kw)
+
+    monkeypatch.setattr(je, "TokenFactory", Recording)
+    node.timeouts = timeouts
     procs = []
     popen = je.subprocess.Popen
     monkeypatch.setattr(je.subprocess, "Popen", lambda *a, **k: procs.append(popen(*a, **k)) or procs[-1])
@@ -327,6 +335,7 @@ def test_gguf_inputs_are_served_by_llama_server_without_a_key(llama):
                             "base_model": None}
     assert [(s["base"], s["tuned"]) for s in out["samples"]] == [("70", "\\boxed{72}")] * 2
     assert out["exact_match"] == {"base": 0.0, "tuned": 1.0} and out["errors"] == 0
+    assert llama.timeouts == [je.LLAMA_READ_TIMEOUT_S] * 4  # a slow CPU answer is waited for, never re-sent at 120 s
     argv = json.loads((llama.bin / f"argv-{ports['tuned']}.json").read_text())
     assert argv[argv.index("--host") + 1] == "127.0.0.1" and "--jinja" in argv and argv[argv.index("--alias") + 1] == GGUF_Q4
     assert len(llama.procs) == 2 and all(p.poll() is not None for p in llama.procs)  # each stopped after its phase

@@ -32,6 +32,7 @@ WORKERS = 8  # rows in flight; llama-server queues what its slots cannot take
 SLOTS = 4  # llama-server parallel sequences
 LLAMA_PORTS = {"base": 8081, "tuned": 8082}
 LOAD_TIMEOUT_S = 300
+LLAMA_READ_TIMEOUT_S = 1800  # a CPU answer can outlast the client's 120 s; a timeout would re-send it and restart the work
 JUDGE_MAX_TOKENS = 1024
 JUDGE = {"type": "object", "additionalProperties": False, "required": ["reasoning", "winner"],
          "properties": {"reasoning": {"type": "string"}, "winner": {"enum": ["A", "B", "tie"]}}}
@@ -183,7 +184,7 @@ def each(phase: str, samples: list[dict], work) -> None:
 def ask(tf: TokenFactory, ref: dict, messages: list, decoding: dict) -> str:
     key = os.environ.get(ref["api_key_env"], "") if ref["api_key_env"] else ""
     return tf.chat(messages, ref["model"], base_url=ref["base_url"], api_key=key, base_model=ref["base_model"],
-                   **decoding)["text"]
+                   read_timeout=LLAMA_READ_TIMEOUT_S if ref.get("gguf") else None, **decoding)["text"]
 
 
 def judge(tf: TokenFactory, model: str, s: dict) -> None:

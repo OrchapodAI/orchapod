@@ -207,7 +207,7 @@ def split(rows: list[dict], train: float, test: float) -> tuple[list, list, list
     n_test = min(round(n * test), n - n_train)
     if n >= 3:  # floors: a requested split never rounds to nothing (1 − 0.9 − 0.1 is 3e-17, not a share)
         n_test = max(n_test, int(test > 0))
-        n_train = min(n_train, n - n_test - int(1 - train - test > 1e-9))
+        n_train = max(0, min(n_train, n - n_test - int(1 - train - test > 1e-9)))  # never negative, so no row lands twice
     return ordered[:n_train], ordered[n_train:n - n_test], ordered[n - n_test:]
 
 

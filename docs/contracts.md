@@ -145,7 +145,7 @@ API code reads these through `apps/api/config.py` (`settings`, one pydantic-sett
   - New `hf_config: str | None = None` and `hf_split: str = "train"` (hard-coded today). Both are passed to `datasets.load_dataset`, so slices like `"test[:50]"` work.
   - `format`: "chatml" | "alpaca" | "sharegpt" | "qa" | "structured", default "chatml". `qa` maps `question` → user and `answer` → assistant verbatim. `structured` keeps rows as they are.
   - `train_split: float = 0.9`. The default stays, because two templates set 0.9 and read `eval_jsonl` as their eval set.
-  - New `test_split: float = 0.0`. Eval gets 1 − train − test, and train + test ≤ 1 (validator). Plans that include judge-eval use 0.8 / 0.1. From 3 rows on, a requested test split, and an eval share above 0, keep at least one row each, taken from the largest source, so a small run still gives judge-eval a test row (data-w4).
+  - New `test_split: float = 0.0`. Eval gets 1 − train − test, and train + test ≤ 1 (validator). Plans that include judge-eval use 0.8 / 0.1. From 3 rows on, a requested test split, and an eval share above 0, keep at least one row each (the test row from the largest source, the eval row from the end of the stratified order), so a small run still gives judge-eval a test row (data-w4).
   - `quality_filter: bool = False` (chat formats only): Lightning scores each row 1–5 via guided JSON `{"score": int}`, and rows below 3 are dropped.
 - Steps: load → convert and validate (bad rows dropped) → exact dedupe on canonical JSON → near dedupe → quality filter → deterministic split (seed 42), stratified by `source_url` when present.
   - Near dedupe applies to chat only: char 5-gram Jaccard ≥ 0.9 on the normalised first user turn.

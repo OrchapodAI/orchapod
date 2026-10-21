@@ -16,9 +16,15 @@ else
 E2E_STEP = echo "SKIP stub e2e: set E2E=1 (orchestrator/integration only)"
 endif
 check:     ; ruff check apps packages containers && $(PY) -m pytest tests -q && $(PNPM) -C apps/web test && $(E2E_STEP)
+# The Playwright smoke of the web app, STUB and $0 (Docker, `make up`, node and pnpm): scripts/e2e_ui.py starts the API and `next dev`.
+# UI_ARGS=--strict fails the steps whose piece is not merged yet. pnpm 11 exits 1 on apps/web (ERR_PNPM_IGNORED_BUILDS: sharp, harmless): hence the "-".
+ui-deps:
+	-pnpm -C apps/web install --frozen-lockfile
+	pnpm -C tests/ui install --frozen-lockfile
+ui-smoke: ui-deps ; $(PY) scripts/e2e_ui.py $(UI_ARGS)
 e2e:       ; $(PY) scripts/e2e_demo.py --max-cost 3
 agent-e2e: ; $(PY) scripts/e2e_agent.py --intent "$(INTENT)" --max-cost 3
 demo:      ; $(PY) scripts/seed-golden-run.py
 checkpoint:; bash scripts/harness/checkpoint.sh
 
-.PHONY: up down check e2e agent-e2e demo checkpoint
+.PHONY: up down check ui-deps ui-smoke e2e agent-e2e demo checkpoint

@@ -167,17 +167,18 @@ def start_api(tmp: Path, extra: dict[str, str] | None = None) -> tuple[subproces
     return proc, f"http://127.0.0.1:{port}"
 
 
-def wait_healthy(proc: subprocess.Popen, base: str, log: Path) -> None:
-    for _ in range(120):
+def wait_healthy(proc: subprocess.Popen, base: str, log: Path, path: str = "/health", tries: int = 120) -> None:
+    """Wait (tries x 0.5 s) for GET base+path to answer 200 while `proc` lives; the API's /health, or a page of the web app."""
+    for _ in range(tries):
         if proc.poll() is not None:
             break
         try:
-            if httpx.get(f"{base}/health", timeout=2).status_code == 200:
+            if httpx.get(f"{base}{path}", timeout=2).status_code == 200:
                 return
         except httpx.HTTPError:
             pass
         time.sleep(0.5)
-    raise RuntimeError(f"the API did not start on {base}:\n{tail(log)}")
+    raise RuntimeError(f"{base}{path} did not answer 200 ({'the process exited' if proc.poll() is not None else 'too slow'}):\n{tail(log)}")
 
 
 def stop(proc: subprocess.Popen) -> None:

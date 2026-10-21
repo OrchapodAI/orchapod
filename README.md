@@ -111,7 +111,7 @@ pip install -r requirements-dev.txt -r apps/api/requirements.txt
 make check                      # ruff + unit tests + web tests; no keys, no spend
 ```
 
-On pnpm 9, run `make check PNPM=pnpm`. `make check E2E=1` adds `scripts/e2e_demo.py --stub`, an end-to-end run of the synthetic-data intent through the API (its own API with `STUB=1`, a throwaway database and no key: $0); it needs Docker and `make up`, rebuilds and retags the local `orchapod/<node>:dev` images, and is meant for the integration branch, not for every edit. TODO(D8): record one green run on the integration branch.
+On pnpm 9, run `make check PNPM=pnpm`. `make check E2E=1` adds `scripts/e2e_demo.py --stub`, an end-to-end run of the synthetic-data intent through the API (its own API with `STUB=1`, a throwaway database and no key: $0); it needs Docker and `make up`, rebuilds and retags the local `orchapod/<node>:dev` images, and is meant for the integration branch, not for every edit. Its recorded run (`hackathon/LOG.md`, 2026-10-21T01:49Z): run 9214965e succeeded in 4 s at $0, and the dataset's download link served 500 rows.
 
 Then create the artifact bucket once and start the API and the web app (two terminals):
 

@@ -90,14 +90,15 @@ def test_findings_that_cite_the_openapi_name_its_version():
 
 def test_the_unconfirmed_70b_claim_carries_a_todo():
     # Drop this test once the deprecation notice has been re-read and names the model and the date.
-    finding = next(f for f in FINDINGS if "left Token Factory serverless" in f)
+    finding = next((f for f in FINDINGS if "left Token Factory serverless" in f), "")
     assert "TODO(D8)" in finding
 
 
 def test_the_report_is_written_by_lightning_or_a_deterministic_template():
     # contracts "Agent API": STUB=1, or a failed Lightning call, gets the template.
     for name, text in {"README": README, "devpost": DEVPOST}.items():
-        assert "deterministic template" in text, name
+        line = next((ln for ln in text.splitlines() if "deterministic template" in ln), "")
+        assert "Lightning" in line, name
 
 
 def test_docs_have_no_stale_strings_or_bare_todos():

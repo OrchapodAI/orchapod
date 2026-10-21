@@ -29,7 +29,7 @@ from api.services.provider_selector import get_providers
 from orchapod.prices import PRICES
 from packages.providers.base import ProviderError
 from packages.providers.tokenfactory import LIGHTNING, SUPER, TF_BASE, ULTRA
-from packages.workflow_schema.models import NODE_REGISTRY
+from packages.workflow_schema.models import NODE_REGISTRY, ResourceSpec
 
 log = logging.getLogger("api.agent")
 
@@ -166,8 +166,9 @@ def _node_problems(n: PlanNode, nodes: dict[str, PlanNode], catalog: dict[str, d
     for k, value in n.inputs.items():
         problems += [f"{k}: {p}" for p in _input_problems(value, n, nodes, catalog)]
     problems += _constraint_problems(n, nodes)
-    if meta["runtime"] == "gpu" and not get_providers():
-        problems.append("no GPU provider is configured (set NEBIUS_PROJECT_ID)")
+    pref = ResourceSpec().provider_pref  # plans carry no resources, so the executor picks from the default list
+    if meta["runtime"] == "gpu" and not set(pref) & set(get_providers()):
+        problems.append(f"no GPU provider in provider_pref {pref} is configured (nebius needs NEBIUS_PROJECT_ID)")
     return problems
 
 
@@ -304,6 +305,8 @@ async def make_plan(intent: str, db: AsyncSession, scale: float) -> dict:
                 read_timeout=300))  # one slow call must not be re-sent and billed twice
         except ProviderError as e:
             raise HTTPException(status_code=502, detail=str(e))
+        except Exception as e:  # a 2xx the client could not read (missing keys, wrong types)
+            raise HTTPException(status_code=502, detail=f"token_factory unreadable reply: {e!r}")
         answer = out["parsed"] if isinstance(out["parsed"], dict) else {}
         plan = answer.get("plan") if isinstance(answer.get("plan"), dict) else {"name": "", "nodes": []}
         errors, warnings, est = review(plan, left)
@@ -339,8 +342,8 @@ async def write_report(agent_run: AgentRun, summary: dict, db: AsyncSession, sca
                 LIGHTNING, temperature=0.0, max_tokens=1200, thinking=False))
             if out["text"].strip():
                 return out["text"].strip()
-        except ProviderError as e:
-            log.warning("report of run %s falls back to the template: %s", agent_run.run_id, e)
+        except Exception as e:  # a ProviderError, or a reply the client could not read
+            log.warning("report of run %s falls back to the template: %r", agent_run.run_id, e)
     return template_report(agent_run, summary)
 
 

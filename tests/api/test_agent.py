@@ -19,7 +19,7 @@ from api.executor import run_workflow as ex
 from api.models.db import AgentRun, Artifact, ArtifactKind, NodeRun, NodeStatus, Run, RunStatus, Spend, Workflow
 from api.services import budget
 from packages.providers.tokenfactory import LIGHTNING, SUPER, TokenFactory
-from packages.workflow_schema.models import NODE_REGISTRY, SynthDistilabelInputs
+from packages.workflow_schema.models import NODE_REGISTRY, ResourceSpec, SynthDistilabelInputs
 
 INTENTS = [  # the /agent page's examples (apps/web/app/agent/page.tsx)
     "Fine-tune Llama 3B on US real-estate compliance: Fair Housing Act, RESPA, TILA/TRID, state licensing",
@@ -58,6 +58,8 @@ def tf(monkeypatch):
     def handler(request):
         fake.requests.append(json.loads(request.content))
         status, content = fake.replies.pop(0)
+        if isinstance(content, dict):  # a raw reply body, e.g. a malformed one
+            return httpx.Response(status, json=content)
         if status != 200:
             return httpx.Response(status, json={"detail": content})
         return httpx.Response(200, json={"model": "m", "usage": {"prompt_tokens": 5000, "completion_tokens": 800},
@@ -155,9 +157,21 @@ async def test_the_planner_stops_after_two_repairs(client, tf):
 
 
 async def test_token_factory_failures_are_502(client, tf):
-    tf.replies = [(400, "model not found")]
+    tf.replies = [(400, "model not found"), (200, {"model": "m", "choices": [{"index": 0}]})]  # the second: no message
     r = await client.post("/agent/plan", json={"intent": "anything"})
     assert r.status_code == 502 and r.json()["detail"].startswith("token_factory bad_request 400")
+    r = await client.post("/agent/plan", json={"intent": "anything"})
+    assert r.status_code == 502  # today a KeyError in the client; bad_output once the client wraps this shape
+    assert r.json()["detail"].startswith(("token_factory unreadable reply", "token_factory bad_output"))
+
+
+def test_a_gpu_node_needs_a_configured_provider_it_prefers(monkeypatch):
+    plan = {"name": "p", "nodes": [node("t", "unsloth-train", train_data="r2://b/train")]}
+    monkeypatch.setattr(planner, "get_providers", lambda: {"runpod": object()})  # configured, but no plan prefers it
+    assert errors_of(plan) == [f"t: no GPU provider in provider_pref {ResourceSpec().provider_pref} is configured "
+                               "(nebius needs NEBIUS_PROJECT_ID)"]
+    monkeypatch.setattr(planner, "get_providers", lambda: {"nebius": object()})
+    assert errors_of(plan) == []
 
 
 async def test_planning_stops_when_the_day_budget_is_spent(client, db, tf):
@@ -194,7 +208,7 @@ def test_review_checks_structure_refs_and_input_schemas():
         "g: unknown node type 'nope'",
         "Bad: id must be snake_case ([a-z][a-z0-9_]*)",
         "h: seed_prompts: refs resolve only at the top level of inputs",
-        "t: no GPU provider is configured (set NEBIUS_PROJECT_ID)",
+        f"t: no GPU provider in provider_pref {ResourceSpec().provider_pref} is configured (nebius needs NEBIUS_PROJECT_ID)",
     ]:
         assert expected in errors
     assert any(e.startswith("e: train_split: ") for e in errors)
@@ -338,10 +352,14 @@ async def test_report_falls_back_to_the_template(client, db, monkeypatch, tf):
     md = (await client.get(f"/agent/runs/{failed.id}/report")).json()["markdown"]
     assert md.startswith("## qa-data: failed") and "Q&A data" in md and "$0.0200 of $0.03 estimated" in md
 
+    garbled = await agent_run(db, RunStatus.SUCCEEDED)
+    tf.replies = [(200, {"model": "m", "choices": [{"index": 0}]})]  # a 200 the client cannot read
+    assert (await client.get(f"/agent/runs/{garbled.id}/report")).json()["markdown"].startswith("## qa-data: succeeded")
+
     monkeypatch.setenv("STUB", "1")
     done = await agent_run(db, RunStatus.SUCCEEDED)
     md = (await client.get(f"/agent/runs/{done.id}/report")).json()["markdown"]
-    assert "[prep/dataset](/artifacts/" in md and len(tf.requests) == 1  # STUB calls nothing
+    assert "[prep/dataset](/artifacts/" in md and len(tf.requests) == 2  # STUB calls nothing
 
 
 async def test_retry_clears_the_cached_report(client, db, monkeypatch):

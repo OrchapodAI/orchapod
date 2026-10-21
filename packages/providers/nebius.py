@@ -7,8 +7,8 @@ https://api.nebius.cloud/ai/v1 is a REST gateway over the gRPC protos in https:/
 (nebius/ai/v1/job*.proto, endpoint*.proto), so bodies are those messages in proto3 JSON (camelCase), and errors are gRPC
 codes as HTTP statuses (https://docs.nebius.com/rest-api/errors). Routes and bodies are from
 https://docs.nebius.com/serverless/jobs/manage and /serverless/endpoints/manage; "proto" marks a field that only the
-.proto names. `metadata.name` is unique per project and kind (both services have GetByName), so list() finds a create
-whose reply was lost (R19). STUB=1 answers offline.
+.proto names. `metadata.name` is unique per project and kind (both services have GetByName), so find() recovers a
+create whose reply was lost (R19). STUB=1 answers offline.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ import shutil
 import subprocess
 import time
 from collections.abc import AsyncIterator
-from datetime import datetime
+from time import monotonic
 
 import httpx
 
@@ -34,6 +34,8 @@ AI_BASE = "https://api.nebius.cloud/ai/v1"
 P = "nebius_serverless"
 GIB = 2 ** 30
 PLATFORMS = {"H100": ("gpu-h100-sxm", "1gpu-16vcpu-200gb"), "L40S": ("gpu-l40s-a", "1gpu-8vcpu-32gb")}
+STUB_URL = "http://stub.invalid"
+TOKEN = re.compile(r"[A-Za-z0-9._~+/=-]+")  # what may go into the Authorization header: no space, no newline
 log = logging.getLogger("orchapod.nebius")
 
 
@@ -48,10 +50,10 @@ class NebiusServerless:
         self.jobs, self.endpoints = _Jobs(self, "jobs"), _Endpoints(self, "endpoints")
 
     def _call(self, method: str, path: str, *, create: bool = False, **kwargs) -> dict:
-        """The reply's JSON object. An empty token, or a 401, runs `nebius iam get-access-token` once and sends the
-        call again: a 401 (UNAUTHENTICATED) is refused before anything runs, so even a create may go again."""
+        """The reply's JSON object. An empty or malformed token, or a 401, runs `nebius iam get-access-token` once and
+        sends the call again: a 401 (UNAUTHENTICATED) is refused before anything runs, so even a create may go again."""
         renewed = False
-        if not self.token and not self.stub:
+        if not TOKEN.fullmatch(self.token) and not self.stub:
             self._renew()
             renewed = True
         while True:
@@ -65,19 +67,20 @@ class NebiusServerless:
                 renewed = True
 
     def _renew(self) -> None:
-        """R15: the CLI's profile on the host signs the token (12 h); no CLI or no token → ProviderError auth."""
+        """R15: the CLI's profile on the host signs the token (12 h). The last line of its stdout must look like a
+        token; anything else is auth with a fixed message, so CLI output never reaches an error string or a header."""
         cli = shutil.which("nebius")
         if cli is None:
-            raise ProviderError(P, "auth", None, "NEBIUS_IAM_TOKEN is empty or expired and the nebius CLI is not "
-                                                 "installed to renew it (nebius iam get-access-token)")
+            raise ProviderError(P, "auth", None, "NEBIUS_IAM_TOKEN is empty, malformed or expired and the nebius CLI is "
+                                                 "not installed to renew it (nebius iam get-access-token)")
         try:
             out = subprocess.run([cli, "iam", "get-access-token"], capture_output=True, text=True, timeout=60)
         except (OSError, subprocess.SubprocessError) as e:
             raise ProviderError(P, "auth", None, f"nebius iam get-access-token: {e}") from e
-        if out.returncode or not out.stdout.strip():
-            raise ProviderError(P, "auth", None, f"nebius iam get-access-token exited {out.returncode}: "
-                                                 f"{out.stderr.strip()[-300:]}")
-        self.token = out.stdout.strip()
+        token = (out.stdout.strip().splitlines() or [""])[-1].strip()
+        if out.returncode or not TOKEN.fullmatch(token):
+            raise ProviderError(P, "auth", None, f"nebius iam get-access-token gave no token (exit {out.returncode})")
+        self.token = token
 
     def _parent(self) -> str:
         if not self.project and not self.stub:
@@ -93,10 +96,10 @@ class _Kind:
 
     def _create(self, name, image, args, env, platform, preset, volumes, **extra) -> str:
         """The new resource's id: the Operation's resourceId. A reply without one is bad_output, and the resource may
-        exist all the same: the caller finds it by name with list()."""
+        exist all the same: the caller recovers it with find(name)."""
         spec = {"image": image, "args": args, "platform": platform, "preset": preset,
                 "environmentVariables": [{"name": k, "value": v} for k, v in env.items() if v],
-                "volumes": [_volume(v) for v in volumes],
+                "volumes": [self._volume(v) for v in volumes],
                 "disk": {"type": "NETWORK_SSD", "sizeBytes": str(250 * GIB)}, "shmSizeBytes": str(16 * GIB), **extra}
         reply = self._c._call("POST", f"/{self._kind}", create=True,
                               json={"metadata": {"parentId": self._c._parent(), "name": name}, "spec": spec})
@@ -107,21 +110,28 @@ class _Kind:
 
     def get(self, id: str) -> dict:
         """{id, name, state, url, code, message}"""
-        return _view(self._c._call("GET", f"/{self._kind}/{id}"))
+        return self._view(self._c._call("GET", f"/{self._kind}/{id}"))
 
     def list(self) -> list[dict]:
-        """Every one in the project as get() views, all pages, newest first by metadata.createdAt (the List call has no
-        order). Match `name` to find a create whose reply was lost."""
+        """Every one in the project as get() views, all pages, in the API's order."""
         items, page = [], {}
         while True:
             reply = self._c._call("GET", f"/{self._kind}", params={"parentId": self._c._parent(), **page})
             items += reply.get("items") or []
             if not reply.get("nextPageToken"):
-                break
-            page = {"pageToken": reply["nextPageToken"]}  # proto ListJobsRequest.page_token
-        items.sort(key=lambda i: datetime.fromisoformat(i["metadata"].get("createdAt") or "1970-01-01T00:00:00Z"),
-                   reverse=True)
-        return [_view(i) for i in items]
+                return [self._view(i) for i in items]
+            page = {"pageToken": reply["nextPageToken"]}  # proto List*Request.page_token
+
+    def find(self, name: str) -> dict | None:
+        """The one named `name`, looked for at about 0, 15 and 45 s: a create whose reply was lost (a 504 "may occur
+        even if the request completed successfully") can take a moment to be listed. A failed lookup is a miss."""
+        for pause in (0, 15, 30):
+            time.sleep(pause)
+            with contextlib.suppress(ProviderError):
+                found = next((i for i in self.list() if i["name"] == name), None)
+                if found:
+                    return found
+        return None
 
     def delete(self, id: str) -> None:
         """A 404 is done: it is gone already."""
@@ -130,6 +140,31 @@ class _Kind:
         except ProviderError as e:
             if e.status != 404:
                 raise
+
+    def _view(self, item: dict) -> dict:
+        """url = the first https public endpoint (in STUB, http://stub.invalid), None until RUNNING; code and message =
+        status.stateDetails (proto), the cause of FAILED or ERROR."""
+        meta, status = item.get("metadata") or {}, item.get("status") or {}
+        details = status.get("stateDetails") or {}
+        urls = [u for u in status.get("publicEndpoints") or []
+                if u.startswith("https://") or (self._c.stub and u == STUB_URL)]
+        return {"id": meta.get("id"), "name": meta.get("name"), "state": status.get("state"),
+                "url": urls[0] if urls and status.get("state") == "RUNNING" else None,
+                "code": details.get("code"), "message": details.get("message")}
+
+    def _volume(self, volume: str) -> dict:
+        """"s3://<bucket>:<container_path>:ro|rw", the CLI's --volume form, → a VolumeMount of our bucket with s3Config
+        (proto VolumeMount.S3Config) from ORCHAPOD_R2_*, which must be https: Nebius mounts it from outside."""
+        m = re.fullmatch(r"s3://([^:/]+):(/[^:]*):(ro|rw)", volume)
+        if not m:
+            raise ProviderError(P, "bad_request", None, f"volume {volume!r} is not s3://<bucket>:<container_path>:ro|rw")
+        endpoint = os.environ.get("ORCHAPOD_R2_ENDPOINT", "")
+        if not endpoint.startswith("https://") and not self._c.stub:  # a local MinIO: a paid endpoint with no bucket
+            raise ProviderError(P, "bad_request", None, "a volume needs ORCHAPOD_R2_ENDPOINT to be an https URL")
+        return {"source": f"s3://{m[1]}", "containerPath": m[2], "mode": "READ_ONLY" if m[3] == "ro" else "READ_WRITE",
+                "s3Config": {"endpoint": endpoint, "region": os.environ.get("ORCHAPOD_R2_REGION", ""),
+                             "credentials": {"accessKeyId": os.environ.get("ORCHAPOD_R2_ACCESS_KEY", ""),
+                                             "secretAccessKey": os.environ.get("ORCHAPOD_R2_SECRET_KEY", "")}}}
 
 
 class _Jobs(_Kind):
@@ -153,34 +188,15 @@ class _Endpoints(_Kind):
                             ports=[{"containerPort": port, "protocol": "HTTP"}], authToken=auth_token)
 
 
-def _view(item: dict) -> dict:
-    """url = the first https public endpoint (http only in STUB), None until RUNNING; code and message =
-    status.stateDetails (proto), the cause of FAILED or ERROR."""
-    meta, status = item.get("metadata") or {}, item.get("status") or {}
-    details = status.get("stateDetails") or {}
-    urls = [u for u in status.get("publicEndpoints") or [] if u.startswith(("https://", "http://"))]
-    return {"id": meta.get("id"), "name": meta.get("name"), "state": status.get("state"),
-            "url": urls[0] if urls and status.get("state") == "RUNNING" else None,
-            "code": details.get("code"), "message": details.get("message")}
-
-
-def _volume(volume: str) -> dict:
-    """"s3://<bucket>:<container_path>:ro|rw", the CLI's --volume form, → a VolumeMount of our bucket with s3Config
-    (proto VolumeMount.S3Config) from ORCHAPOD_R2_*."""
-    m = re.fullmatch(r"s3://([^:/]+):(/[^:]*):(ro|rw)", volume)
-    if not m:
-        raise ProviderError(P, "bad_request", None, f"volume {volume!r} is not s3://<bucket>:<container_path>:ro|rw")
-    return {"source": f"s3://{m[1]}", "containerPath": m[2], "mode": "READ_ONLY" if m[3] == "ro" else "READ_WRITE",
-            "s3Config": {"endpoint": os.environ.get("ORCHAPOD_R2_ENDPOINT", ""),
-                         "region": os.environ.get("ORCHAPOD_R2_REGION", ""),
-                         "credentials": {"accessKeyId": os.environ.get("ORCHAPOD_R2_ACCESS_KEY", ""),
-                                         "secretAccessKey": os.environ.get("ORCHAPOD_R2_SECRET_KEY", "")}}}
-
-
-def _platform(gpu_spec: GPUSpec) -> tuple[str, str]:
+def _platform(gpu_spec: GPUSpec) -> tuple[str, str, float]:
+    """(platform, preset, $ an hour); any other spec, or an unpriced platform, fails closed (R5/R16: one price table)."""
     if gpu_spec.count != 1 or gpu_spec.gpu_type not in PLATFORMS:
         raise LookupError(f"Nebius jobs run 1xH100 or 1xL40S, not {gpu_spec.count}x{gpu_spec.gpu_type}")
-    return PLATFORMS[gpu_spec.gpu_type]
+    platform, preset = PLATFORMS[gpu_spec.gpu_type]
+    price = PRICES["nebius_serverless"].get(platform)
+    if price is None:
+        raise LookupError(f"no price for nebius_serverless {platform} in orchapod.prices.PRICES")
+    return platform, preset, price
 
 
 class NebiusProvider:
@@ -190,38 +206,43 @@ class NebiusProvider:
 
     def __init__(self, *, http: httpx.Client | None = None):
         self.client = NebiusServerless(http=http)
+        self._budget: dict[str, tuple[float, str]] = {}  # job id → (monotonic time its spend reaches the cap, reason)
 
     async def quote(self, gpu_spec: GPUSpec) -> Quote:
-        platform, _ = _platform(gpu_spec)
-        price = PRICES["nebius_serverless"].get(platform)  # the one table (R5/R16)
-        if price is None:  # unpriced fails closed
-            raise LookupError(f"no price for nebius_serverless {platform} in orchapod.prices.PRICES")
+        platform, _, price = _platform(gpu_spec)
         return Quote(provider=self.name, price_per_hour=price, available=True, gpu_type=platform,
                      note="Nebius AI Cloud Serverless Job")
 
     async def provision(self, gpu_spec: GPUSpec, image: str, env: dict[str, str]) -> Pod:
-        """jobs.create under a name unique to this attempt; after a lost reply the job is adopted by that name."""
-        platform, preset = _platform(gpu_spec)
-        for key in ("ORCHAPOD_CONTROL_URL", "ORCHAPOD_R2_ENDPOINT"):  # the job reaches both from Nebius
+        """jobs.create under a name unique to this attempt, without NEBIUS_IAM_TOKEN (gpu Jobs never call the Nebius API);
+        after a lost reply the job is adopted through jobs.find. Starts the spend deadline wait() keeps (R14)."""
+        platform, preset, price = _platform(gpu_spec)
+        for key in ("ORCHAPOD_CONTROL_URL", "ORCHAPOD_R2_ENDPOINT"):  # the job reaches both from Nebius: a scheme check
             if not (env.get(key) or "").startswith("https://"):
-                raise ProvisionError(f"{key} must be a public https URL for a Nebius job, not {env.get(key)!r}")
+                raise ProvisionError(f"{key} must be an https URL for a Nebius job to reach")
         name = re.sub(r"[^a-z0-9-]+", "-", f"orchapod-{env.get('ORCHAPOD_RUN_ID', '')[:8]}-{int(time.time())}-"
                                            f"{env.get('ORCHAPOD_NODE_ID', 'node')}".lower())[:63].strip("-")
+        env = {k: v for k, v in env.items() if k != "NEBIUS_IAM_TOKEN"}
         try:
             job_id = await asyncio.to_thread(self.client.jobs.create, name, image, env=env, platform=platform,
                                              preset=preset)
         except ProviderError as e:
             if e.kind not in ("server", "bad_output"):  # refused: nothing was created
                 raise
-            found = [j["id"] for j in await asyncio.to_thread(self.client.jobs.list) if j["name"] == name]
-            if not found:
-                raise
-            job_id = found[0]
+            job = await asyncio.to_thread(self.client.jobs.find, name)
+            if job is None:
+                raise ProvisionError(f"{e}; job {name} may still exist, cancel it in the console") from e
+            job_id = job["id"]
+        cap = float(env.get("ORCHAPOD_MAX_COST_USD") or "inf")
+        self._budget[job_id] = (monotonic() + cap / price * 3600,
+                                f"budget: node cap ${cap:.2f} reached ({platform} at ${price:.2f}/h)")
         return Pod(provider=self.name, pod_id=job_id)
 
     async def wait(self, pod: Pod) -> int:
-        """Polls every 15 s: COMPLETED → 0; FAILED, CANCELLED or ERROR → its code and message to this log, 1. A 5xx or
-        429 that outlasts the client's retries is polled through, so an API blip never cancels a paid job."""
+        """Polls every 15 s: COMPLETED → 0; FAILED, CANCELLED or ERROR → 1. A 5xx or 429 that outlasts the client's
+        retries is polled through, so an API blip never cancels a paid job. No time limit of its own (the executor's
+        node timeout bounds it) but R14's: once the job's spend reaches the node's cap, 1. On 1, pod.error says why."""
+        stop_at, over_budget = self._budget.pop(pod.pod_id, (float("inf"), ""))
         while True:
             try:
                 job = await asyncio.to_thread(self.client.jobs.get, pod.pod_id)
@@ -234,7 +255,12 @@ class NebiusProvider:
                     return 0
                 if job["state"] in ("FAILED", "CANCELLED", "ERROR"):
                     log.error("nebius job %s %s: %s %s", pod.pod_id, job["state"], job["code"], job["message"])
+                    why = re.sub(r"\w+://\S+", "<url>", job["message"] or "")[:300]  # anonymous viewers read it
+                    pod.error = f"{job['state']} {job['code'] or ''}".strip() + (f": {why}" if why else "")
                     return 1
+            if monotonic() >= stop_at:
+                pod.error = over_budget
+                return 1
             await asyncio.sleep(15)
 
     async def terminate(self, pod: Pod) -> None:
@@ -259,5 +285,5 @@ def _stub(request: httpx.Request) -> httpx.Response:
     if request.method == "GET":
         job = kind == "aijob"
         return httpx.Response(200, json={"metadata": {"id": path.rsplit("/", 1)[1]}, "status": {
-            "state": "COMPLETED" if job else "RUNNING", "publicEndpoints": [] if job else ["http://stub.invalid"]}})
+            "state": "COMPLETED" if job else "RUNNING", "publicEndpoints": [] if job else [STUB_URL]}})
     return httpx.Response(200, json={"id": f"aiop-stub-{h}"})  # cancel, delete: an Operation

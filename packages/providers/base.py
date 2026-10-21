@@ -41,6 +41,7 @@ class Pod:
     pod_id: str
     public_ip: str | None = None
     public_port: int | None = None  # for vllm-serve TCP exposure
+    error: str | None = None  # why wait() returned non-zero (no URLs or secrets); the node error instead of "exit 1"
 
 
 @runtime_checkable

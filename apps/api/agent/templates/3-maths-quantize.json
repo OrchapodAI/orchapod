@@ -17,5 +17,6 @@
         "tuned_model_ref": "${{ nodes.quantize.outputs.gguf_file }}",
         "judge_model": "nvidia/Nemotron-3-Ultra-550b-a55b", "max_samples": 50, "n_judge": 20, "exact_match": true}}
     ]
-  }
+  },
+  "reduced_inputs": {"gsm8k": {"hf_split": "test[:10]"}, "evaluate": {"max_samples": 10, "n_judge": 5}}
 }

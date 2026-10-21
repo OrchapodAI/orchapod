@@ -103,5 +103,6 @@ async def report(run_id: uuid.UUID, db: Session, scale: Scale):
 
 @router.get("/templates")
 async def list_templates():
-    """→ [{slug, title, intent, rationale, plan, estimate}]; one-click Run posts a template's plan to /agent/run."""
-    return [{**t, "estimate": planner.estimate(t["plan"])[0]} for t in planner.templates()]
+    """→ [{slug, title, intent, rationale, plan, estimate, reduced_inputs, reduced: {plan, estimate}}]; one-click Run posts
+    a template's plan to /agent/run, and "Run it yourself" (the hosted demo's anonymous callers) posts `reduced.plan`."""
+    return [{**t, "estimate": planner.estimate(t["plan"])[0], "reduced": planner.reduced(t)} for t in planner.templates()]

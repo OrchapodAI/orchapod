@@ -9,6 +9,7 @@ plan is the closest canonical template (templates/*.json) and the report is the 
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import math
@@ -69,8 +70,17 @@ class Plan(BaseModel):
 
 
 def templates() -> list[dict]:
-    """The three canonical intents: {slug, title, intent, rationale, plan}."""
+    """The three canonical intents: {slug, title, intent, rationale, plan, reduced_inputs}."""
     return [json.loads(p.read_text()) for p in sorted(TEMPLATES.glob("*.json"))]
+
+
+def reduced(t: dict) -> dict:
+    """"Run it yourself": the template's plan at reduced scale ({node id: inputs} from its `reduced_inputs` win over the
+    plan's), sized for the anonymous caps, and its estimate. One-click Run posts this plan to /agent/run."""
+    plan = copy.deepcopy(t["plan"])
+    for n in plan["nodes"]:
+        n["inputs"].update(t.get("reduced_inputs", {}).get(n["id"], {}))
+    return {"plan": plan, "estimate": estimate(plan)[0]}
 
 
 def visible() -> dict[str, dict]:

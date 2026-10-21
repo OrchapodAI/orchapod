@@ -52,9 +52,9 @@ Do the proposal's "What needs a human" steps 2–3 first (vCPU quota; GPU quotas
    build them on the VM: `cd /opt/orchapod && for d in containers/*/; do sudo docker build -t orchapod/$(basename $d):dev -f ${d}Dockerfile .; done`.
 7. **Golden run** (what `make demo` does locally):
    `dc run --rm -v /opt/orchapod/scripts:/app/scripts:ro api python scripts/seed-golden-run.py`.
-8. **Lane B only** (R15): the API image has the `nebius` CLI and mounts `/opt/orchapod/nebius` at `/root/.nebius`. Copy the
-   compute service account's private key there, then `dc exec api nebius profile create …` (`dc exec api nebius profile create --help`
-   lists the flags; give the key's path as `/root/.nebius/<file>`).
+8. **Lane B only** (R15): the API image has the `nebius` CLI (0.12.293) and mounts `/opt/orchapod/nebius` at `/root/.nebius`.
+   Copy the compute service account's private key there, then run `dc exec api nebius profile create` with `--parent-id`,
+   `--service-account-id`, `--public-key-id` and `--private-key-file-path /root/.nebius/<file>` (`--help` explains each).
 9. **Checks** (proposal "HTTPS, DNS and the bucket"):
    - `curl -fsS https://api.<domain>/health`, and `https://app.<domain>/` renders.
    - Hairpin NAT: `sudo docker run --rm curlimages/curl -fsS https://api.<domain>/health` passes. If it fails, nodes cannot
@@ -113,13 +113,13 @@ The prod stack on a laptop: Caddy on 18080/18443 with its internal CA, MinIO as 
 ```
 export COMPOSE_PROJECT_NAME=orchapod-prodtest-$USER DOMAIN=orchapod.test POSTGRES_PASSWORD=smoke ORCHAPOD_INTERNAL_SECRET=smoke \
   ORCHAPOD_R2_ENDPOINT=http://minio:9000 ORCHAPOD_R2_REGION=auto ORCHAPOD_R2_ACCESS_KEY=orchapod ORCHAPOD_R2_SECRET_KEY=orchapod_dev STUB=1
-dc="docker compose -f infra/docker-compose.prod.yml -f infra/docker-compose.smoke.yml"
-$dc up -d --build --wait
+dc() { docker compose -f infra/docker-compose.prod.yml -f infra/docker-compose.smoke.yml "$@"; }   # bash and zsh
+dc up -d --build --wait
 curl -kfsS --resolve api.orchapod.test:18443:127.0.0.1 https://api.orchapod.test:18443/health
 curl -kfsSL --resolve app.orchapod.test:18443:127.0.0.1 https://app.orchapod.test:18443/ | grep -o '<title>[^<]*'
 scripts/backup-db.sh                                       # a dump lands in MinIO
-docker kill -s STOP "$($dc ps -q api)"; sleep 40; scripts/watchdog.sh   # unhealthy → restarted
-$dc down -v --rmi local
+docker kill -s STOP "$(dc ps -q api)"; sleep 40; scripts/watchdog.sh   # unhealthy → restarted
+dc down -v --rmi local; rmdir nebius                       # Docker created nebius/ for the bind mount
 ```
 
 ## What the hosted app still needs from backend (D6 hardening, backend-w4)

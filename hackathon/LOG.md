@@ -295,3 +295,9 @@ worktrees:
   - DECISION: normalisation applies only to the scanned copy, never to the text the model sees.
   - Ledger: platform-w6 fix rounds 0/5. Merged; make check green (772 + web 27); 168 fence + container tests.
   - Rebuild synth-distilabel/data-prep/judge-eval :dev (next E2E=1).
+- 2026-10-21T15:37Z ml-w5 review (opus, spend gate): Needs fixes.
+  - Confirmed: every endpoint state ends in delete or TTL hand-off; one bill per path; no token logged; delete-never-adopt accepted.
+  - Important: the pre-create check ran find()'s 0/15/45 s loop (+45 s on every create; an auth failure or outage looks like 'free' → a possible 409) → one list() scan; find() stays for the lost create.
+  - Minors: SIGTERM ignored in finally; a labelled failure when the leftover delete fails; contract overclaims; token-not-logged assertion.
+  - RULING R14: Lane B plans set keep_alive_min 25 (an L40S endpoint billed from creation: ≤ 15 min start + 25 keep ≈ $1.03; with 25 min of H100 ≈ $2.90 < $3); amend R14 at merge.
+  - Fix round 1 → ac6133b1abd392165.

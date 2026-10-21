@@ -1,12 +1,11 @@
 # STATE — Orchapod × Nebius hackathon
-Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
+Updated: 2026-10-21T15:45Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
-1. Hari: NEBIUS_API_KEY and TAVILY_API_KEY into ~/src/orchapod-hack/.env — both lines still empty on disk (2026-10-21T02:37Z); the hidden-input command is in chat. Unblocks spikes 1–3 and every live check.
-2. Spikes 1–3 (hackathon/briefs/2026-10-22-spikes.md; worktrees spike1–3 at c164e4e) — dispatch the moment the key lands.
-3. Waves 3–4: COMPLETE. Wave 5 (hackathon/briefs/2026-10-24-wave5.md): MERGED platform-w5, qa-w5, platform-w6; REVIEW backend-w5, ml-w5, devrel-w5; next frontend-w5 (after backend-w5).
-4. After wave 3: shared fence() (platform), apps/api/config.py (platform), vllm-serve rewrite (ml), `make check E2E=1` + Playwright smoke on the merged branch, D6 hardening (anonymous budget ceiling).
-5. G1 Oct 24: golden path green from the UI (needs spike 1's deploy answer) + intent #2 from the agent chat (STUB green 2026-10-21; live waits on the key).
+1. Hari — decisions waiting (details in LOG "Ruling:" lines since 2026-10-21T02:50Z): NEBIUS_API_KEY + TAVILY_API_KEY into .env (unblocks spikes 1–3 and every live run); hosting (hackathon/briefs/2026-10-22-hosting-proposal.md, reply line inside; option + domain by Oct 24); golden-run topic by D6 (docs specialist vs real estate; both templates exist); ~10 GB of ml-w3 test artifacts in the local MinIO — delete?; AI-build disclosure; the two stopped vast.ai instances.
+2. Spikes 1–3 (hackathon/briefs/2026-10-22-spikes.md; worktrees spike1–3) — dispatch the moment a key lands; spike 1 decides tf-deploy vs vllm-serve for the golden path.
+3. Wave 5 (hackathon/briefs/2026-10-24-wave5.md): MERGED platform-w5, qa-w5, platform-w6, devrel-w5, ml-w5; FIX ROUND backend-w5 (GPU double count, CLI stderr, endpoint_id validation); then frontend-w5 (cancel token, workflow_name, save a copy on 409) and a qa follow-up (e2e_demo sends the cancel token; the preempted-Job pin → Pod.error; e2e on Linux).
+4. G1 Oct 24 holds in STUB: e2e_agent 3/3, ui-smoke golden path green. Live G1 waits on the key + spike 1.
 
 ## Board (status ∈ TODO | IN_PROGRESS(<agent>, <branch>) | REVIEW | DONE | BLOCKED(<why>))
 ### orchestrator

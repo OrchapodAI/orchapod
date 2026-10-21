@@ -304,3 +304,59 @@
 - /compare trusts any URL registered through /internal/ttl.
   - Every node holds ORCHAPOD_INTERNAL_SECRET, gpu Jobs running third-party code included. Such a node could register its own URL under a fresh endpoint id, and a visitor's /compare would then send ORCHAPOD_ENDPOINT_TOKEN there.
   - A fix needs either the registering node to be a vllm-serve node of a live run, or a check that the URL matches what `endpoints.get(endpoint_id)` returns. Not done: neither was asked for.
+
+---
+
+## Fix round 3 (Orchestrator re-review; all 4 items done)
+### Commits (tip 65616ef)
+| SHA | What |
+| --- | --- |
+| e4e4460 | docs(contracts): the round's lines, in their own commit |
+| 65616ef | Items 1–4 (one commit: they share register_ttl and _reconcile) |
+
+### Per item
+1. **Timers change only after the commit.**
+   - register_ttl now computes which rows it supersedes, commits, then cancels their timers and arms its own, and only then publishes the event.
+   - A commit that fails (the reviewer's `\ud800` URL; a NUL on Postgres) leaves the live timer alone, and a Redis error in the event can no longer skip `_arm`.
+   - Test: a commit forced to fail, then the event forced to fail.
+2. **Forged endpoint rows.**
+   - (a) /internal/artifact refuses `kind: endpoint` (422). test_redact.py's legacy key artifact now uses `metrics`.
+   - (b) `resume_ttls` guards each row: a row it cannot read (meta not a dict) is logged and skipped. `_live` now requires an aware, parseable `expires_at`, so junk and timezone-less rows are never live: not in register_ttl's `min()`, the sweep, or /compare (no more 500).
+   - (c) /internal/ttl stores the URL Nebius reports.
+     - It calls `(await asyncio.to_thread(_endpoints().get, id))["url"]`; a `stub-*` id is `http://stub.invalid`, with no call.
+     - A node URL that differs, or None (not running yet), gets 422; Nebius not answering gets 502.
+     - The confirmed URL is the artifact's uri and `outputs.endpoint_url`.
+     - /compare's `_registered` now uses `_live` too, so a row without an `endpoint_id` is not trusted; test_compare's helper adds one.
+3. **Per-attempt cap.**
+   - `budget.reported_cost()` is split out of `attempt_cost()`.
+   - A report that takes its attempt's reported total above 2 × ORCHAPOD_MAX_RUN_USD gets 422 and a log line. A re-send of a counted seq does not count again.
+   - The finite check now runs before the clamp at 0: `max(0.0, nan)` is 0.0, which my first ordering missed and the existing test caught.
+4. **The flaky test** registers and expires its two endpoints one at a time: the in-memory database's single connection was shared by two concurrent expiry sessions. It passed 30 of 30 runs, and the whole module 10 of 10.
+
+### Proof
+- **`make check`** on 65616ef: exit 0. `All checks passed!`, `757 passed`, web `pass 27`, `SKIP stub e2e`.
+- **Dry merge** with NebiusHackathon @ c2bf64c. The same single conflict, `apps/api/routes/internal.py`; take this branch's side. Merged tree: ruff clean, `848 passed, 1 skipped`; only the `.git`-dependent hosting test is deselected.
+- **Mutations: 8 of 8 caught.**
+  - timers cancelled before the commit;
+  - arming after the event;
+  - a forged endpoint row accepted;
+  - no per-row guard at startup;
+  - a timezone-less expiry counted;
+  - the node's own URL stored;
+  - a cap per report only;
+  - arming removed.
+- **gitleaks** 23b0a57..HEAD: no leaks.
+
+### Contract lines changed (e4e4460)
+- /internal/ttl:
+  - it stores the URL Nebius reports (`stub-*` → `http://stub.invalid`) and refuses one that differs or is not running yet (422; 502 when Nebius does not answer);
+  - timers change only after the commit, before the event;
+  - the sweep skips, and logs, a row it cannot read.
+- The billing bullet:
+  - an attempt's node-reported total is capped at 2 × ORCHAPOD_MAX_RUN_USD;
+  - `kind: endpoint` is refused at /internal/artifact.
+
+### Notes
+- vllm-serve already registers exactly `eps.get(eid)["url"]` and, in STUB, `http://stub.invalid`, so real and STUB registrations pass; on a refusal it deletes its own endpoint.
+- The 63-character STUB id truncation and the deletion of the TOKEN fallback stay with the Orchestrator after the merge, as agreed.
+- The /compare concern in round 2's "Noticed" note is closed by item 2: /compare trusts only rows /internal/ttl wrote, at the URL Nebius reports.

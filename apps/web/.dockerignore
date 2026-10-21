@@ -1,0 +1,4 @@
+# A local install or build must not overwrite the image's own (COPY . .); pnpm 11 leaves pnpm-workspace.yaml behind
+node_modules
+.next
+pnpm-workspace.yaml

@@ -1,0 +1,52 @@
+#cloud-config
+# The hosted VM's user data (docs/HOSTING.md "Bring-up"), Ubuntu 24.04. It installs Docker with Compose, turns on unattended
+# security upgrades without automatic reboots and a firewall open on 22, 80 and 443 only, and schedules the api watchdog
+# (every minute), the nightly database backup and a weekly prune of the dangling images that rebuilds leave.
+# SSH access comes from the console's SSH key field. If the console drops it once user data is set, add:
+#   users: [default, {name: hari, sudo: "ALL=(ALL) NOPASSWD:ALL", shell: /bin/bash, ssh_authorized_keys: ["<your public key>"]}]
+ssh_pwauth: false
+package_update: true
+package_upgrade: true
+packages: [docker.io, docker-compose-v2, docker-buildx, rsync, ufw, unattended-upgrades]
+
+write_files:
+  # live-restore keeps containers running while an upgrade restarts dockerd; logs rotate at 10 MB, node containers included
+  - path: /etc/docker/daemon.json
+    content: |
+      {"live-restore": true, "log-driver": "json-file", "log-opts": {"max-size": "10m", "max-file": "3"}}
+  - path: /etc/apt/apt.conf.d/52orchapod
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      Unattended-Upgrade::Automatic-Reboot "false";
+  - path: /etc/systemd/system/orchapod-watchdog.service
+    content: |
+      [Unit]
+      Description=Restart the Orchapod api when Docker marks it unhealthy
+      ConditionPathExists=/opt/orchapod/scripts/watchdog.sh
+      [Service]
+      Type=oneshot
+      ExecStart=/opt/orchapod/scripts/watchdog.sh
+  - path: /etc/systemd/system/orchapod-watchdog.timer
+    content: |
+      [Unit]
+      Description=Run the Orchapod api watchdog every minute
+      [Timer]
+      OnCalendar=minutely
+      [Install]
+      WantedBy=timers.target
+  - path: /etc/cron.d/orchapod
+    content: |
+      15 3 * * * root /opt/orchapod/scripts/backup-db.sh 2>&1 | logger -t orchapod-backup
+      30 4 * * 0 root docker image prune -f 2>&1 | logger -t orchapod-prune
+
+runcmd:
+  # Docker publishes ports past ufw, so the compose file publishes Caddy's 80 and 443 and nothing else
+  - [ufw, default, deny, incoming]
+  - [ufw, allow, 22/tcp]
+  - [ufw, allow, 80/tcp]
+  - [ufw, allow, 443/tcp]
+  - [ufw, --force, enable]
+  - [install, -d, -m, "700", /opt/orchapod/nebius]
+  - [systemctl, daemon-reload]
+  - [systemctl, enable, --now, orchapod-watchdog.timer]

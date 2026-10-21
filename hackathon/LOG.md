@@ -315,3 +315,4 @@ worktrees:
   - contract overclaims fixed; a token-not-logged test.
   Ledger: ml-w5 fix rounds 1/5, 0 open. Merged; R14 amended (Lane B keep_alive_min 25 ≈ $2.90) + agent_knowledge line; make check green (795 + web 27).
   DECISION: vllm-serve deletes, never adopts, an endpoint found under its name, and bills from just before the create.
+- 2026-10-21T15:46Z INTEGRATION on cb7912b (all :dev rebuilt: shared fence, vllm-serve recovery, SKIP layer gone): `make check E2E=1` exit 0 — 795 passed; demo #2 PASS (4 s); agent 3 PASS / 0 FAIL (#1 run f5c46db2 10 s, #2 90524476 4 s, #3 1aed9080 12 s, all $0, reports ready). `make ui-smoke` 4 passed / 0 skipped (golden path 7.2 s; public-cap check). Strict by construction now.

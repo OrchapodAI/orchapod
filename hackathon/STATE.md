@@ -116,6 +116,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] vast.ai: two stopped instances from other projects (54041703 rec-l2-bench-2, 54062531 esci-bench-v2), stopped since 2026-10-03, still billing storage (~$0.20/h per the spike agent) — destroy them? Hari's call; agents leave them alone
 - [ ] DECISION: disclose in the README/Devpost that the build used AI coding agents? (Hari's call)
 - [ ] Before submission: GitHub's default branch is `main` (pre-hackathon code) — set it to NebiusHackathon, or link the branch explicitly in Devpost (repo admin: Purva)
+- [ ] DECISION by D6: golden-run topic — the Nebius docs specialist (PLAN's default; judges can verify answers) or intent #1 (US real-estate compliance)?
 - [ ] Before the repo goes public (G3): gitleaks clean, keys rotated, docs/Jira.csv reviewed for personal data
 
 ## Tooling (installed skills/plugins/MCP, with install command)

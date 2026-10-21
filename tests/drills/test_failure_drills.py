@@ -27,6 +27,7 @@ from api.models.db import Spend
 from orchapod import checkpoint, cost, io, log
 from orchapod.prices import PRICES
 from packages.providers.base import GPUSpec, Pod
+from packages.providers.nebius import NebiusProvider
 from packages.providers.tavily import Tavily
 from packages.providers.tokenfactory import SUPER, ULTRA, TokenFactory
 from tests.containers.conftest import load_container
@@ -48,7 +49,8 @@ CHAT_ROW = {"messages": [{"role": "user", "content": "Which GPU does gpu-l40s-a 
 class Nodes:
     """In place of containers. provision() keeps the env the executor built; wait() runs the node in this process with that
     env and the real SDK (`bodies[type]`, else containers/<type>/run.py main()), sends what the SDK posted to the API and
-    returns the exit code. As the gpu provider it is a Serverless Job (contracts "NebiusProvider"): 0 when COMPLETED, else 1."""
+    returns the exit code. As the gpu provider it is a Serverless Job (contracts "NebiusProvider"): the real NebiusProvider
+    reads the Job's end from a recorded reply, so 0 when COMPLETED, else 1 with the cause in Pod.error."""
 
     def __init__(self, name: str, client, tmp_path: Path):
         self.name, self.client, self.tmp = name, client, tmp_path
@@ -67,6 +69,9 @@ class Nodes:
 
     async def terminate(self, pod) -> None:
         pass
+
+    async def quote(self, gpu_spec):  # the executor bills a gpu pod's wall time at the provider's quote
+        return await NebiusProvider().quote(gpu_spec)
 
     async def wait(self, pod) -> int:
         node_type, env = self.started[pod.pod_id]
@@ -103,7 +108,17 @@ class Nodes:
             r = await self.client.post(req.full_url.removeprefix(env["ORCHAPOD_CONTROL_URL"]), content=req.data,
                                        headers=dict(req.header_items()))
             assert r.is_success, (req.full_url, r.status_code, r.text)
-        return code if self.name == "local-docker" else int(code != 0)
+        return code if self.name == "local-docker" else await self.job_ends(pod, code)
+
+    async def job_ends(self, pod: Pod, code: int) -> int:
+        """GET /jobs/<id> as Nebius would answer once the node exited `code` (the shape tests/providers/test_nebius.py records; the
+        cause's wording is a fake until G2): COMPLETED, or FAILED with a code, a message and a console link. NebiusProvider.wait
+        turns that into 0 or 1 and Pod.error."""
+        status = {"state": "COMPLETED"} if code == 0 else {"state": "FAILED", "stateDetails": {
+            "code": "ContainerFailed", "message": f"exit code {code}, see https://console.nebius.com/jobs/{pod.pod_id}"}}
+        job = {"metadata": {"id": pod.pod_id}, "status": status}
+        http = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=job)))
+        return await NebiusProvider(http=http).wait(pod)
 
 
 @pytest.fixture(autouse=True)
@@ -112,7 +127,8 @@ def env(monkeypatch):
     for name in ("STUB", "NEBIUS_BASE_URL", "ORCHAPOD_KILL_SWITCH", "ORCHAPOD_ANON_SCALE", "ORCHAPOD_MAX_RUN_USD",
                  "ORCHAPOD_MAX_DAY_USD", "ORCHAPOD_NODE_TIMEOUT_S"):
         monkeypatch.delenv(name, raising=False)
-    for name, value in {"NEBIUS_API_KEY": "tf-key", "TAVILY_API_KEY": "tvly-key", "ORCHAPOD_ADMIN_TOKEN": "drill-admin"}.items():
+    for name, value in {"NEBIUS_API_KEY": "tf-key", "TAVILY_API_KEY": "tvly-key", "ORCHAPOD_ADMIN_TOKEN": "drill-admin",
+                        "NEBIUS_IAM_TOKEN": "iam-drill"}.items():
         monkeypatch.setenv(name, value)
 
 
@@ -301,9 +317,10 @@ async def test_a_preempted_serverless_job_fails_the_run_and_retry_resumes_from_t
     nodes = [{"id": "train", "type": "unsloth-train", "inputs": {"model": STUDENT, "train_data": "${{ inputs.train }}"}}]
 
     s = await drill.run(nodes, {"train": f"r2://{BUCKET}/runs/seed/prep/train_jsonl"}, ADMIN)  # gpu nodes: admin only
-    # What the run page shows for a preempted Job today: no reason. platform-w5 keeps the Job's state, code and message on
-    # Pod.error and backend-w5 shows it as the node error (hackathon/LOG.md 2026-10-21, qa-w4 + platform-w5 reviews): update this pin then.
-    assert (s["status"], s["error"], states(s)) == ("failed", "exit 1", [("train", "failed", "exit 1")])
+    # What the run page shows: NebiusProvider.wait's Pod.error ("<STATE> <code>: <message>", URLs hidden), which the executor
+    # shows in place of "exit 1" when the node logged no ERROR line (a SIGTERM logs none).
+    error = "FAILED ContainerFailed: exit code 143, see <hidden>"
+    assert (s["status"], s["error"], states(s)) == ("failed", error, [("train", "failed", error)])
 
     s = await drill.retry(s["run_id"], "train", ADMIN)
 

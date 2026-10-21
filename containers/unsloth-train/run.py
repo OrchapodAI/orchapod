@@ -26,6 +26,9 @@ WORK = Path(os.environ.get("WORKSPACE_DIR", "/workspace"))
 MAX_LEN = 2048
 NEMOTRON_H = r".*\.(q_proj|k_proj|v_proj|o_proj|in_proj)|.*\.shared_experts\.(up_proj|down_proj)"  # spike 4
 GPUS = {"H100": "gpu-h100-sxm/1gpu-16vcpu-200gb", "L40S": "gpu-l40s-a/1gpu-8vcpu-32gb"}  # NebiusProvider's presets
+# ponytail: priced from the CUDA device name, which cannot tell gpu-l40s-a ($1.55) from the AMD gpu-l40s-d ($1.82) and
+# bills any H100 or L40S at these Nebius rates; right while NebiusProvider rents only these two presets. If it ever rents
+# others, pass <platform>/<preset> in the job's env and read it here.
 
 
 def fail(reason: str):

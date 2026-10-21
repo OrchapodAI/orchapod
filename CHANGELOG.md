@@ -2,9 +2,19 @@
 
 Dated, user-facing changes made during the Nebius × NVIDIA hackathon submission period (Aug 26 – Oct 30, 2026). Orchapod's first commit is May 4, 2026 (367c605); this file becomes the Devpost "what changed" write-up.
 
+## 2026-10-21
+- One Token Factory client and one Tavily client (`packages/providers`): retries that never re-send a billable create, per-call dollar accounting from one price table, the rule that the Nebius key only goes to Token Factory, and a deterministic offline stub mode.
+- Run engine: every node row exists from the start, retry a failed node and continue downstream, cancel with a 30-second grace that cleans up remote work, restart recovery, per-run cost roll-up and a run summary API.
+- Node SDK: cost and metrics files written on any exit, progress events, signed calls to the control plane.
+- Data prep: reads pipeline outputs directly, adds QA and structured formats, exact and near-duplicate removal, train/eval/test splits by source.
+- Every container builds from the repository root; the Claude fallback is gone from the evaluation container; GPU nodes default to Nebius and never fall back to another GPU provider.
+- Web app: the Orchapod Agent page, forms for the new nodes, a run page with a live cost meter and node retry; nothing fake on screen.
+- Lane B student model chosen by experiment: Llama-3.1-Nemotron-Nano-8B trained, merged and served on one GPU (Nemotron 3 Nano 30B-A3B also works on 80 GB GPUs).
+- A README written for the judges, with drift tests.
+
 ## 2026-10-20
 - Repo hygiene: removed a committed SQLite database, compiled Python files and a stray worktree copy; one workflow-schema package instead of two.
-- Hackathon build harness: operating manual, plan, state board and journal under `hackathon/`; project hooks and seven agent roles under `.claude/`; `make up / check / e2e / agent-e2e / demo / checkpoint`.
+- Hackathon build harness: operating manual, plan, state board and journal under `hackathon/`; project hooks and seven agent roles under `.claude/`; `make up`, `make check` and `make checkpoint` (the `e2e`, `agent-e2e` and `demo` targets are defined; their scripts are in progress).
 - Quality gate: `make check` is green — ruff pinned to a minimal rule set with 30 lint fixes; CI runs lint and the 153 unit tests on every push.
 - Interface contracts v1 (`docs/contracts.md`): node SDK, provider clients, config, data and ML nodes, run state machine, budget guard, events and the Orchapod Agent API; plus the agent's knowledge base (`docs/agent_knowledge.md`).
 

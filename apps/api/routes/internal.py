@@ -287,11 +287,17 @@ async def register_ttl(body: RegisterTTLRequest, db: Session):
     now        = datetime.now(timezone.utc)
     expires_at = now + timedelta(minutes=body.keep_alive_min)
 
-    for earlier in await db.scalars(select(Artifact).where(Artifact.kind == ArtifactKind.ENDPOINT)):
-        if _live(earlier.meta) and earlier.meta["endpoint_id"] == body.endpoint_id:  # one endpoint, one live expiry
-            earlier.meta = {**earlier.meta, "superseded_at": now.isoformat()}
-            if task := _ttl_tasks.pop(str(earlier.id), None):
-                task.cancel()
+    # One endpoint, one live expiry, and a registration never extends it: any holder of the internal secret could
+    # otherwise keep an endpoint billing forever. A sooner one takes over; else the earlier timer stands.
+    earlier = [a for a in await db.scalars(select(Artifact).where(Artifact.kind == ArtifactKind.ENDPOINT))
+               if _live(a.meta) and a.meta["endpoint_id"] == body.endpoint_id]
+    first = min((datetime.fromisoformat(a.meta["expires_at"]) for a in earlier), default=None)
+    takes_over = first is None or expires_at < first
+    for a in earlier if takes_over else ():
+        a.meta = {**a.meta, "superseded_at": now.isoformat()}
+        if task := _ttl_tasks.pop(str(a.id), None):
+            task.cancel()
+    expires_at = expires_at if takes_over else first
 
     outputs = dict(node_run.outputs or {})
     outputs["endpoint_url"] = body.endpoint_url
@@ -309,6 +315,7 @@ async def register_ttl(body: RegisterTTLRequest, db: Session):
             "registered_at":  now.isoformat(),
             "expires_at":     expires_at.isoformat(),
             "endpoint_id":    body.endpoint_id,
+            **({} if takes_over else {"superseded_at": now.isoformat()}),  # the earlier row stays the live one
         },
     )
     db.add(artifact)
@@ -322,7 +329,8 @@ async def register_ttl(body: RegisterTTLRequest, db: Session):
         "kind":       "endpoint",
         "expires_at": expires_at.isoformat(),
     })
-    _arm(artifact, node_run.run_id)
+    if takes_over:
+        _arm(artifact, node_run.run_id)
     return {"status": "ttl_registered", "keep_alive_min": body.keep_alive_min, "expires_at": expires_at.isoformat()}
 
 
@@ -381,7 +389,7 @@ async def _expire(artifact_id: uuid.UUID, endpoint_id: str, expires_at: datetime
             status = getattr(e, "status", None)
             if status == 404:
                 break
-            if status is not None and 400 <= status < 500 and status != 429:  # refused for good: trying again won't help
+            if status in (400, 401, 403):  # refused for good; 408, 409, 429, 499 and 5xx pass
                 log.error("endpoint %s not deleted: %s; it bills until the next API start tries again, or the console", endpoint_id, e)
                 return
             log.error("endpoint %s not deleted (it bills until it is); retrying in %s s: %s", endpoint_id, DELETE_RETRY_S, e)

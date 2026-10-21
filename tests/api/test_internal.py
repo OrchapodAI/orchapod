@@ -286,11 +286,16 @@ async def test_an_endpoint_id_is_an_id_never_a_rest_path(client, db, seeded_node
 
 
 @pytest.mark.parametrize("error, tries, deleted", [
-    (("auth", 403, "permission denied"), 1, False),   # refused for good: never retried every 5 min
-    (("bad_request", 400, "invalid id"), 1, False),
-    (("rate_limit", 429, "slow down"), 2, True),      # tried again
+    (("bad_request", 400, "invalid id"), 1, False),   # refused for good: never retried every 5 min
+    (("auth", 401, "unauthenticated"), 1, False),
+    (("auth", 403, "permission denied"), 1, False),
+    (("server", 408, "request timeout"), 2, True),    # transient: tried again
+    (("bad_request", 409, "operation in progress"), 2, True),
+    (("rate_limit", 429, "slow down"), 2, True),
+    (("server", 499, "client closed"), 2, True),
+    (("server", 503, "unavailable"), 2, True),
 ])
-async def test_a_4xx_other_than_404_or_429_ends_the_retries(client, db, seeded_node_run, endpoints, error, tries, deleted):
+async def test_only_400_401_or_403_end_the_delete_retries(client, db, seeded_node_run, endpoints, error, tries, deleted):
     from sqlmodel import select
     from api.models.db import Artifact
     from packages.providers.base import ProviderError
@@ -329,3 +334,35 @@ async def test_registering_an_endpoint_again_supersedes_its_earlier_row(client, 
     internal._ttl_tasks.pop(str(new.id)).cancel()
     await internal.resume_ttls()
     assert internal._ttl_tasks == {}  # neither row is live
+
+
+async def test_a_registration_never_extends_a_live_endpoint(client, db, seeded_node_run, endpoints, monkeypatch):
+    """Another run's node (any holder of the internal secret, a gpu Job's third-party code included; endpoint ids are
+    public in summaries) re-registers run A's endpoint with a later expiry, again and again: the endpoint must still be
+    deleted at A's expiry, by A's timer. A sooner registration still takes over."""
+    from sqlmodel import select
+    from api.models.db import Artifact, NodeRun, Run, RunStatus
+    from api.routes import internal
+    run, _ = seeded_node_run
+    other = Run(user_id=uuid.uuid4(), status=RunStatus.RUNNING)
+    db.add(other)
+    await db.flush()
+    db.add(NodeRun(run_id=other.id, node_id="intruder", node_type="unsloth-train"))
+    await db.commit()
+    monkeypatch.setattr(internal, "_expire", lambda *a: asyncio.sleep(3600))  # timers that wait, as they would for real
+
+    expiry = (await client.post("/internal/ttl", json={**TTL, "run_id": str(run.id), "keep_alive_min": 30})).json()["expires_at"]
+    timer = next(iter(internal._ttl_tasks.values()))
+    for _ in range(3):  # each time before the expiry
+        r = await client.post("/internal/ttl", json={**TTL, "run_id": str(other.id), "node_id": "intruder",
+                                                     "keep_alive_min": 120})
+        assert (r.status_code, r.json()["expires_at"]) == (202, expiry)
+    await asyncio.sleep(0)
+    live = [a for a in await db.scalars(select(Artifact).where(Artifact.name == "endpoint_url")) if internal._live(a.meta)]
+    assert [a.meta["expires_at"] for a in live] == [expiry] and live[0].node_run_id != (await db.scalar(
+        select(NodeRun.id).where(NodeRun.node_id == "intruder")))
+    assert list(internal._ttl_tasks.values()) == [timer] and not timer.cancelled()  # A's timer, kept
+
+    sooner = await client.post("/internal/ttl", json={**TTL, "run_id": str(run.id), "keep_alive_min": 10})
+    await asyncio.sleep(0)
+    assert sooner.json()["expires_at"] < expiry and timer.cancelled() and len(internal._ttl_tasks) == 1

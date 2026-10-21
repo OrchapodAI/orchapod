@@ -14,12 +14,13 @@ LIMIT_S = 175  # Devpost wants a video under 3:00; keep 5 s of margin
 WORDS_PER_S = 2.3  # clear narration is about 140 words a minute
 # | # | m:ss-m:ss | Screen | Voice-over | Caption | Live run |
 SHOT = re.compile(r"^\| (\d+) \| (\d+):(\d\d)-(\d+):(\d\d) \| ([^|]*) \| ([^|]*) \| ([^|]*) \| ([^|]*) \|[ \t]*$", re.M)
+TABLE_ROW = re.compile(r"^\| \d+ \|", re.M)  # every row of the shot table, well formed or not
 
 
 def shots() -> list[tuple[int, int, int, str, str, str]]:
     rows = [(int(n), 60 * int(m0) + int(s0), 60 * int(m1) + int(s1), vo.strip(), cap.strip(), live.strip())
             for n, m0, s0, m1, s1, _screen, vo, cap, live in SHOT.findall(SCRIPT)]
-    assert rows, "no shot rows found"
+    assert rows and len(rows) == len(TABLE_ROW.findall(SCRIPT)), "a shot row is missing or malformed"
     return rows
 
 

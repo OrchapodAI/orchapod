@@ -22,8 +22,8 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D2 spike 3 + Tavily client: search, extract, credit accounting, page cap — BLOCKED(TAVILY_API_KEY)
 - [ ] P0 D2 ORCHAPOD_IMAGE_PREFIX (executor, CI, local provider agree) — TODO
 - [x] P0 D1 one Token Factory client in packages/providers; zero-caller service deleted — DONE (e0fa9a2; synth and lm-eval switch in their tasks)
-- [ ] P0 D2 SPEND SAFETY: provider_selector defaults gpu nodes to ["runpod", "vastai"] (apps/api/services/provider_selector.py:74), so a set VASTAI_API_KEY rents a vast.ai GPU silently — default must be ["nebius"] and vastai only when named — IN_PROGRESS(platform-w2)
-- [ ] P0 D2 LocalDocker: a fast-failing container can be removed before `docker wait` sees it → node reads as succeeded (pre-existing; found by platform-w1) — TODO (wave 2)
+- [x] P0 D2 SPEND SAFETY: provider_selector defaults gpu nodes to ["runpod", "vastai"] (apps/api/services/provider_selector.py:74), so a set VASTAI_API_KEY rents a vast.ai GPU silently — default must be ["nebius"] and vastai only when named — DONE (platform-w2)
+- [x] P0 D2 LocalDocker: a fast-failing container can be removed before `docker wait` sees it → node reads as succeeded (pre-existing; found by platform-w1) — DONE (platform-w2)
 - [ ] P1 D2 nebius_serverless provider: Jobs, Endpoints, IAM refresh, Object Storage — TODO
 - [ ] P0 D2 setup gaps from devrel-w1 + ml-w1 review: compose (platform) still publishes 8000, names the 253B judge and passes ANTHROPIC_API_KEY; scripts/build-and-push-containers.sh builds 6 of 8 nodes (qa); storage bucket never auto-created (call ensure_bucket_exists at API start — backend); web app defaults to localhost:8000 (→ 8001 — frontend) — TODO (wave 2)
 - [ ] P0 D3 .env.example complete (every var + where to get it) + budget-guard settings — TODO

@@ -19,20 +19,23 @@ from datetime import datetime
 from typing import Annotated
 
 import yaml
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from api.agent.planner import Intent, make_plan
 from api.database import get_session
-from api.models.db import Workflow, utcnow
-from api.executor.dag import workflow_to_graph_json
-from api.services import budget
+from api.models.db import Run, Workflow, utcnow
+from api.executor.dag import load_yaml, workflow_to_graph_json
+from api.services import budget, ratelimit
+from api.services.redact import without_secrets
 
 router = APIRouter()
 
 Session = Annotated[AsyncSession, Depends(get_session)]
+Admin = Annotated[bool, Depends(budget.admin)]
+WRITE = [Depends(ratelimit.limit("write"))]
 
 
 # ---------------------------------------------------------------------------
@@ -69,17 +72,18 @@ class PromptRequest(BaseModel):
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@router.post("", response_model=WorkflowOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=WorkflowOut, status_code=status.HTTP_201_CREATED, dependencies=WRITE)
 async def create_workflow(body: WorkflowCreate, db: Session):
     try:
-        graph_json = workflow_to_graph_json(body.yaml)
+        text = _stored(body.yaml)
+        graph_json = workflow_to_graph_json(text)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Invalid workflow YAML: {e}")
 
     workflow = Workflow(
         user_id=body.user_id or uuid.uuid4(),
         name=body.name,
-        yaml=body.yaml,
+        yaml=text,
         graph_json=graph_json,
     )
     db.add(workflow)
@@ -89,8 +93,9 @@ async def create_workflow(body: WorkflowCreate, db: Session):
 
 
 @router.get("", response_model=list[WorkflowOut])
-async def list_workflows(db: Session, user_id: uuid.UUID | None = None):
-    stmt = select(Workflow).order_by(Workflow.created_at.desc())
+async def list_workflows(db: Session, user_id: uuid.UUID | None = None, limit: int = Query(500, ge=1, le=500)):
+    """Newest first, at most 500: the runs page names up to 500 runs from this list (its golden-run filter)."""
+    stmt = select(Workflow).order_by(Workflow.created_at.desc()).limit(limit)
     if user_id:
         stmt = stmt.where(Workflow.user_id == user_id)
     result = await db.execute(stmt)
@@ -105,21 +110,23 @@ async def get_workflow(workflow_id: uuid.UUID, db: Session):
     return _to_out(workflow)
 
 
-@router.put("/{workflow_id}", response_model=WorkflowOut)
-async def update_workflow(workflow_id: uuid.UUID, body: WorkflowUpdate, db: Session):
+@router.put("/{workflow_id}", response_model=WorkflowOut, dependencies=WRITE)
+async def update_workflow(workflow_id: uuid.UUID, body: WorkflowUpdate, db: Session, is_admin: Admin):
     workflow = await db.get(Workflow, workflow_id)
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
+    await _read_only_if_run(db, workflow_id, is_admin)
 
     if body.name is not None:
         workflow.name = body.name
 
     if body.yaml is not None:
         try:
-            graph_json = workflow_to_graph_json(body.yaml)
+            text = _stored(body.yaml)
+            graph_json = workflow_to_graph_json(text)
         except Exception as e:
             raise HTTPException(status_code=422, detail=f"Invalid workflow YAML: {e}")
-        workflow.yaml = body.yaml
+        workflow.yaml = text
         workflow.graph_json = graph_json
         workflow.version += 1
 
@@ -130,20 +137,23 @@ async def update_workflow(workflow_id: uuid.UUID, body: WorkflowUpdate, db: Sess
     return _to_out(workflow)
 
 
-@router.delete("/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_workflow(workflow_id: uuid.UUID, db: Session):
+@router.delete("/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=WRITE)
+async def delete_workflow(workflow_id: uuid.UUID, db: Session, is_admin: Admin):
     workflow = await db.get(Workflow, workflow_id)
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
+    await _read_only_if_run(db, workflow_id, is_admin)
     await db.delete(workflow)
 
 
-@router.post("/from-prompt", response_model=WorkflowOut, status_code=status.HTTP_201_CREATED)
+@router.post("/from-prompt", response_model=WorkflowOut, status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(ratelimit.limit("plan"))])
 async def create_workflow_from_prompt(body: PromptRequest, db: Session,
                                       scale: float = Depends(budget.scale)):
     """The Orchapod Agent's planner drafts the workflow (same rules as POST /agent/plan); the canvas opens it,
     errors and all, as long as it compiles."""
     out = await make_plan(body.prompt, db, scale)
+    out["plan"] = without_secrets(out["plan"])
     yaml_str = yaml.safe_dump(out["plan"], sort_keys=False)
     try:
         graph_json = workflow_to_graph_json(yaml_str) if out["plan"].get("nodes") else None
@@ -167,6 +177,21 @@ async def create_workflow_from_prompt(body: PromptRequest, db: Session,
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
+
+def _stored(text: str) -> str:
+    """The YAML to store: aliases refused (load_yaml), secret-looking node inputs dropped; re-dumped only if one was."""
+    spec = load_yaml(text)
+    clean = without_secrets(spec)
+    return text if clean == spec else yaml.safe_dump(clean, sort_keys=False)
+
+
+async def _read_only_if_run(db: AsyncSession, workflow_id: uuid.UUID, is_admin: bool) -> None:
+    """409 for an anonymous caller once the workflow has runs: there is no user auth (D6), so anyone could otherwise
+    rewrite the golden run's canvas, or the YAML a retry of someone's run executes."""
+    if not is_admin and await db.scalar(select(Run.id).where(Run.workflow_id == workflow_id).limit(1)):
+        raise HTTPException(status_code=409, detail="this workflow has runs, so it is read-only on the public app; "
+                                                    "save a copy as a new workflow")
+
 
 def _to_out(w: Workflow) -> WorkflowOut:
     return WorkflowOut(

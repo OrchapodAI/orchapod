@@ -13,17 +13,18 @@ One channel per run: "run:{run_id}"
 from __future__ import annotations
 
 import json
-import os
 from typing import AsyncGenerator
 from uuid import UUID
 
 import redis.asyncio as aioredis
 
+from api import config
+
 
 class EventBus:
     def __init__(self):
         self._redis: aioredis.Redis | None = None
-        self._url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+        self._url = config.env("REDIS_URL")
 
     async def connect(self) -> None:
         self._redis = aioredis.from_url(self._url, decode_responses=True)

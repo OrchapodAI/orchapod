@@ -10,16 +10,20 @@ Start: uvicorn api.main:app --reload
 from __future__ import annotations
 
 import asyncio
-import os
+import logging
 from contextlib import asynccontextmanager
+from time import monotonic
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
+from api import config, database
 from api.database import AsyncSessionLocal, create_tables
 from api.executor.run_workflow import sweep
+from api.services import storage
 from api.services.events import event_bus
-from api.services.storage import ensure_bucket_exists
 from api.routes import agent, compare, workflows, runs, models, internal, ws, inference, model_registry, artifacts
 from packages.providers.vastai import register_providers
 
@@ -32,9 +36,9 @@ async def lifespan(app: FastAPI):
     async with AsyncSessionLocal() as db:
         await sweep(db)  # runs a restart left mid-flight fail; their pods are terminated
     # MinIO in dev starts without the bucket; off the event loop, so a slow or absent store never delays startup
-    asyncio.get_running_loop().run_in_executor(None, ensure_bucket_exists)
+    asyncio.get_running_loop().run_in_executor(None, storage.ensure_bucket_exists)
 
-    register_providers(vastai_key=os.environ.get("VASTAI_API_KEY", ""))
+    register_providers(vastai_key=config.env("VASTAI_API_KEY"))
 
     yield
     # Shutdown
@@ -48,13 +52,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # tighten in production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
+def cors() -> dict:
+    """CORSMiddleware options from ORCHAPOD_CORS_ORIGINS: exact origins, comma-separated; blank = this machine's pages on
+    any port (`next dev` moves to 3001 when 3000 is taken). No credentials: the web app sends none, so a `*` never
+    comes with them."""
+    origins = [o.strip() for o in config.env("ORCHAPOD_CORS_ORIGINS").split(",") if o.strip()]
+    return {"allow_origins": origins, "allow_methods": ["*"], "allow_headers": ["*"], "expose_headers": ["Retry-After"],
+            "allow_origin_regex": None if origins else r"https?://(localhost|127\.0\.0\.1)(:\d+)?"}
+
+
+app.add_middleware(CORSMiddleware, **cors())
 
 # REST routes
 app.include_router(workflows.router,       prefix="/workflows", tags=["workflows"])
@@ -71,6 +79,48 @@ app.include_router(compare.router,         prefix="/compare",   tags=["compare"]
 app.include_router(ws.router, tags=["websocket"])
 
 
+log = logging.getLogger("api.health")
+HEALTH_TIMEOUT_S, HEALTH_TTL_S = 3, 10
+_health: tuple[float, asyncio.Task] | None = None  # (when the last deep check started, that check)
+
+
+async def _answers(name: str, check) -> bool:
+    try:
+        await asyncio.wait_for(check(), HEALTH_TIMEOUT_S)
+        return True
+    except Exception as e:  # down, refused, or slower than HEALTH_TIMEOUT_S; the cause goes to the log only
+        log.warning("health: %s failed: %r", name, e)
+        return False
+
+
+async def _database() -> None:
+    async with database.engine.connect() as conn:
+        await conn.execute(text("SELECT 1"))
+
+
+async def _failed() -> list[str]:
+    checks = {"database": _database, "redis": lambda: event_bus.redis.ping(),
+              "storage": lambda: asyncio.to_thread(storage.head_bucket)}
+    up = await asyncio.gather(*(_answers(name, check) for name, check in checks.items()))
+    return [name for name, ok in zip(checks, up) if not ok]
+
+
 @app.get("/health")
 async def health():
+    """Deep: the database, Redis and object storage each answer within HEALTH_TIMEOUT_S, else 503 names the ones that
+    did not. For uptime monitors and people; the watchdog restarts on /livez, since a restart fixes none of these.
+    Concurrent callers share one check and its result is reused for HEALTH_TTL_S, so a flood of probes cannot pin the
+    executor's threads while storage is slow."""
+    global _health
+    if _health is None or monotonic() - _health[0] >= HEALTH_TTL_S:
+        _health = (monotonic(), asyncio.ensure_future(_failed()))
+    failed = await asyncio.shield(_health[1])  # a caller that hangs up leaves the check to the others
+    if failed:
+        return JSONResponse(status_code=503, content={"status": "fail", "failed": failed})
+    return {"status": "ok"}
+
+
+@app.get("/livez")
+async def livez():
+    """Shallow: the process answers (the watchdog's and the container healthcheck's probe)."""
     return {"status": "ok"}

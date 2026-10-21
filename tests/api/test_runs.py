@@ -15,8 +15,15 @@ import pytest
 # POST /inference/deploy  (one-click node execution)
 # ---------------------------------------------------------------------------
 
-async def test_deploy_valid_model_returns_202(client, no_bg_tasks):
-    resp = await client.post("/inference/deploy", json={
+@pytest.fixture
+def admin(monkeypatch):
+    """vllm-serve rents a GPU, which only the admin starts (anonymous callers get 403: tests/api/test_budget.py)."""
+    monkeypatch.setenv("ORCHAPOD_ADMIN_TOKEN", "s3cret")
+    return {"X-Orchapod-Admin": "s3cret"}
+
+
+async def test_deploy_valid_model_returns_202(client, no_bg_tasks, admin):
+    resp = await client.post("/inference/deploy", headers=admin, json={
         "model": "Qwen/Qwen3-4B-Instruct",
         "mode":  "serve",
     })
@@ -38,11 +45,10 @@ async def test_deploy_invalid_mode_returns_422(client):
     assert resp.status_code == 422
 
 
-async def test_deploy_creates_workflow_and_run_in_db(client, db, no_bg_tasks):
-    from sqlmodel import select
+async def test_deploy_creates_workflow_and_run_in_db(client, db, no_bg_tasks, admin):
     from api.models.db import Run, Workflow
 
-    resp = await client.post("/inference/deploy", json={
+    resp = await client.post("/inference/deploy", headers=admin, json={
         "model": "Qwen/Qwen3-4B-Instruct",
         "mode":  "quantize-serve",
     })
@@ -56,6 +62,23 @@ async def test_deploy_creates_workflow_and_run_in_db(client, db, no_bg_tasks):
     workflow = await db.get(Workflow, uuid.UUID(body["workflow_id"]))
     assert workflow is not None
     assert "vllm-serve" in workflow.yaml
+
+
+async def test_deploy_never_stores_an_hf_token(client, db, no_bg_tasks, admin):
+    """The executor forwards HF_TOKEN from the API's env to every node, so a deploy needs no token; one sent anyway must
+    not reach the stored workflow, its graph or the run (node schemas still declare hf_token inputs: report)."""
+    import json
+    from sqlmodel import select
+    from api.models.db import Run, Workflow
+
+    for mode in ("serve", "quantize-serve", "quantize-gguf"):
+        r = await client.post("/inference/deploy", headers=admin, json={
+            "model": "meta-llama/Llama-3.2-3B-Instruct", "mode": mode, "hf_token": "hf_secret123"})
+        assert r.status_code == 202
+    stored = json.dumps([[w.yaml, w.graph_json] for w in await db.scalars(select(Workflow))]
+                        + [r.inputs for r in await db.scalars(select(Run))])
+    assert stored.count("Llama-3.2-3B") == 6  # three workflows, each in its YAML and its graph
+    assert "hf_token" not in stored and "hf_secret123" not in stored
 
 
 # ---------------------------------------------------------------------------
@@ -101,3 +124,19 @@ async def test_get_run_not_found_returns_404(client):
     resp = await client.get(f"/runs/{uuid.uuid4()}")
 
     assert resp.status_code == 404
+
+
+async def test_public_lists_cap_limit_at_500(client, db):
+    from api.models.db import Run, Workflow
+    db.add_all(Run(user_id=uuid.uuid4()) for _ in range(51))
+    db.add_all(Workflow(user_id=uuid.uuid4(), name="w", yaml="", graph_json={}) for _ in range(51))
+    await db.commit()
+
+    assert len((await client.get("/runs")).json()) == 50
+    assert len((await client.get("/workflows", params={"limit": 50})).json()) == 50
+    for path in ("/runs", "/workflows"):  # the runs page reads 500 runs and names them from the default workflow list
+        assert len((await client.get(path, params={"limit": 500})).json()) == 51
+        for bad in (0, 501):  # a public caller cannot ask for every row
+            assert (await client.get(path, params={"limit": bad})).status_code == 422
+    assert len((await client.get("/workflows")).json()) == 51
+    assert (await client.get("/artifacts", params={"limit": -1})).status_code == 422  # SQLite reads -1 as no limit

@@ -25,7 +25,7 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,8 +33,9 @@ from sqlmodel import select
 
 from api.database import get_session
 from api.executor import run_workflow as executor
+from api.executor.dag import compile_dag
 from api.models.db import AgentRun, Run, NodeRun, RunStatus, NodeStatus, Workflow, Artifact, ArtifactKind, utcnow
-from api.services import budget
+from api.services import budget, ratelimit
 from api.services.events import event_bus
 from api.services.redact import redact
 
@@ -98,7 +99,8 @@ class ArtifactOut(BaseModel):
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@router.post("", response_model=RunOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=RunOut, status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(ratelimit.limit("write"))])
 async def create_run(body: RunCreate, db: Session):
     workflow = await db.get(Workflow, body.workflow_id)
     if not workflow:
@@ -115,7 +117,7 @@ async def create_run(body: RunCreate, db: Session):
     return _run_out(run)
 
 
-@router.post("/{run_id}/start", response_model=RunOut)
+@router.post("/{run_id}/start", response_model=RunOut, dependencies=[Depends(ratelimit.limit("run"))])
 async def start_run(run_id: uuid.UUID, db: Session, scale: Scale):
     """409 unless pending; 503 kill switch; 402 when no budget is left (caps × the caller's scale)."""
     run = await db.get(Run, run_id)
@@ -123,6 +125,7 @@ async def start_run(run_id: uuid.UUID, db: Session, scale: Scale):
         raise HTTPException(status_code=404, detail="Run not found")
     if run.status == RunStatus.PENDING:
         await budget.guard(db, scale, run)
+        budget.gpu_guard(await _to_run(db, run), scale)
     if run.status != RunStatus.PENDING or not await _move(db, run, [RunStatus.PENDING]):
         await db.refresh(run)
         raise HTTPException(status_code=409, detail=f"Run is {run.status.value}; only pending runs can be started")
@@ -130,7 +133,7 @@ async def start_run(run_id: uuid.UUID, db: Session, scale: Scale):
     return _run_out(run)
 
 
-@router.post("/{run_id}/cancel", response_model=RunOut)
+@router.post("/{run_id}/cancel", response_model=RunOut, dependencies=[Depends(ratelimit.limit("write"))])
 async def cancel_run(run_id: uuid.UUID, db: Session):
     run = await db.get(Run, run_id)
     if not run:
@@ -152,7 +155,8 @@ async def cancel_run(run_id: uuid.UUID, db: Session):
     return _run_out(run)
 
 
-@router.post("/{run_id}/nodes/{node_id}/retry", response_model=RunOut, status_code=status.HTTP_202_ACCEPTED)
+@router.post("/{run_id}/nodes/{node_id}/retry", response_model=RunOut, status_code=status.HTTP_202_ACCEPTED,
+             dependencies=[Depends(ratelimit.limit("run"))])
 async def retry_node(run_id: uuid.UUID, node_id: str, db: Session, scale: Scale):
     """Re-run the run's failed node (same row, outputs kept), then continue downstream."""
     run = await db.get(Run, run_id)
@@ -163,6 +167,7 @@ async def retry_node(run_id: uuid.UUID, node_id: str, db: Session, scale: Scale)
         raise HTTPException(status_code=409, detail=f"Only the failed node of a failed or cancelled run "
                                                     f"can be retried (run {run.status.value}, node {node_run.status.value})")
     await budget.guard(db, scale, run)
+    budget.gpu_guard(await _to_run(db, run), scale)
     if executor.busy(run_id):  # its executor, or a container it started, is still stopping
         raise HTTPException(status_code=409, detail="Run is still stopping; retry in a moment")
 
@@ -175,6 +180,18 @@ async def retry_node(run_id: uuid.UUID, node_id: str, db: Session, scale: Scale)
         raise HTTPException(status_code=409, detail="Run changed meanwhile; reload it")
     executor.launch(run_id, scale)
     return _run_out(run)
+
+
+async def _to_run(db: AsyncSession, run: Run) -> list[str]:
+    """The types of the run's nodes that have not succeeded: what a start or retry would run."""
+    workflow = await db.get(Workflow, run.workflow_id) if run.workflow_id else None
+    try:
+        nodes = compile_dag(workflow.yaml, run.inputs).nodes.values()
+    except Exception:
+        return []  # a workflow that no longer compiles fails in the executor, with its error
+    done = set(await db.scalars(select(NodeRun.node_id).where(NodeRun.run_id == run.id,
+                                                              NodeRun.status == NodeStatus.SUCCEEDED)))
+    return [n.type for n in nodes if n.id not in done]
 
 
 async def _move(db: AsyncSession, run: Run, sources: list[RunStatus]) -> bool:
@@ -195,7 +212,7 @@ async def list_runs(
     db: Session,
     workflow_id: uuid.UUID | None = None,
     user_id: uuid.UUID | None = None,
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=500),  # a public caller never asks for every row
 ):
     stmt = select(Run).order_by(Run.created_at.desc()).limit(limit)
     if workflow_id:
@@ -281,7 +298,6 @@ async def cost_estimate(run_id: uuid.UUID, db: Session):
         raise HTTPException(status_code=404, detail="Run not found")
     workflow = await db.get(Workflow, run.workflow_id)
 
-    from api.executor.dag import compile_dag
     from api.services.provider_selector import get_cost_estimate
     from packages.workflow_schema.models import ResourceSpec
 
@@ -304,7 +320,7 @@ def _run_out(r: Run) -> RunOut:
         workflow_id=r.workflow_id,
         user_id=r.user_id,
         status=r.status,
-        inputs=r.inputs or {},
+        inputs=redact(r.inputs or {}),
         cost_usd=float(r.cost_usd) if r.cost_usd is not None else None,
         started_at=r.started_at,
         finished_at=r.finished_at,
@@ -322,7 +338,7 @@ def _node_run_out(n: NodeRun) -> NodeRunOut:
         status=n.status,
         started_at=n.started_at,
         finished_at=n.finished_at,
-        inputs=n.inputs or {},
+        inputs=redact(n.inputs or {}),  # resolved inputs, stored before ingest dropped secret-looking ones
         outputs=n.outputs or {},
         logs_uri=getattr(n, "logs_uri", None),
         error=n.error,

@@ -9,6 +9,7 @@ so pytest stays free of "coroutine ... was never awaited".
 
 from __future__ import annotations
 
+import math
 import os
 import uuid
 from unittest.mock import MagicMock, patch
@@ -61,6 +62,17 @@ def no_grants():
     budget._granted.clear()
     yield
     budget._granted.clear()
+
+
+@pytest.fixture(autouse=True)
+def no_rate_limits(monkeypatch):
+    """Tests post from one address, so the per-IP buckets (services/ratelimit) are endless here;
+    tests/api/test_hardening.py puts the real ones back."""
+    from api.services import ratelimit
+    monkeypatch.setattr(ratelimit, "RATES", {k: (math.inf, 1.0) for k in ratelimit.RATES})
+    ratelimit._buckets.clear()
+    yield
+    ratelimit._buckets.clear()
 
 
 @pytest.fixture

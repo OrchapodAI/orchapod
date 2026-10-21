@@ -27,6 +27,25 @@ def redact(value):
     return value
 
 
+def without_secrets(spec):
+    """A workflow spec (parsed YAML or a plan) without the node inputs whose key looks like a secret, by the same rule:
+    stored, a token would reach the database, the canvas graph, every run's inputs and the UI. Dropped, not redacted, so
+    a node never gets "[redacted]" as a value; nodes take their keys from the executor's env."""
+    if not isinstance(spec, dict) or not isinstance(spec.get("nodes"), list):
+        return spec
+    return {**spec, "nodes": [{**n, "inputs": _drop(n["inputs"])}
+                              if isinstance(n, dict) and isinstance(n.get("inputs"), dict) else n for n in spec["nodes"]]}
+
+
+def _drop(value):
+    """`value` without its secret-looking keys, in nested dicts and lists too (a token pasted under cfg: or headers:)."""
+    if isinstance(value, dict):
+        return {k: _drop(v) for k, v in value.items() if not _secret(k, v)}
+    if isinstance(value, list):
+        return [_drop(v) for v in value]
+    return value
+
+
 def _secret(key, value) -> bool:
     k = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", str(key)).lower().replace("-", "_")
     if k.endswith("_env"):

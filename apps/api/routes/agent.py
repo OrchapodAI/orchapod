@@ -29,7 +29,8 @@ from api.executor import run_workflow as executor
 from api.executor.dag import workflow_to_graph_json
 from api.models.db import AgentRun, Run, RunStatus, Workflow
 from api.routes.runs import TERMINAL, run_summary
-from api.services import budget
+from api.services import budget, ratelimit
+from api.services.redact import without_secrets
 
 router = APIRouter()
 
@@ -46,13 +47,13 @@ class RunRequest(BaseModel):
     plan: dict[str, Any]  # review() reports its shape errors in the contract's {"detail", "errors"}
 
 
-@router.post("/plan")
+@router.post("/plan", dependencies=[Depends(ratelimit.limit("plan"))])
 async def plan(body: PlanRequest, db: Session, scale: Scale):
     """→ {plan, rationale, estimate, warnings, errors}; the UI disables Run while errors is non-empty."""
     return await planner.make_plan(body.intent, db, scale)
 
 
-@router.post("/run", status_code=201)
+@router.post("/run", status_code=201, dependencies=[Depends(ratelimit.limit("run"))])
 async def run(body: RunRequest, db: Session, scale: Scale):
     """503 kill switch; 422 {detail, errors} when the plan fails validation; 402 when its estimate is over budget."""
     if budget.kill_switch():
@@ -60,7 +61,8 @@ async def run(body: RunRequest, db: Session, scale: Scale):
     errors, _, estimate = planner.review(body.plan)
     if errors:
         return JSONResponse(status_code=422, content={"detail": "the plan has errors", "errors": errors})
-    plan = planner.Plan.model_validate(body.plan).model_dump()  # extra keys (resources, ...) are dropped
+    plan = without_secrets(planner.Plan.model_validate(body.plan).model_dump())  # extra keys (resources, ...) go too
+    budget.gpu_guard((n["type"] for n in plan["nodes"]), scale)
     await budget.guard(db, scale, need=estimate["usd"])
 
     text = yaml.safe_dump(plan, sort_keys=False)
@@ -105,10 +107,11 @@ async def report(run_id: uuid.UUID, db: Session, scale: Scale):
 async def list_templates(scale: Scale):
     """→ [{slug, title, intent, rationale, plan, estimate, reduced_inputs, reduced: {plan, estimate}, fits}]; one-click Run
     posts a template's plan to /agent/run, and "Run it yourself" posts `reduced.plan`. fits: the reduced estimate is
-    within this caller's run cap (ORCHAPOD_MAX_RUN_USD × their scale)."""
+    within this caller's run cap (ORCHAPOD_MAX_RUN_USD × their scale), and an anonymous caller's plan has no gpu node."""
     out = []
     for t in planner.templates():
         small = planner.reduced(t)
+        gpu = scale < 1 and budget.gpu_nodes(n["type"] for n in small["plan"]["nodes"])  # /agent/run would 403
         out.append({**t, "estimate": planner.estimate(t["plan"])[0], "reduced": small,
-                    "fits": small["estimate"]["usd"] <= budget.run_cap(scale)})
+                    "fits": small["estimate"]["usd"] <= budget.run_cap(scale) and not gpu})
     return out

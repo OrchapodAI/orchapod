@@ -10,9 +10,8 @@ Routes:
 
 from __future__ import annotations
 
-import asyncio
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status as http_status
@@ -21,8 +20,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from api.database import get_session
-from api.services import budget
-from api.models.db import Workflow, Run, NodeRun, NodeStatus, RunStatus, Artifact, ArtifactKind
+from api.services import budget, ratelimit
+from api.models.db import Workflow, Run, NodeRun, RunStatus
 
 router = APIRouter()
 
@@ -48,7 +47,7 @@ class DeployRequest(BaseModel):
     keep_alive_min: int = Field(default=60, ge=5, le=1440, description="Minutes before vLLM pod auto-terminates")
     precision: Literal["q4_k_m", "q5_k_m", "q8_0"] = Field(default="q4_k_m", description="GGUF precision (quantize-gguf mode)")
     served_model_name: str | None = Field(default=None, description="Override the model name in /v1/models")
-    hf_token: str | None = Field(default=None, description="HuggingFace token for gated models")
+    # no hf_token: nodes get HF_TOKEN from the executor's env, and a token here would be stored in the workflow
 
 
 class DeployResponse(BaseModel):
@@ -74,7 +73,8 @@ class EndpointOut(BaseModel):
 # POST /inference/deploy
 # ---------------------------------------------------------------------------
 
-@router.post("/deploy", response_model=DeployResponse, status_code=http_status.HTTP_202_ACCEPTED)
+@router.post("/deploy", response_model=DeployResponse, status_code=http_status.HTTP_202_ACCEPTED,
+             dependencies=[Depends(ratelimit.limit("run"))])
 async def deploy_model(body: DeployRequest, db: Session, scale: float = Depends(budget.scale)):
     """
     One-click model deployment. Creates a minimal workflow and starts a run immediately.
@@ -93,6 +93,8 @@ async def deploy_model(body: DeployRequest, db: Session, scale: float = Depends(
         graph_json = workflow_to_graph_json(yaml_str)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Failed to compile workflow: {e}")
+
+    budget.gpu_guard((n["data"]["node_type"] for n in graph_json["nodes"]), scale)  # vllm-serve rents a GPU
 
     workflow = Workflow(
         user_id=uuid.uuid4(),
@@ -173,145 +175,6 @@ async def list_endpoints(db: Session):
 
 
 # ---------------------------------------------------------------------------
-# POST /inference/extend/{run_id}
-# ---------------------------------------------------------------------------
-
-# GPU hourly cost estimates (USD) — used for extension cost preview.
-# Keyed by provider; refined by GPU model when available.
-_HOURLY_COST_USD: dict[str, float] = {
-    "vastai":  3.50,   # rough H100 SXM5 rate on Vast.ai
-    "runpod":  3.99,
-    "default": 3.50,
-}
-
-
-class ExtendRequest(BaseModel):
-    extend_min: int = 60
-
-
-class ExtendResponse(BaseModel):
-    run_id:           uuid.UUID
-    expires_at:       datetime
-    extend_min:       int
-    cost_estimate_usd: float
-
-
-@router.post("/extend/{run_id}", response_model=ExtendResponse)
-async def extend_endpoint(run_id: uuid.UUID, body: ExtendRequest, db: Session, preview: bool = False):
-    """
-    Extend a live vllm-serve endpoint by extend_min minutes.
-    If preview=True (query param), returns cost estimate only — no changes made.
-    Otherwise cancels the existing termination task and schedules a new one,
-    and updates expires_at in the endpoint artifact meta and NodeRun outputs.
-    """
-    from api.routes.internal import _ttl_tasks, _terminate_after_ttl
-    from api.services.events import event_bus
-
-    # Find the vllm-serve NodeRun for this run
-    result = await db.execute(
-        select(NodeRun).where(
-            NodeRun.run_id   == run_id,
-            NodeRun.node_type == "vllm-serve",
-        )
-    )
-    node_run = result.scalars().first()
-    if not node_run:
-        raise HTTPException(404, "No vllm-serve node found for this run")
-
-    if node_run.status != NodeStatus.RUNNING:
-        raise HTTPException(409, f"Endpoint is not running (status: {node_run.status.value})")
-
-    # Find the endpoint artifact to update expires_at
-    art_result = await db.execute(
-        select(Artifact).where(
-            Artifact.node_run_id == node_run.id,
-            Artifact.kind        == ArtifactKind.ENDPOINT,
-        )
-    )
-    artifact = art_result.scalars().first()
-
-    # Compute new expiry and cost estimate
-    now        = datetime.now(timezone.utc)
-    expires_at = now + timedelta(minutes=body.extend_min)
-    hourly     = _HOURLY_COST_USD.get(node_run.gpu_provider or "default", _HOURLY_COST_USD["default"])
-    cost       = round(hourly * body.extend_min / 60, 4)
-
-    # Dry-run: return estimate without mutating anything
-    if preview:
-        return ExtendResponse(
-            run_id=run_id,
-            expires_at=expires_at,
-            extend_min=body.extend_min,
-            cost_estimate_usd=cost,
-        )
-
-    # Persist new expiry on artifact meta
-    if artifact:
-        meta = dict(artifact.meta or {})
-        meta["expires_at"]     = expires_at.isoformat()
-        meta["keep_alive_min"] = body.extend_min
-        artifact.meta = meta
-        db.add(artifact)
-
-    # Persist on NodeRun outputs
-    outputs = dict(node_run.outputs or {})
-    outputs["expires_at"] = expires_at.isoformat()
-    node_run.outputs = outputs
-    db.add(node_run)
-
-    await db.flush()
-
-    # Cancel existing TTL task and reschedule
-    node_run_id_str = str(node_run.id)
-    old_task = _ttl_tasks.pop(node_run_id_str, None)
-    if old_task and not old_task.done():
-        old_task.cancel()
-
-    new_task = asyncio.create_task(
-        _terminate_after_ttl(
-            run_id=str(run_id),
-            node_run_id=node_run_id_str,
-            gpu_provider=node_run.gpu_provider,
-            gpu_pod_id=node_run.gpu_pod_id,
-            keep_alive_min=body.extend_min,
-        )
-    )
-    _ttl_tasks[node_run_id_str] = new_task
-
-    # Accumulate extension cost into Run.cost_usd
-    run_record = await db.get(Run, run_id)
-    if run_record is not None:
-        from decimal import Decimal
-        current = run_record.cost_usd or Decimal("0")
-        run_record.cost_usd = current + Decimal(str(cost))
-        db.add(run_record)
-        new_cost = float(run_record.cost_usd)
-    else:
-        new_cost = cost
-    await db.commit()  # before the events: subscribers re-read the run on them
-
-    # Notify WebSocket subscribers — endpoint_expiry updates the countdown,
-    # run_status carries the new cost so the run header refreshes.
-    await event_bus.publish(run_id, {
-        "type":              "endpoint_expiry",
-        "node_run_id":       node_run_id_str,
-        "expires_at":        expires_at.isoformat(),
-        "minutes_remaining": body.extend_min,
-    })
-    await event_bus.publish(run_id, {
-        "type":     "run_cost",
-        "cost_usd": new_cost,
-    })
-
-    return ExtendResponse(
-        run_id=run_id,
-        expires_at=expires_at,
-        extend_min=body.extend_min,
-        cost_estimate_usd=cost,
-    )
-
-
-# ---------------------------------------------------------------------------
 # YAML builder
 # ---------------------------------------------------------------------------
 
@@ -324,8 +187,6 @@ def _build_workflow_yaml(req: DeployRequest) -> tuple[str, str]:
         extra = ""
         if req.served_model_name:
             extra += f"\n      served_model_name: \"{req.served_model_name}\""
-        if req.hf_token:
-            extra += f"\n      hf_token: \"{req.hf_token}\""
         yaml = f"""name: {name}
 version: 1
 nodes:
@@ -343,7 +204,6 @@ nodes:
 
     elif req.mode == "quantize-serve":
         name = f"quantize-serve-{slug}"
-        hf_tok_line = f'\n      hf_token: "{req.hf_token}"' if req.hf_token else ""
         serve_name_line = f'\n      served_model_name: "{req.served_model_name}"' if req.served_model_name else ""
         yaml = f"""name: {name}
 version: 1
@@ -353,7 +213,7 @@ nodes:
     inputs:
       model: "{req.model}"
       method: awq
-      bits: 4{hf_tok_line}
+      bits: 4
     resources:
       gpu: {req.gpu}
       provider_pref:
@@ -375,7 +235,6 @@ nodes:
 
     else:  # quantize-gguf
         name = f"quantize-gguf-{slug}"
-        hf_tok_line = f'\n      hf_token: "{req.hf_token}"' if req.hf_token else ""
         yaml = f"""name: {name}
 version: 1
 nodes:
@@ -384,7 +243,7 @@ nodes:
     inputs:
       model: "{req.model}"
       method: gguf
-      precision: {req.precision}{hf_tok_line}
+      precision: {req.precision}
     resources:
       gpu: {req.gpu}
       provider_pref:

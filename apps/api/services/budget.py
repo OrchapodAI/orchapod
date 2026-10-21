@@ -8,7 +8,6 @@ the anonymous scale, and the day ledger of control-plane spend (planner, reporte
 from __future__ import annotations
 
 import asyncio
-import os
 import secrets
 import uuid
 from decimal import Decimal
@@ -19,26 +18,31 @@ from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from api import config
 from api.models.db import Run, Spend, utcnow
 from packages.providers.tokenfactory import TokenFactory
 
-# run_id → what its running node may spend, granted at the node boundary and released when the node ends, so
-# concurrent runs never hand out the same dollars twice. ponytail: in-process, which the one API worker allows.
-_granted: dict[uuid.UUID, float] = {}
+# run_id → (what its running node may spend, the scale it was granted at), granted at the node boundary and released
+# when the node ends, so concurrent runs never hand out the same dollars twice. ponytail: in-process, which the one API
+# worker allows.
+_granted: dict[uuid.UUID, tuple[float, float]] = {}
+
+
+def admin(x_orchapod_admin: str = Header(default="")) -> bool:
+    """FastAPI dependency: the caller sent X-Orchapod-Admin: $ORCHAPOD_ADMIN_TOKEN (R7). A blank token is unset, so then
+    nobody is the admin, whatever ORCHAPOD_ANON_SCALE gives the public."""
+    token = config.env("ORCHAPOD_ADMIN_TOKEN").strip()
+    return bool(token) and secrets.compare_digest(x_orchapod_admin.strip().encode(), token.encode())
 
 
 def scale(x_orchapod_admin: str = Header(default="")) -> float:
-    """FastAPI dependency: 1 for a caller sending X-Orchapod-Admin: $ORCHAPOD_ADMIN_TOKEN, else
-    ORCHAPOD_ANON_SCALE (R7). A blank token is unset, so then everyone is anonymous."""
-    token = (os.environ.get("ORCHAPOD_ADMIN_TOKEN") or "").strip()
-    if token and secrets.compare_digest(x_orchapod_admin.strip().encode(), token.encode()):
-        return 1.0
-    return float(os.environ.get("ORCHAPOD_ANON_SCALE") or 0.1)
+    """FastAPI dependency: 1 for the admin, else ORCHAPOD_ANON_SCALE (R7)."""
+    return 1.0 if admin(x_orchapod_admin) else float(config.env("ORCHAPOD_ANON_SCALE"))
 
 
 def kill_switch() -> bool:
     """ORCHAPOD_KILL_SWITCH: anything but blank or 0 is on, so a typo fails safe."""
-    return (os.environ.get("ORCHAPOD_KILL_SWITCH") or "0").strip() != "0"
+    return config.env("ORCHAPOD_KILL_SWITCH").strip() != "0"
 
 
 async def spent_today(db: AsyncSession) -> float:
@@ -51,14 +55,16 @@ async def spent_today(db: AsyncSession) -> float:
 
 def run_cap(scale: float) -> float:
     """ORCHAPOD_MAX_RUN_USD × the caller's scale."""
-    return float(os.environ.get("ORCHAPOD_MAX_RUN_USD") or 3) * scale
+    return float(config.env("ORCHAPOD_MAX_RUN_USD")) * scale
 
 
 async def left(db: AsyncSession, run: Run | None, scale: float) -> tuple[float, str, float]:
-    """(budget left, the cap that binds: "run" | "day", that cap in $); both caps × scale. The day's budget left
-    also excludes what other runs' running nodes were granted."""
-    run_max = run_cap(scale)
-    day_cap = float(os.environ.get("ORCHAPOD_MAX_DAY_USD") or 15) * scale
+    """(budget left, the cap that binds: "run" | "day", that cap in $) for a caller at `scale`: the least of the run cap
+    × scale less the run's cost, and of the caller's share of the day (day cap × scale) and the whole day cap, both less
+    the day's spend. Other runs' running nodes' grants count against the whole day, and against the share only when
+    granted at this scale or below: an admin node's grant never blocks anonymous callers, though admin spend does
+    (contracts "Budget guard"; operating rule: no admin runs on the hosted instance)."""
+    run_max, day = run_cap(scale), float(config.env("ORCHAPOD_MAX_DAY_USD"))
     granted = dict(_granted)  # a node that ends while spend is read stays counted: its cost commits before release
     if run is not None:
         await db.refresh(run)  # Run.cost_usd grows as nodes register cost_json
@@ -66,22 +72,38 @@ async def left(db: AsyncSession, run: Run | None, scale: float) -> tuple[float, 
     granted.update(_granted)  # no await from here to reserve()'s write, so two boundaries never share a grant
     granted.pop(run.id if run is not None else None, None)
     run_left = run_max - (float(run.cost_usd or 0) if run is not None else 0.0)
-    day_left = day_cap - spent - sum(granted.values())
-    return (run_left, "run", run_max) if run_left <= day_left else (day_left, "day", day_cap)
+    share = day * scale - spent - sum(usd for usd, at in granted.values() if at <= scale)
+    whole = day - spent - sum(usd for usd, _ in granted.values())
+    return min((run_left, "run", run_max), (share, "day", day * scale), (whole, "day", day), key=lambda x: x[0])
 
 
 async def reserve(db: AsyncSession, run: Run, scale: float) -> tuple[float, str, float]:
-    """left() for the run's next node, granted to it until release(run.id).
-    ponytail: a node reserves its run's whole remaining budget, so an admin run in flight can leave anonymous callers
-    nothing for the day; D6 hardening reserves per-node estimates or keeps a separate anonymous day budget."""
+    """left() for the run's next node, granted to it at the caller's scale until release(run.id).
+    ponytail: a node still reserves its run's whole remaining budget, and spend (not grants) counts against every
+    share, so an admin who has spent the anonymous share of the day has used it up; a separate anonymous pot needs
+    spend tagged by caller."""
     amount, which, cap = await left(db, run, scale)
     if amount > 0:
-        _granted[run.id] = amount
+        _granted[run.id] = (amount, scale)
     return amount, which, cap
 
 
 def release(run_id: uuid.UUID) -> None:
     _granted.pop(run_id, None)
+
+
+def gpu_nodes(types) -> list[str]:
+    """The node types among `types` whose runtime is gpu (a rented GPU, a Serverless Job)."""
+    from packages.workflow_schema.models import NODE_REGISTRY
+    return sorted({t for t in types if NODE_REGISTRY.get(t, {}).get("runtime") == "gpu"})
+
+
+def gpu_guard(types, scale: float) -> None:
+    """403 when an anonymous caller (scale < 1) would start a gpu node: rented GPU time bills from provisioning, by the
+    hour, whatever the node's ORCHAPOD_MAX_COST_USD, so on the public app only the admin starts one."""
+    if scale < 1 and (gpu := gpu_nodes(types)):
+        raise HTTPException(status_code=403, detail=f"{', '.join(gpu)} runs on a rented GPU, billed by the hour: "
+                                                    "only the admin can start it on the public app")
 
 
 async def guard(db: AsyncSession, scale: float, run: Run | None = None, need: float = 0.0) -> None:

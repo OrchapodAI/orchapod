@@ -43,12 +43,14 @@ test("/agent: intent #2 is planned, run and reported", async ({ page }, testInfo
   await page.getByLabel("What should Orchapod build?").fill(t.intent); // typed, as a person would
   await page.getByRole("button", { name: "Plan", exact: true }).click();
 
-  // the plan card: the canonical plan, no errors, an estimate
-  await expect(page.getByText(t.plan.name, { exact: true })).toBeVisible();
-  await expect(page.getByText("2 nodes", { exact: true })).toBeVisible();
-  for (const node of t.plan.nodes) await expect(page.getByRole("cell", { name: node.type })).toBeVisible();
-  await expect(page.getByTitle("Estimated cost and wall time")).toHaveText(/^\$0\.15 · ~\d+ min$/);
-  const run = page.getByRole("button", { name: "▶ Run" });
+  // the plan card (the nearest ancestor of the plan's name that holds the node table; the templates on the page have estimates too)
+  const name = page.getByText(t.plan.name, { exact: true });
+  await expect(name).toBeVisible();
+  const card = name.locator("xpath=ancestor::*[.//table][1]");
+  await expect(card.getByText("2 nodes", { exact: true })).toBeVisible();
+  for (const node of t.plan.nodes) await expect(card.getByRole("cell", { name: node.type })).toBeVisible();
+  await expect(card.getByTitle("Estimated cost and wall time")).toHaveText(/^\$0\.15 · ~\d+ min$/);
+  const run = card.getByRole("button", { name: "▶ Run" });
   await expect(run).toBeEnabled();
 
   await run.click();

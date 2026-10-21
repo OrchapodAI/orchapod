@@ -273,3 +273,17 @@ def test_what_calls_in_flight_at_exit_spend_is_added_after_them(tmp_path):
     # each cost_json adds its usd to the run: when main ended, then what the worker billed after
     assert registered(tmp_path, "cost_json") == [{"usd": 0.25}, {"usd": 0.5}]
     assert json.loads((tmp_path / "cost_json").read_text())["usd"] == 0.75  # the file: the node's whole spend
+
+
+def test_each_cost_record_registers_its_own_spend(sdk, node_env, posts, monkeypatch):
+    """Several nodes in one process (tests/drills runs them so, each with a fresh cost record): each cost_json carries
+    its own node's spend, never the difference from the node before."""
+    io, cost = sdk.io, sdk.cost
+    monkeypatch.setattr(io, "_upload_to_r2", lambda **_: None)
+    for usd in (0.25, 0.1, 0.0):
+        monkeypatch.setattr(cost, "_items", {})
+        if usd:
+            cost.add("token_factory", "m", usd=usd)
+        io._at_exit()
+    assert [p["body"]["artifact"]["metadata"] for p in posts if p["body"].get("artifact", {}).get("name") == "cost_json"
+            ] == [{"usd": 0.25}, {"usd": 0.1}, {"usd": 0.0}]

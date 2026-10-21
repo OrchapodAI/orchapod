@@ -149,7 +149,7 @@ def download_directory(uri_prefix: str, local_dir: Path | str) -> Path:
 
 _armed = False
 _cost_lock = threading.Lock()
-_registered: dict | None = None  # the cost summary last registered as cost_json
+_registered: tuple[dict, dict] | None = None  # (the cost record, its summary as last registered as cost_json)
 
 
 def _arm() -> None:
@@ -179,17 +179,19 @@ def _excepthook(exc_type, exc, tb) -> None:
 
 def _flush_cost() -> None:
     """Register what the node spent since its last cost_json: the file holds the whole summary, the metadata
-    {"usd": the increase}, which the control plane adds to the run. No new spend, no new cost_json."""
+    {"usd": the increase}, which the control plane adds to the run. No new spend, no new cost_json. A fresh cost record
+    (cost._items replaced: one process running several nodes, as tests/drills does) starts from nothing."""
     global _registered
     with _cost_lock:
         summary = cost.summary()
-        if summary == _registered:
+        last = _registered[1] if _registered and _registered[0] is cost._items else None
+        if summary == last:
             return
         path = local_path("cost_json")
         path.write_text(json.dumps(summary))
         try:
-            write_output("cost_json", path, "metrics", {"usd": round(summary["usd"] - (_registered or {"usd": 0})["usd"], 6)})
-            _registered = summary
+            write_output("cost_json", path, "metrics", {"usd": round(summary["usd"] - (last or {"usd": 0})["usd"], 6)})
+            _registered = (cost._items, summary)
         except Exception as e:
             log.error(f"cost_json not registered: {e}")
 

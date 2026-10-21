@@ -249,6 +249,17 @@ def test_a_job_whose_create_reply_was_lost_is_found_by_suffix_and_cancelled(node
     ft.cost.add.assert_called_once_with("token_factory", LLAMA, trained_tokens=1000)
 
 
+def test_a_create_reply_that_is_not_an_object_is_found_by_suffix_and_cancelled(node, tf_routes, monkeypatch):
+    from packages.providers.tokenfactory import _FineTuning
+    seen = tf_routes(ft, routes(list=[{"data": []}, {"data": [job("validating_files", suffix=SUFFIX)]}]))
+    monkeypatch.setattr(_FineTuning, "create", lambda *a, **k: ["ftjob-1"])  # a reply the client let through as a list
+    with pytest.raises(SystemExit) as e:
+        node()
+    assert e.value.code == 1 and "without a job id" in last_error()
+    assert (seen[-1].method, seen[-1].url.path) == ("POST", f"{JOB}/cancel")
+    ft.cost.add.assert_called_once_with("token_factory", LLAMA, trained_tokens=1000)
+
+
 @pytest.mark.parametrize("found, polls", [(job("running", suffix=SUFFIX, trained_steps=5, total_steps=10), [15, 15]),
                                           (job("succeeded", suffix=SUFFIX, trained_tokens=4000), [])],
                          ids=["running-resumes-polling", "succeeded-goes-to-outputs"])

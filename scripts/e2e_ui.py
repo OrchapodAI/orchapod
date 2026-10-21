@@ -4,13 +4,14 @@
 
 It rebuilds and retags the shared `orchapod/<node>:dev` images, like `make check E2E=1`, so only the orchestrator runs it, after
 merges. It starts the API (STUB=1, throwaway DB, full caps: the UI is anonymous) and `next dev` on the first free port from 3100,
-a second API at the public demo's scale (PUBLIC_CAPS) for the template cap test, builds the node images of the canonical
+a second API at the public demo's scale (PUBLIC_CAPS) for the public-app tests, builds the node images of the canonical
 intents, and runs tests/ui (Playwright, version pinned in tests/ui/package.json, headless Chromium) against them; Playwright's
 own report counts the passes.
 
 The tests: /agent intent #2 to a finished report; the template gallery's one-click Run of intent #2 with its dataset card; at
-ORCHAPOD_ANON_SCALE=0.1, a template above the per-run cap keeps Run disabled and says why; the golden path (intent #1: one click,
-the run, its eval view, the compare playground).
+ORCHAPOD_ANON_SCALE=0.1, a template above the per-run cap keeps Run disabled and says why; on the public-scale API, a canvas edit
+of a workflow that has runs is refused (409), saved as a copy instead, and leaves the original as it was; the golden path (intent #1:
+one click, the run, its eval view, the compare playground).
 
 A canonical intent whose plan has any error fails the run before anything is built: a missing piece is never a SKIP.
 """
@@ -35,7 +36,7 @@ PNPM = ["pnpm", "--config.verify-deps-before-run=false"]
 SPEC_INTENTS = ("1", "2")  # the canonical intents tests/ui drives
 PLAYWRIGHT_TIMEOUT_S = 570  # tests/ui/playwright.config.ts: globalTimeout 9 min
 # The page's own API runs at full scale, so the golden path can run from the gallery; the template cap test reads
-# GET /agent/templates from a second API at the public demo's scale.
+# GET /agent/templates from a second API at the public demo's scale, and the canvas copy test sends every call of the page there.
 PUBLIC_CAPS = agent.FULL_CAPS | {"ORCHAPOD_ANON_SCALE": "0.1"}
 
 

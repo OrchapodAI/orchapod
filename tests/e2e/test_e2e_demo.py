@@ -79,7 +79,7 @@ def test_the_stub_api_never_takes_8002_the_dev_api(monkeypatch):
     assert inspect.signature(e2e.listen_on_free_port).parameters["start"].default == 8003
     asked = []
 
-    def refuse(*args):
+    def refuse(*args, **kwargs):
         asked.append(args)
         raise RuntimeError("stop here")
 
@@ -88,6 +88,38 @@ def test_the_stub_api_never_takes_8002_the_dev_api(monkeypatch):
         e2e.start_api(Path("/nonexistent"))
     assert asked == [()], "start_api asks for the default start, not a port of its own"
 
+
+@pytest.mark.parametrize("env, host", [(None, "127.0.0.1"), ("172.17.0.1", "172.17.0.1")])
+def test_the_stub_api_listens_on_loopback_unless_told(env, host, monkeypatch):
+    """A node container reaches the API as host.docker.internal: Docker Desktop forwards that name to the host's 127.0.0.1; on
+    Linux it is the docker0 gateway, which a 127.0.0.1 listener never answers, so Linux opts in with E2E_BIND_HOST (never
+    every interface by default: the STUB API takes runs from anyone who reaches it)."""
+    if env:
+        monkeypatch.setenv("E2E_BIND_HOST", env)
+    else:
+        monkeypatch.delenv("E2E_BIND_HOST", raising=False)
+    assert e2e.bind_host() == host
+    asked = []
+
+    def refuse(*args, **kwargs):  # no real bind: macOS would ask Hari to accept incoming connections
+        asked.append(kwargs)
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(e2e, "listen_on_free_port", refuse)
+    with pytest.raises(RuntimeError, match="stop here"):
+        e2e.start_api(Path("/nonexistent"))
+    assert asked == [{"host": host}]  # start_api binds what bind_host says
+
+
+def test_preflight_on_linux_asks_for_the_bind_host(monkeypatch):
+    monkeypatch.setattr(e2e.sys, "platform", "linux")
+    monkeypatch.delenv("E2E_BIND_HOST", raising=False)
+    monkeypatch.setattr(e2e.subprocess, "run", lambda *a, **k: type("R", (), {"returncode": 0})())
+    monkeypatch.setattr(e2e.socket, "create_connection", lambda *a, **k: type("C", (), {"close": lambda self: None})())
+    monkeypatch.setattr(e2e.httpx, "get", lambda *a, **k: type("G", (), {"raise_for_status": lambda self: None})())
+    assert any("E2E_BIND_HOST" in p for p in e2e.preflight())
+    monkeypatch.setenv("E2E_BIND_HOST", "172.17.0.1")
+    assert not any("E2E_BIND_HOST" in p for p in e2e.preflight())
 
 def test_the_api_port_is_held_from_choice_to_start():
     """Two `make check` at once must not pick the same port, nor mistake each other's API for their own."""
@@ -270,24 +302,61 @@ def test_extra_env_lands_last_but_the_stub_basics_stay(tmp_path):
     assert env["ORCHAPOD_ANON_SCALE"] == "1" and env["STUB"] == "1" and env["ORCHAPOD_KILL_SWITCH"] == "0"
 
 
-def test_poll_run_cancels_a_run_that_outlives_the_limit(monkeypatch):
+RUNNING = {"status": "running", "nodes": [{"node_id": "a", "status": "running"}]}
+
+
+def test_poll_run_cancels_a_run_that_outlives_the_limit_with_its_cancel_token(monkeypatch):
+    """An anonymous cancel without the run's token is a 403 (contracts "Run control API"), and the e2e's API has no admin."""
     seen = []
 
     def api(request):
-        seen.append((request.method, request.url.path))
-        return httpx.Response(200, json={"status": "running", "nodes": [{"node_id": "a", "status": "running"}]})
+        seen.append((request.method, request.url.path, request.headers.get("x-orchapod-cancel-token")))
+        return httpx.Response(200, json=RUNNING)
 
     monkeypatch.setattr(e2e, "LIMIT_S", 0)
-    reply, _ = e2e.poll_run(httpx.Client(base_url="http://api", transport=httpx.MockTransport(api)), "r1", "/runs/r1/summary")
+    reply, _ = e2e.poll_run(httpx.Client(base_url="http://api", transport=httpx.MockTransport(api)), "r1", "/runs/r1/summary",
+                            cancel_token="tok-1")
     assert reply["status"] == "running"
-    assert seen == [("GET", "/runs/r1/summary"), ("POST", "/runs/r1/cancel")]
+    assert seen == [("GET", "/runs/r1/summary", None), ("POST", "/runs/r1/cancel", "tok-1")]
+
+
+def test_a_cancel_the_api_refuses_is_a_failure_but_a_run_that_just_ended_is_not(monkeypatch):
+    monkeypatch.setattr(e2e, "LIMIT_S", 0)
+
+    def client(cancel_status):
+        def api(request):
+            if request.method == "POST":
+                return httpx.Response(cancel_status, json={"detail": "cancelling this run needs its cancel token"})
+            return httpx.Response(200, json=RUNNING)
+
+        return httpx.Client(base_url="http://api", transport=httpx.MockTransport(api))
+
+    with pytest.raises(RuntimeError, match="run r1 did not end within 0 s, and POST /runs/r1/cancel -> HTTP 403: .*cancel token"):
+        e2e.poll_run(client(403), "r1", "/runs/r1/summary", cancel_token="wrong")  # it would run on: say so, never "so it was cancelled"
+    reply, _ = e2e.poll_run(client(409), "r1", "/runs/r1/summary", cancel_token="tok-1")  # 409: it ended while we asked
+    assert reply["status"] == "running"
+
+
+def test_run_plan_cancels_with_the_token_start_returned(monkeypatch):
+    monkeypatch.setattr(e2e, "LIMIT_S", 0)
+    posts = []
+
+    def api(request):
+        if request.method == "GET":
+            return httpx.Response(200, json=RUNNING)
+        posts.append((request.url.path, request.headers.get("x-orchapod-cancel-token")))
+        made = {"/workflows": {"id": "w1"}, "/runs": {"id": "r1"}, "/runs/r1/start": {"id": "r1", "cancel_token": "tok-start"}}
+        return httpx.Response(200, json=made.get(request.url.path, {"id": "r1"}))
+
+    e2e.run_plan(httpx.Client(base_url="http://api", transport=httpx.MockTransport(api)), INTENT2["plan"])
+    assert posts == [("/workflows", None), ("/runs", None), ("/runs/r1/start", None), ("/runs/r1/cancel", "tok-start")]
 
 
 def test_poll_run_ends_when_the_done_test_says_so(monkeypatch):
     replies = iter([{"status": "succeeded", "ready": False, "nodes": []}, {"status": "succeeded", "ready": True, "nodes": []}])
     monkeypatch.setattr(e2e.time, "sleep", lambda s: None)
     c = httpx.Client(base_url="http://api", transport=httpx.MockTransport(lambda r: httpx.Response(200, json=next(replies))))
-    reply, _ = e2e.poll_run(c, "r1", "/agent/runs/r1/report", done=lambda r: r["ready"])  # terminal is not enough
+    reply, _ = e2e.poll_run(c, "r1", "/agent/runs/r1/report", done=lambda r: r["ready"], cancel_token="tok-1")  # terminal is not enough
     assert reply["ready"] is True
 
 

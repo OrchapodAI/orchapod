@@ -141,6 +141,62 @@ test("templates: at ORCHAPOD_ANON_SCALE=0.1 a template above the per-run cap can
   expect(problems).toEqual([]);
 });
 
+// frontend-w5: a workflow with runs is read-only to visitors (PUT -> 409, docs/contracts.md "Run control API"), so the canvas turns Save into
+// "Save a copy": the edited graph as "<name> (copy)", opened on the canvas, while the original stays as it was. This is the public app's
+// flow, so every call of the page goes to the public-scale API (as in the cap test), and the workflow and its run are made there.
+type WorkflowOut = {
+  id: string; name: string; version: number; yaml: string;
+  graph_json: { nodes: { id: string; data: { inputs: Record<string, unknown> } }[] };
+};
+
+async function publicApi<T = WorkflowOut>(path: string, init?: RequestInit): Promise<T> {
+  const r = await fetch(`${PUBLIC_API}${path}`, { headers: { "Content-Type": "application/json" }, ...init });
+  if (!r.ok) throw new Error(`${init?.method ?? "GET"} ${PUBLIC_API}${path} -> HTTP ${r.status}: ${await r.text()}`);
+  return r.json() as Promise<T>;
+}
+
+test("canvas: an edit of a workflow that has runs is refused (409) and saved as a copy; the original stays", async ({ page }) => {
+  const problems = watch(page);
+  const name = `visitor-${Date.now()}`;
+  const yaml = [`name: ${name}`, "nodes:", "  - id: visitor_research", "    type: web-research", "    inputs:",
+    '      queries: ["Nebius Serverless Jobs"]', "      max_pages: 5"].join("\n");
+  const post = (path: string, body: unknown) => publicApi(path, { method: "POST", body: JSON.stringify(body) });
+  const original = await post("/workflows", { name, yaml });
+  await post("/runs", { workflow_id: original.id, inputs: {} }); // created, never started: no container, $0, and the workflow has a run
+  await page.route((url) => url.href.startsWith(`${API}/`), (route) => route.continue({ url: route.request().url().replace(API, PUBLIC_API) }));
+
+  // the visitor edits the node's Max pages, 5 -> 7, and presses Save
+  const node = page.locator(".react-flow__node", { hasText: "visitor_research" });
+  const maxPages = page.getByLabel("Max pages");
+  await page.goto(`/canvas/${original.id}`);
+  await node.click();
+  await maxPages.fill("7");
+  const refused = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().endsWith(`/workflows/${original.id}`));
+  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  expect((await refused).status()).toBe(409);
+  await expect(page.locator("#read-only-note")).toHaveText("This workflow has runs, so it is read-only");
+
+  // Save a copy opens "<name> (copy)": a fresh page (Save is Save again) holding the edit
+  await page.getByRole("button", { name: "Save a copy", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/canvas/(?!${original.id})[0-9a-f-]{36}$`));
+  await expect(page.getByText(`${name} (copy)`, { exact: true })).toBeVisible();
+  await expect(page.locator("#read-only-note")).toHaveText("");
+  await node.click();
+  await expect(maxPages).toHaveValue("7");
+
+  // the copy is the visitor's own: it saves; the original is untouched
+  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Saved ✓" })).toBeVisible();
+  const copyId = new URL(page.url()).pathname.split("/").pop()!;
+  const [kept, copy] = [await publicApi(`/workflows/${original.id}`), await publicApi(`/workflows/${copyId}`)];
+  expect([kept.name, kept.version, kept.yaml, kept.graph_json.nodes[0].data.inputs.max_pages]).toEqual([name, 1, yaml, 5]);
+  expect([copy.name, copy.graph_json.nodes.map((n) => n.id), copy.graph_json.nodes[0].data.inputs.max_pages])
+    .toEqual([`${name} (copy)`, ["visitor_research"], 7]);
+
+  // the one refusal is the expected one: the browser logs it as a console error and the watcher as a failed call
+  expect(problems.filter((p) => !/409/.test(p))).toEqual([]);
+});
+
 // What the run page shows for a judge-eval result (docs/contracts.md "judge-eval", "ModelRef", "/compare"), on the golden path's real
 // STUB data.
 async function checkEvalView(page: Page): Promise<void> {

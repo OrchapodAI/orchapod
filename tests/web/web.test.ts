@@ -324,4 +324,7 @@ test("live progress events append to the loss curve, and a step the curve alread
   ]);
   // a run still training has no metrics yet: the events alone draw the chart, as before
   assert.deepEqual(lossPoints([], [progress("train", 10, 2.4)] as never), [{ node_id: "train", step: 10, loss: 2.4 }]);
+  // the curve is the node's own record: an event at the same step neither replaces it nor drops its valid_loss
+  assert.deepEqual(lossPoints([{ node_id: "tune", rows: [{ step: 2, train_loss: 0.5, valid_loss: 0.6 }] }], [progress("tune", 2, 0.7)] as never),
+    [{ node_id: "tune", step: 2, loss: 0.5, valid_loss: 0.6 }]);
 });

@@ -124,7 +124,7 @@ async def _finish(i: int, answer: Iterator[str], queue: asyncio.Queue, spent: li
 
     try:
         await asyncio.to_thread(drain)
-        done["usd"] = round(sum(spent), 6)
+        done["usd"] = round(sum(spent, 0.0), 6)
     except Exception as e:
         log.warning("compare refs[%d] failed mid-stream: %r", i, e)
         done |= {"usd": None, "error": "the model call failed mid-stream; the API log has the cause"}

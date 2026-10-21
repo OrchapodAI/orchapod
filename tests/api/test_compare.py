@@ -108,6 +108,7 @@ async def test_keys_resolve_server_side_and_spend_lands_in_the_day_ledger(client
     assert answers(evs) == {0: "Kickbacks.", 1: "Referral fees."}
     done = {e["i"]: e for e in evs if e.get("done")}
     assert done[0]["usd"] == pytest.approx(0.06 + 0.12) and done[1]["usd"] == 0.0  # our endpoints bill GPU hours
+    assert isinstance(done[1]["usd"], float)  # usd is a float, or null when the answer broke
     assert sorted((url, auth) for url, auth, _ in sent) == [  # each key went only to its own pair
         (TF + "/chat/completions", "Bearer tf-key"), (ENDPOINT + "/v1/chat/completions", "Bearer ep-token")]
     assert {b["max_tokens"] for *_, b in sent} == {64} and {b["temperature"] for *_, b in sent} == {0.0}

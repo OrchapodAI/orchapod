@@ -118,7 +118,7 @@ export default function RunsPage() {
         <div style={{ marginBottom: 18 }}>
           <h1 style={{ fontSize: 22, fontWeight: 500, letterSpacing: "-0.02em" }}>Runs</h1>
           <div className="muted" style={{ fontSize: 13.5, marginTop: 2 }}>
-            {loading ? "Loading runs…" : <>{runs.length} total · {runs.filter(r => r.status === "running").length} running · {runs.filter(r => r.status === "failed").length} failed in last 7d</>}
+            {loading ? "Loading runs…" : <>{runs.length} total · {runs.filter(r => r.status === "running").length} running · {runs.filter(r => r.status === "failed").length} failed</>}
           </div>
         </div>
 

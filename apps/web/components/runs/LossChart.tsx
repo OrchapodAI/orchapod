@@ -17,7 +17,7 @@ export function LossChart({ summary, events }: { summary: RunSummary; events: Ws
   const [files, setFiles] = useState<Record<string, unknown[]>>({});
 
   // A curve that is not in the metrics meta is in the file behind its download link (fetched once, when the tab opens).
-  // ponytail: delete when unsloth-train writes its curve via io.write_metrics (ml-w4)
+  // Keep it: write_metrics drops its meta above 16 KB (packages/sdk-py/orchapod/io.py), so a long curve from any trainer lives only in the file.
   useEffect(() => {
     let live = true;
     for (const url of urls ? urls.split("\n") : []) {

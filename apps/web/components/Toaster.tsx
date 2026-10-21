@@ -12,6 +12,7 @@ export function Toaster() {
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
   const [hover, setHover] = useState(false);
   const [focus, setFocus] = useState(false);
+  const stack = useRef<HTMLDivElement>(null);
   const drop = (id: number) => setToasts((ts) => ts.filter((t) => t.id !== id));
 
   useEffect(() => {
@@ -23,14 +24,15 @@ export function Toaster() {
     window.addEventListener(TOAST_EVENT, show);
     return () => window.removeEventListener(TOAST_EVENT, show);
   }, []);
+  // a removed toast takes its focused button with it and fires no blur, so re-check focus whenever the stack changes
+  useEffect(() => { if (!stack.current?.contains(document.activeElement)) setFocus(false); }, [toasts]);
 
   return (
-    <div aria-live="assertive" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+    <div ref={stack} aria-live="assertive" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
       onFocus={() => setFocus(true)} onBlur={(e) => setFocus(e.currentTarget.contains(e.relatedTarget))}
       style={{ position: "fixed", right: 16, bottom: 16, zIndex: 1000, display: "flex", flexDirection: "column", gap: 8, width: 380, maxWidth: "calc(100vw - 32px)" }}>
       {toasts.map((t) => (
-        // a removed button takes focus with it without a blur event, so Dismiss clears the focus pause itself
-        <Toast key={t.id} text={t.text} paused={hover || focus} onDone={() => drop(t.id)} onDismiss={() => { setFocus(false); drop(t.id); }} />
+        <Toast key={t.id} text={t.text} paused={hover || focus} onDone={() => drop(t.id)} onDismiss={() => drop(t.id)} />
       ))}
     </div>
   );

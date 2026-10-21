@@ -142,6 +142,8 @@ def deps(db, monkeypatch):
     and object storage are up or down as the test says."""
     from api.services import events, storage
     monkeypatch.setattr("api.database.engine", db.bind)
+    monkeypatch.setattr(main, "_health", None)
+    monkeypatch.setattr(main, "HEALTH_TTL_S", 0)  # a fresh check per request, unless a test says otherwise
     up = SimpleNamespace(redis=True, storage=True, redis_hangs=False)
 
     async def ping():
@@ -177,6 +179,24 @@ async def test_a_hung_dependency_fails_health_within_the_timeout(client, deps, m
     started = time.monotonic()
     r = await client.get("/health")
     assert (r.status_code, r.json()["failed"]) == (503, ["redis"]) and time.monotonic() - started < 2
+
+
+async def test_health_runs_one_check_at_a_time_and_reuses_it_for_10_s(client, deps, monkeypatch):
+    """A flood of probes during a storage brownout must not pin the executor's threads."""
+    from api.services import storage
+    calls, clock, fake = [], [100.0], storage.head_bucket
+    monkeypatch.setattr(main, "HEALTH_TTL_S", 10)
+    monkeypatch.setattr(main, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(storage, "head_bucket", lambda: calls.append(1) or fake())
+
+    replies = await asyncio.gather(*(client.get("/health") for _ in range(20)))
+    assert {r.status_code for r in replies} == {200} and len(calls) == 1  # one check, shared
+    deps.storage = False
+    clock[0] += 9.9
+    assert (await client.get("/health")).status_code == 200 and len(calls) == 1  # reused
+    clock[0] += 0.1
+    r = await client.get("/health")
+    assert (r.status_code, r.json()["failed"], len(calls)) == (503, ["storage"], 2)
 
 
 async def test_livez_answers_while_every_dependency_is_down(client, deps, monkeypatch):

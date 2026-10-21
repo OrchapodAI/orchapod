@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from time import monotonic
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -79,7 +80,8 @@ app.include_router(ws.router, tags=["websocket"])
 
 
 log = logging.getLogger("api.health")
-HEALTH_TIMEOUT_S = 3
+HEALTH_TIMEOUT_S, HEALTH_TTL_S = 3, 10
+_health: tuple[float, asyncio.Task] | None = None  # (when the last deep check started, that check)
 
 
 async def _answers(name: str, check) -> bool:
@@ -96,14 +98,23 @@ async def _database() -> None:
         await conn.execute(text("SELECT 1"))
 
 
-@app.get("/health")
-async def health():
-    """Deep: the database, Redis and object storage each answer within HEALTH_TIMEOUT_S, else 503 names the ones that
-    did not. For uptime monitors and people; the watchdog restarts on /livez, since a restart fixes none of these."""
+async def _failed() -> list[str]:
     checks = {"database": _database, "redis": lambda: event_bus.redis.ping(),
               "storage": lambda: asyncio.to_thread(storage.head_bucket)}
     up = await asyncio.gather(*(_answers(name, check) for name, check in checks.items()))
-    failed = [name for name, ok in zip(checks, up) if not ok]
+    return [name for name, ok in zip(checks, up) if not ok]
+
+
+@app.get("/health")
+async def health():
+    """Deep: the database, Redis and object storage each answer within HEALTH_TIMEOUT_S, else 503 names the ones that
+    did not. For uptime monitors and people; the watchdog restarts on /livez, since a restart fixes none of these.
+    Concurrent callers share one check and its result is reused for HEALTH_TTL_S, so a flood of probes cannot pin the
+    executor's threads while storage is slow."""
+    global _health
+    if _health is None or monotonic() - _health[0] >= HEALTH_TTL_S:
+        _health = (monotonic(), asyncio.ensure_future(_failed()))
+    failed = await asyncio.shield(_health[1])  # a caller that hangs up leaves the check to the others
     if failed:
         return JSONResponse(status_code=503, content={"status": "fail", "failed": failed})
     return {"status": "ok"}

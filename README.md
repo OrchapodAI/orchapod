@@ -147,7 +147,7 @@ for n in synth-distilabel data-prep; do docker build -t orchapod/$n:dev -f conta
 
 The other templates need `hf-download quantize data-prep judge-eval` (maths), `web-research synth-distilabel data-prep tf-finetune vllm-serve judge-eval` (real-estate) and `web-research synth-distilabel data-prep tf-finetune tf-deploy judge-eval` (Nebius docs). `unsloth-train` (Lane B) is an amd64 CUDA image of about 20 GB; build it only for GPU runs.
 
-**GPU nodes (Lane B)** also need a Nebius AI Cloud project with billing and GPU quota, `ORCHAPOD_ENDPOINT_TOKEN` for `vllm-serve` and a public https `ORCHAPOD_CONTROL_URL`; `.env.example` lists every variable and where to get it.
+**GPU nodes (Lane B)** also need a Nebius AI Cloud project with billing and GPU quota, `ORCHAPOD_ENDPOINT_TOKEN` for `vllm-serve`, a public https `ORCHAPOD_CONTROL_URL` and Nebius Object Storage (an https `ORCHAPOD_R2_ENDPOINT`, since Nebius cannot reach a local MinIO); `.env.example` lists every variable and where to get it.
 
 ## Run the demo
 

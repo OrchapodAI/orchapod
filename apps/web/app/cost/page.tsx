@@ -3,7 +3,7 @@ export default function CostPage() {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       <div className="op-topbar">
-        <div className="op-crumbs"><span>orbital-research</span><span className="sep">/</span><span className="here">Cost & GPUs</span></div>
+        <div className="op-crumbs"><span className="here">Cost & GPUs</span></div>
         <div className="spacer" />
       </div>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", padding: 24 }}>

@@ -16,7 +16,7 @@ import { NodePalette } from "@/components/canvas/NodePalette";
 import { NodePanel } from "@/components/canvas/NodePanel";
 import Link from "next/link";
 import { buildYamlFromGraph } from "@/lib/workflowYaml";
-import { formDefaults } from "@/lib/nodeForms";
+import { defaultInputs } from "@/lib/nodeForms";
 
 const nodeTypes: NodeTypes = { orchapodNode: OrchaNode as NodeTypes[string] };
 
@@ -358,22 +358,4 @@ export default function CanvasPage() {
       )}
     </div>
   );
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function defaultInputs(type: NodeType): Record<string, unknown> {
-  const fromForm = formDefaults(type);
-  if (fromForm) return fromForm;
-  switch (type) {
-    case "hf-download":         return { model_id: "", revision: "main", ignore_patterns: [] };
-    case "data-prep":           return { dataset: "", format: "chatml", train_split: 0.9 };
-    case "synth-distilabel":    return { pipeline_template: "self-instruct", teacher_kind: "nebius", teacher_model: "nvidia/nemotron-3-super-120b-a12b", n_samples: 1000, temperature: 0.8, max_tokens: 512 };
-    case "unsloth-train":       return { model: "Qwen/Qwen3-4B-Instruct", train_data: "", eval_data: "", lora_r: 16, lora_alpha: 32, max_steps: 500, learning_rate: 0.0002 };
-    case "distill-sft":         return { teacher: "", student_base: "Qwen/Qwen3-1.7B-Instruct", train_data: "", n_synthetic: 5000 };
-    case "quantize":            return { model: "", method: "gguf", precision: "q4_k_m" };
-    case "lm-eval":             return { models: [], tasks: ["hellaswag", "gsm8k"], judge_eval_set: "" };
-    case "vllm-serve":          return { model: "", max_model_len: 8192, keep_alive_min: 60 };
-    default:                    return {};
-  }
 }

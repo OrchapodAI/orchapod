@@ -41,8 +41,6 @@ export default function WorkflowsPage() {
       {/* Topbar */}
       <div className="op-topbar">
         <div className="op-crumbs">
-          <span>orbital-research</span>
-          <span className="sep">/</span>
           <span className="here">Workflows</span>
         </div>
         <div className="spacer" />
@@ -120,7 +118,6 @@ export default function WorkflowsPage() {
                   <th>Last run</th>
                   <th>Status</th>
                   <th>Runs</th>
-                  <th>Owner</th>
                   <th></th>
                 </tr>
               </thead>
@@ -156,7 +153,6 @@ export default function WorkflowsPage() {
                         {latestRun ? <StatusBadge status={latestRun.status} /> : <span className="muted" style={{ fontSize: 12 }}>—</span>}
                       </td>
                       <td className="mono">{wRuns.length > 0 ? wRuns.length : "—"}</td>
-                      <td><div className="avatar">EM</div></td>
                       <td>
                         <div className="row" style={{ gap: 4 }}>
                           <Link href={`/canvas/${w.id}`} className="btn btn-icon btn-ghost" style={{ textDecoration: "none" }}>

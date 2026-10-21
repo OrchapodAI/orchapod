@@ -43,7 +43,7 @@ function Callout({ tone, title, children }: { tone: "amber" | "rose"; title: str
 }
 
 const list = (items: string[]) => (
-  <ul style={{ margin: 0, paddingLeft: 18 }}>{items.map((t) => <li key={t}>{t}</li>)}</ul>
+  <ul style={{ margin: 0, paddingLeft: 18 }}>{items.map((t, i) => <li key={i}>{t}</li>)}</ul>
 );
 
 export default function AgentPage() {
@@ -113,7 +113,9 @@ export default function AgentPage() {
               value={intent}
               onChange={(e) => setIntent(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); }
+                // Enter that confirms an IME composition is not a send (Safari reports it as keyCode 229).
+                if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing || e.keyCode === 229) return;
+                e.preventDefault(); e.currentTarget.form?.requestSubmit();
               }}
               maxLength={MAX_INTENT}
               rows={3}
@@ -147,7 +149,11 @@ export default function AgentPage() {
             </div>
           )}
 
-          {busy === "plan" && <p className="muted" style={{ fontSize: 13 }}>Nemotron is planning…</p>}
+          {/* Always rendered, so screen readers announce planning and the plan that arrives. */}
+          <p role="status" className={busy === "plan" ? "muted" : "sr-only"} style={{ fontSize: 13 }}>
+            {busy === "plan" ? "Nemotron is planning…"
+              : reply ? `Plan ready: ${reply.plan.name}, ${reply.plan.nodes.length} nodes, ${reply.errors.length} errors.` : ""}
+          </p>
 
           {reply && (
             <div className="card" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>

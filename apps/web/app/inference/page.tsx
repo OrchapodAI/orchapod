@@ -131,8 +131,6 @@ export default function InferencePage() {
       {/* Topbar */}
       <div className="op-topbar">
         <div className="op-crumbs">
-          <span>orbital-research</span>
-          <span className="sep">/</span>
           <span className="here">Inference</span>
         </div>
         <div className="spacer" />

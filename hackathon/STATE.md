@@ -16,12 +16,12 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D3+ merge twice a day; nightly real e2e; G2 call D5; freeze D7; submit D9 — TODO
 ### platform
 - [ ] P0 D1 spike 1 (now decisive): 50 rows → TF LoRA fine-tune meta-llama/Meta-Llama-3.1-8B-Instruct → try POST /v0/models deploy → one chat call; ALSO dump the raw job + checkpoint JSON and test whether adapter files can be downloaded — BLOCKED(NEBIUS_API_KEY)
-- [ ] P0 D1 TF client: api.tokenfactory.nebius.com, retries, guided JSON, per-call token + $ accounting — TODO
-- [ ] P0 D1 fine-tuning client: files, LoRA job, poll status/events, checkpoints, best by val loss — TODO
-- [ ] P0 D1 LoRA deploy client: POST /v0/models, poll to active, delete on cleanup — TODO
+- [x] P0 D1 TF client: api.tokenfactory.nebius.com, retries, guided JSON, per-call token + $ accounting — DONE (e0fa9a2)
+- [x] P0 D1 fine-tuning client: files, LoRA job, poll status/events, checkpoints, best by val loss — DONE (e0fa9a2)
+- [x] P0 D1 LoRA deploy client: POST /v0/models (unsupported path explicit), poll to active, delete — DONE (e0fa9a2; live behaviour = spike 1)
 - [ ] P0 D2 spike 3 + Tavily client: search, extract, credit accounting, page cap — BLOCKED(TAVILY_API_KEY)
 - [ ] P0 D2 ORCHAPOD_IMAGE_PREFIX (executor, CI, local provider agree) — TODO
-- [ ] P0 D1 one Token Factory client: fold the three hand-rolled clients on the legacy host into it, delete the zero-caller one — TODO
+- [x] P0 D1 one Token Factory client in packages/providers; zero-caller service deleted — DONE (e0fa9a2; synth and lm-eval switch in their tasks)
 - [ ] P0 D2 LocalDocker: a fast-failing container can be removed before `docker wait` sees it → node reads as succeeded (pre-existing; found by platform-w1) — TODO (wave 2)
 - [ ] P1 D2 nebius_serverless provider: Jobs, Endpoints, IAM refresh, Object Storage — TODO
 - [ ] P0 D2 setup gaps from devrel-w1 + ml-w1 review: compose (platform) still publishes 8000, names the 253B judge and passes ANTHROPIC_API_KEY; scripts/build-and-push-containers.sh builds 6 of 8 nodes (qa); storage bucket never auto-created (call ensure_bucket_exists at API start — backend); web app defaults to localhost:8000 (→ 8001 — frontend) — TODO (wave 2)

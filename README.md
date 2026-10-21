@@ -160,6 +160,8 @@ cd apps/web && pnpm install && pnpm dev
 
 `http://localhost:3000/agent` plans a workflow from one sentence with the Orchapod Agent (plan card with cost and time estimate → Edit on canvas or Run → live run → report); until the API serves `/agent/*` the page says why it cannot plan. The web app calls the API at `NEXT_PUBLIC_API_URL` (default `http://localhost:8001`); `pnpm test` runs its unit tests.
 
+The run page (`/runs/{id}`, also embedded on `/agent`) reads per-node status, cost and errors from `GET /runs/{id}/summary`, updates its cost meter live from `run_cost` events, shows a failed node's error verbatim and offers Retry node while the run is failed or cancelled.
+
 ### 6. Build the synth-distilabel container
 
 CPU nodes run locally via Docker. Build the container once:

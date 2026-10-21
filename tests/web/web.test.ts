@@ -304,12 +304,12 @@ test("the playground offers the run's ModelRefs: base and tuned first, deduped, 
     art("judge", "metrics_json", { win_rate: 1, base: local, tuned: { ...local, model: "f16" } })])), []);
 });
 
-test("no token reaches the browser: nothing reads meta.api_key, sends an Authorization header or calls /inference/extend", () => {
+test("no token reaches the browser: nothing reads meta.api_key, sends an Authorization header, asks for an HF token or calls /inference/extend", () => {
   const found = ["app", "components", "lib"].flatMap((dir) =>
     readdirSync(new URL(`../../apps/web/${dir}/`, import.meta.url), { recursive: true }).map(String)
       .filter((f) => /\.tsx?$/.test(f))
       .flatMap((f) => readFileSync(new URL(`../../apps/web/${dir}/${f}`, import.meta.url), "utf8")
-        .match(/\.api_key\b|["']Authorization["']|inference\/extend/g)?.map((m) => `${dir}/${f}: ${m}`) ?? []));
+        .match(/\.api_key\b|["']Authorization["']|\bhf_token\b|hfToken|inference\/extend/g)?.map((m) => `${dir}/${f}: ${m}`) ?? []));
   assert.deepEqual(found, []);
 });
 

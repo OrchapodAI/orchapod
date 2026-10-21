@@ -158,7 +158,6 @@ export interface DeployRequest {
   keep_alive_min?: number;
   precision?: "q4_k_m" | "q5_k_m" | "q8_0";
   served_model_name?: string;
-  hf_token?: string;
 }
 
 export interface DeployResponse {

@@ -230,7 +230,7 @@ def test_cost_json_written_at_every_exit(tmp_path, mode, code):
     assert json.loads((tmp_path / "cost_json").read_text())["usd"] == 0.25
     posts = [json.loads(line) for line in (tmp_path / "posts.jsonl").read_text().splitlines()]
     assert ["/internal/artifact", {"artifact": {"name": "cost_json", "uri": "r2://b/runs/run1/prep/cost_json",
-                                                "kind": "metrics", "metadata": {"usd": 0.25}}}] in posts
+                                                "kind": "metrics", "metadata": {"usd": 0.25, "seq": 1}}}] in posts
     assert (tmp_path / "finally").exists()  # SIGTERM unwinds the node's finally (remote cleanup)
     errors = [p[1]["message"] for p in posts if p[0] == "/internal/log" and p[1]["level"] == "ERROR"]
     assert errors == (["RuntimeError: boom"] if mode == "raise" else [])
@@ -252,7 +252,7 @@ def test_cost_json_does_not_wait_for_a_pool_still_busy_at_exit(tmp_path):
         proc.wait(timeout=10)
     finally:
         proc.kill()
-    assert registered(tmp_path, "cost_json") == [{"usd": 0.25}]  # once: nothing was spent after
+    assert registered(tmp_path, "cost_json") == [{"usd": 0.25, "seq": 1}]  # once: nothing was spent after
     assert registered(tmp_path, "logs") == [{}]
 
 
@@ -264,14 +264,14 @@ def test_cost_json_is_written_at_sigterm_while_the_node_still_waits_for_its_pool
         wait_for_cost_json(tmp_path, proc)
     finally:
         proc.kill()  # docker stop: SIGKILL after the grace
-    assert registered(tmp_path, "cost_json") == [{"usd": 0.25}]
+    assert registered(tmp_path, "cost_json") == [{"usd": 0.25, "seq": 1}]
 
 
 def test_what_calls_in_flight_at_exit_spend_is_added_after_them(tmp_path):
     proc = subprocess.run(**node("pool_spends", tmp_path), capture_output=True, timeout=60)
     assert proc.returncode == 0, proc.stderr
     # each cost_json adds its usd to the run: when main ended, then what the worker billed after
-    assert registered(tmp_path, "cost_json") == [{"usd": 0.25}, {"usd": 0.5}]
+    assert registered(tmp_path, "cost_json") == [{"usd": 0.25, "seq": 1}, {"usd": 0.5, "seq": 2}]
     assert json.loads((tmp_path / "cost_json").read_text())["usd"] == 0.75  # the file: the node's whole spend
 
 
@@ -286,4 +286,28 @@ def test_each_cost_record_registers_its_own_spend(sdk, node_env, posts, monkeypa
             cost.add("token_factory", "m", usd=usd)
         io._at_exit()
     assert [p["body"]["artifact"]["metadata"] for p in posts if p["body"].get("artifact", {}).get("name") == "cost_json"
-            ] == [{"usd": 0.25}, {"usd": 0.1}, {"usd": 0.0}]
+            ] == [{"usd": 0.25, "seq": 1}, {"usd": 0.1, "seq": 1}, {"usd": 0.0, "seq": 1}]
+
+
+def test_a_registration_that_failed_goes_again_under_its_seq(sdk, node_env, monkeypatch):
+    """It may still have landed (a POST broken after the API counted it, or a lost reply): sent again under the same seq
+    with whatever was spent since, the API counts that seq once, at its largest."""
+    io, cost, log = sdk.io, sdk.cost, sdk.log
+    monkeypatch.setattr(io, "_upload_to_r2", lambda **_: None)
+    monkeypatch.setattr(io.time, "sleep", lambda s: None)
+    sent, down = [], [True]
+
+    def post(path, payload, timeout=3):
+        if path == "/internal/artifact" and payload["artifact"]["name"] == "cost_json":
+            sent.append(payload["artifact"]["metadata"])
+            if down[0]:
+                raise OSError("control plane down")
+
+    monkeypatch.setattr(log, "post", post)
+    cost.add("token_factory", "m", usd=0.25)
+    io._flush_cost()  # every try fails
+    down[0] = False
+    cost.add("token_factory", "m", usd=0.1)
+    io._flush_cost()
+    io._flush_cost()  # nothing new
+    assert sent == [{"usd": 0.25, "seq": 1}] * 4 + [{"usd": 0.35, "seq": 1}]

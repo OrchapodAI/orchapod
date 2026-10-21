@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import secrets
 import uuid
+from datetime import datetime
 from decimal import Decimal
 from typing import Callable
 
@@ -19,13 +20,41 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from api import config
-from api.models.db import Run, Spend, utcnow
+from api.models.db import Artifact, Run, Spend, utcnow
 from packages.providers.tokenfactory import TokenFactory
 
 # run_id → (what its running node may spend, the scale it was granted at), granted at the node boundary and released
 # when the node ends, so concurrent runs never hand out the same dollars twice. ponytail: in-process, which the one API
 # worker allows.
 _granted: dict[uuid.UUID, tuple[float, float]] = {}
+
+
+# A node's cost_json and the executor's wall-time bill of the same attempt never interleave. ponytail: in-process, which
+# the one API worker allows.
+cost_lock = asyncio.Lock()
+
+
+def attempt_cost(metas: list[dict]) -> float:
+    """What one attempt of a node costs, from its cost_json metas (contracts "Run state machine"): what the node
+    reported (a seq counts once, at its largest: a re-send after a broken POST), or the executor's wall-time bill of
+    its gpu pod when that is more."""
+    walls = [float(m.get("wall_usd", 0)) for m in metas if m.get("billed_by") == "executor"]
+    seqs, reported = {}, 0.0
+    for m in metas:
+        if m.get("billed_by") != "executor":
+            usd = float(m.get("reported_usd", m.get("usd", 0)))
+            if isinstance(m.get("seq"), int):
+                seqs[m["seq"]] = max(seqs.get(m["seq"], 0.0), usd)
+            else:
+                reported += usd
+    return max([reported + sum(seqs.values()), *walls])
+
+
+async def attempt_costs(db: AsyncSession, node_run) -> list[dict]:
+    """The metas of the cost_json rows of the node's current attempt (a retry restarts started_at)."""
+    return [m or {} for m in await db.scalars(select(Artifact.meta).where(
+        Artifact.node_run_id == node_run.id, Artifact.name == "cost_json",
+        Artifact.created_at >= (node_run.started_at or datetime.min)))]
 
 
 def admin(x_orchapod_admin: str = Header(default="")) -> bool:

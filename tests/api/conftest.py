@@ -56,10 +56,13 @@ async def db():
 
 
 @pytest.fixture(autouse=True)
-def no_grants():
-    """Budget grants live in this process (services/budget._granted): none leaks from one test into the next."""
+def no_grants(monkeypatch):
+    """Budget grants live in this process (services/budget._granted): none leaks from one test into the next. Nor does
+    the cost lock, which binds to the event loop that first waits on it."""
+    import asyncio
     from api.services import budget
     budget._granted.clear()
+    monkeypatch.setattr(budget, "cost_lock", asyncio.Lock())
     yield
     budget._granted.clear()
 

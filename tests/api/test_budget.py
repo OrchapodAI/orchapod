@@ -303,3 +303,13 @@ async def test_the_executor_never_starts_a_gpu_node_of_an_anonymous_run(db, prov
     assert (picked, provider.provisioned, budget._granted) == ([], [], {})
     await ex.run_workflow(admin.id, db, AsyncMock(), 1.0)
     assert (await nodes(db, admin))["train"].error == "no gpu provider: NEBIUS_PROJECT_ID not set"  # the admin's gets there
+
+
+def test_an_attempt_costs_the_executors_bill_or_what_the_node_reported_whichever_is_more():
+    bill = {"billed_by": "executor", "wall_usd": 2.25, "usd": 2.25}
+    assert budget.attempt_cost([]) == 0
+    assert budget.attempt_cost([{"usd": 1.0, "seq": 1}, {"usd": 0.5, "seq": 2}]) == 1.5
+    assert budget.attempt_cost([bill, {"usd": 0.0, "reported_usd": 1.0, "seq": 1}]) == 2.25
+    assert budget.attempt_cost([bill, {"usd": 0.75, "reported_usd": 3.0, "seq": 1}]) == 3.0
+    assert budget.attempt_cost([{"usd": 1.0, "seq": 1}, {"usd": 0.5, "reported_usd": 1.5, "seq": 1}]) == 1.5  # a seq once
+    assert budget.attempt_cost([{"usd": 0.2}, {"usd": 0.3}]) == 0.5  # without a seq (an older SDK) each one counts

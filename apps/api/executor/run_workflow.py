@@ -15,6 +15,7 @@ Key invariants:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -256,26 +257,29 @@ async def _execute_node(
 
 async def _bill_gpu_time(db: AsyncSession, run: Run, node_run: NodeRun, provider, gpu_spec, pod, seconds: float,
                          broadcast: Broadcast) -> None:
-    """A gpu pod gone without a cost_json from this attempt (cancelled, timed out, preempted, or killed before its SDK
-    wrote one) still rented the GPU: its wall time at the provider's hourly quote becomes the node's cost_json, once;
-    a node that wrote cost_json billed itself. Never raises: the node's own outcome stands.
-    ponytail: provision to teardown, so queueing counts too (over, never under); a pod that a cancel caught still
-    provisioning is not billed, and vllm-serve's endpoint bills keep_alive_min itself (its lifecycle is /internal/ttl)."""
+    """A gpu attempt costs max(its pod's wall time at the provider's hourly quote, what the node reported) (contracts
+    "Run state machine"). Once the pod is gone the executor records its bill (one per attempt), adding only what exceeds the node's
+    reports so far; a later cost_json (a Nebius job's SIGTERM flush lands after terminate returns) adds only what
+    exceeds the bill (/internal/artifact). Never raises: the node's own outcome stands.
+    ponytail: provision to teardown, so queueing and a wait for capacity count too (over, never under); a pod that a
+    cancel caught still provisioning is not billed, and vllm-serve's endpoint bills itself (its lifecycle is /internal/ttl)."""
     try:
-        if await db.scalar(select(Artifact.id).where(Artifact.node_run_id == node_run.id, Artifact.name == "cost_json",
-                                                     Artifact.created_at >= node_run.started_at).limit(1)):
-            return
         hours = seconds / 3600
-        usd = round(hours * (await provider.quote(gpu_spec)).price_per_hour, 6)
-        db.add(Artifact(node_run_id=node_run.id, name="cost_json", kind=ArtifactKind.METRICS,
-                        uri=f"{provider.name}:{pod.pod_id}", meta={"usd": usd, "gpu_hours": round(hours, 4),
-                                                                    "billed_by": "executor"}))
-        total = await db.scalar(update(Run).where(Run.id == run.id).values(cost_usd=func.coalesce(Run.cost_usd, 0)
-                                                                            + Decimal(str(usd)))
-                                .returning(Run.cost_usd).execution_options(synchronize_session=False))
-        await db.commit()
+        bill = {"wall_usd": round(hours * (await provider.quote(gpu_spec)).price_per_hour, 6),
+                "gpu_hours": round(hours, 4), "billed_by": "executor"}
+        async with budget.cost_lock:
+            earlier = await budget.attempt_costs(db, node_run)
+            usd = round(budget.attempt_cost(earlier + [bill]) - budget.attempt_cost(earlier), 6)
+            db.add(Artifact(node_run_id=node_run.id, name="cost_json", kind=ArtifactKind.METRICS,
+                            uri=f"{provider.name}:{pod.pod_id}", meta={"usd": usd, **bill}))
+            total = await db.scalar(update(Run).where(Run.id == run.id).values(cost_usd=func.coalesce(Run.cost_usd, 0)
+                                                                                + Decimal(str(usd)))
+                                    .returning(Run.cost_usd).execution_options(synchronize_session=False))
+            await db.commit()
         await broadcast(run.id, {"type": "run_cost", "cost_usd": float(total)})
     except Exception:
+        with contextlib.suppress(Exception):
+            await db.rollback()  # the session goes on to fail or finish the node
         log.exception("gpu time of %s %s not billed", provider.name, pod.pod_id)
 
 

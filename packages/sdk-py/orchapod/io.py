@@ -149,7 +149,7 @@ def download_directory(uri_prefix: str, local_dir: Path | str) -> Path:
 
 _armed = False
 _cost_lock = threading.Lock()
-_registered: tuple[dict, dict] | None = None  # (the cost record, its summary as last registered as cost_json)
+_registered: tuple[dict, dict, int] | None = None  # (the cost record, its summary as last registered, that seq)
 
 
 def _arm() -> None:
@@ -179,19 +179,22 @@ def _excepthook(exc_type, exc, tb) -> None:
 
 def _flush_cost() -> None:
     """Register what the node spent since its last cost_json: the file holds the whole summary, the metadata
-    {"usd": the increase}, which the control plane adds to the run. No new spend, no new cost_json. A fresh cost record
-    (cost._items replaced: one process running several nodes, as tests/drills does) starts from nothing."""
+    {"usd": the increase, "seq": n}, which the control plane adds to the run. No new spend, no new cost_json. A
+    registration that failed (it may still have landed) goes again under the same seq, which the control plane counts
+    once, at its largest. A fresh cost record (cost._items replaced: one process running several nodes, as
+    tests/drills does) starts from nothing."""
     global _registered
     with _cost_lock:
         summary = cost.summary()
-        last = _registered[1] if _registered and _registered[0] is cost._items else None
+        last, seq = _registered[1:] if _registered and _registered[0] is cost._items else (None, 0)
         if summary == last:
             return
         path = local_path("cost_json")
         path.write_text(json.dumps(summary))
         try:
-            write_output("cost_json", path, "metrics", {"usd": round(summary["usd"] - (last or {"usd": 0})["usd"], 6)})
-            _registered = (cost._items, summary)
+            write_output("cost_json", path, "metrics",
+                         {"usd": round(summary["usd"] - (last or {"usd": 0})["usd"], 6), "seq": seq + 1})
+            _registered = (cost._items, summary, seq + 1)
         except Exception as e:
             log.error(f"cost_json not registered: {e}")
 

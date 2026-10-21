@@ -17,6 +17,7 @@ The node's exit code decides its status (executor); every call carries X-Orchapo
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import re
 import secrets
@@ -40,6 +41,7 @@ from api.models.db import (
     NodeRun, NodeStatus,
     Run,
 )
+from api.services import budget
 from api.services.events import event_bus
 from api.services.redact import redact
 
@@ -150,36 +152,43 @@ async def receive_artifact(event: ArtifactEvent, db: Session):
         raise HTTPException(422, f"Unknown artifact kind '{art_data['kind']}'. "
                             f"Valid: {[k.value for k in ArtifactKind]}")
 
-    artifact = Artifact(
-        node_run_id=node_run.id,
-        name=art_data["name"],
-        kind=kind,
-        uri=art_data["uri"],
-        size_bytes=art_data.get("size_bytes"),
-        meta=redact(art_data.get("metadata") or {}),  # R10: a token in it is never stored
-    )
-    db.add(artifact)
+    meta = redact(art_data.get("metadata") or {})  # R10: a token in it is never stored
+    cost = art_data["name"] == "cost_json"
+    async with budget.cost_lock if cost else contextlib.nullcontext():
+        added = None
+        if cost:  # what the node spent, reconciled with its attempt's earlier cost_json and the executor's bill
+            meta, added = await _reconcile(db, node_run, meta)
+            if meta is None:
+                return {"ok": True, "duplicate": True}
+        artifact = Artifact(
+            node_run_id=node_run.id,
+            name=art_data["name"],
+            kind=kind,
+            uri=art_data["uri"],
+            size_bytes=art_data.get("size_bytes"),
+            meta=meta,
+        )
+        db.add(artifact)
 
-    # Merge URI into NodeRun.outputs so downstream nodes can reference it
-    outputs = dict(node_run.outputs or {})
-    outputs[art_data["name"]] = art_data["uri"]
-    node_run.outputs = outputs
-    db.add(node_run)
+        # Merge URI into NodeRun.outputs so downstream nodes can reference it
+        outputs = dict(node_run.outputs or {})
+        outputs[art_data["name"]] = art_data["uri"]
+        node_run.outputs = outputs
+        db.add(node_run)
 
-    await db.flush()
+        await db.flush()
 
-    # Auto-register a Model record for any model artifact
-    if kind == ArtifactKind.MODEL:
-        _auto_register_model(db, artifact, node_run, art_data.get("metadata", {}))
+        # Auto-register a Model record for any model artifact
+        if kind == ArtifactKind.MODEL:
+            _auto_register_model(db, artifact, node_run, art_data.get("metadata", {}))
 
-    # The SDK's cost_json carries the node's spend as metadata {"usd"}; it rolls up into Run.cost_usd.
-    cost_usd = None
-    if art_data["name"] == "cost_json":
-        cost_usd = await db.scalar(
-            update(Run).where(Run.id == event.run_id)
-            .values(cost_usd=func.coalesce(Run.cost_usd, 0) + Decimal(str(artifact.meta.get("usd", 0))))
-            .returning(Run.cost_usd).execution_options(synchronize_session=False))
-    await db.commit()  # before the events: subscribers re-read /runs/{id}/summary on them
+        cost_usd = None
+        if added is not None:  # it rolls up into Run.cost_usd
+            cost_usd = await db.scalar(
+                update(Run).where(Run.id == event.run_id)
+                .values(cost_usd=func.coalesce(Run.cost_usd, 0) + Decimal(str(added)))
+                .returning(Run.cost_usd).execution_options(synchronize_session=False))
+        await db.commit()  # before the events: subscribers re-read /runs/{id}/summary on them
     if cost_usd is not None:
         await event_bus.publish(event.run_id, {"type": "run_cost", "cost_usd": float(cost_usd)})
 
@@ -191,6 +200,21 @@ async def receive_artifact(event: ArtifactEvent, db: Session):
         "kind": art_data["kind"],
     })
     return {"ok": True, "artifact_id": str(artifact.id)}
+
+
+async def _reconcile(db: AsyncSession, node_run: NodeRun, meta: dict) -> tuple[dict | None, float]:
+    """A node's cost_json against its attempt's earlier ones (contracts "Run state machine"): its meta with usd = what
+    it adds to the run, so the summary agrees, and reported_usd = the node's own figure; None for a re-send of a seq
+    already counted. A node's figure is never negative, and its meta cannot pose as the executor's bill."""
+    meta = {k: v for k, v in meta.items() if k not in ("billed_by", "wall_usd", "reported_usd")}
+    reported, seq = max(0.0, float(meta.get("usd") or 0)), meta.get("seq")
+    earlier = await budget.attempt_costs(db, node_run)
+    if isinstance(seq, int) and any(m.get("seq") == seq and m.get("billed_by") != "executor"
+                                    and float(m.get("reported_usd", m.get("usd", 0))) >= reported for m in earlier):
+        return None, 0.0
+    new = {**meta, "reported_usd": reported}
+    added = round(budget.attempt_cost(earlier + [new]) - budget.attempt_cost(earlier), 6)
+    return {**new, "usd": added}, added
 
 
 def _auto_register_model(

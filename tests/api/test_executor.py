@@ -74,12 +74,9 @@ class FakeProvider:
             nr.outputs = {**(nr.outputs or {}), **step.get("outputs", {})}
             nr.error = step.get("error")
             await self.db.commit()
-        if "cost" in step:  # the node's SDK registered its cost_json (/internal/artifact)
-            nr = await self.db.scalar(select(NodeRun).where(NodeRun.node_id == pod.pod_id,
-                                                            NodeRun.status == NodeStatus.RUNNING))
-            self.db.add(Artifact(node_run_id=nr.id, name="cost_json", kind=ArtifactKind.METRICS,
-                                 uri=f"r2://bk/{pod.pod_id}/cost_json", meta={"usd": step["cost"]}))
-            await self.db.commit()
+        if "cost" in step:  # the node's SDK registers its cost_json through /internal/artifact (self.client)
+            run = Run(id=uuid.UUID(self.envs[pod.pod_id]["ORCHAPOD_RUN_ID"]), user_id=uuid.uuid4())
+            assert (await self.client.post("/internal/artifact", json=cost_json(run, pod.pod_id, step["cost"], 1))).is_success
         if "pod_error" in step:  # platform-w5's NebiusProvider: why the job ended, set before wait() returns
             pod.error = step["pod_error"]
         if "exit" in step and step["exit"] is None:
@@ -374,20 +371,47 @@ async def test_why_the_provider_ended_a_pod_is_the_node_error(db, provider, gpu)
 ONE_GPU = "name: t\nnodes:\n  - {id: train, type: unsloth-train, inputs: {train_data: r2://b/t}}\n"
 
 
-async def test_a_gpu_pod_that_ends_without_cost_json_is_billed_its_wall_time_once(db, provider, gpu, monkeypatch):
-    """A Nebius job preempted, killed or cancelled before its SDK wrote cost_json still rented the GPU: the executor
-    bills its wall time at the provider's hourly price, once the pod is gone. A node that wrote cost_json billed itself."""
+def cost_json(run, node_id: str, usd: float, seq: int) -> dict:
+    """POST /internal/artifact's body for a node's cost_json, as the SDK sends it."""
+    return {"run_id": str(run.id), "node_id": node_id, "artifact": {
+        "name": "cost_json", "uri": f"r2://bk/runs/x/{node_id}/cost_json", "kind": "metrics",
+        "metadata": {"usd": usd, "seq": seq}}}
+
+
+async def test_a_gpu_attempt_costs_its_wall_time_or_what_its_node_reported_whichever_is_more(client, db, provider, gpu,
+                                                                                            monkeypatch):
+    """Once a gpu pod is gone the executor bills its wall time (H100, 30 min: $2.25). A Nebius job's SIGTERM flush usually
+    lands later (terminate returns once cancel and delete are acknowledged), and a node may also report first. Either
+    way the attempt totals max(the bill, what the node reported), and the summary agrees with Run.cost_usd."""
     clock = [0.0]
     monkeypatch.setattr(ex, "monotonic", lambda: clock.append(clock[-1] + 1800) or clock[-1])  # 30 min a pod
+    gpu.client = client
+
+    async def cost(run):
+        await db.refresh(run)
+        return float(run.cost_usd), (await client.get(f"/runs/{run.id}/summary")).json()["nodes"][0]["usd"]
 
     gpu.script = {"train": {"exit": 1, "pod_error": "FAILED Preempted: the VM was reclaimed"}}
     killed, broadcast = await seed(db, ONE_GPU), AsyncMock()
     await ex.run_workflow(killed.id, db, broadcast, 1.0)
-    billed = await db.scalar(select(Artifact).where(Artifact.name == "cost_json"))
-    await db.refresh(killed)
-    assert (billed.meta, billed.uri, killed.cost_usd) == (
-        {"usd": 2.25, "gpu_hours": 0.5, "billed_by": "executor"}, "nebius:train", Decimal("2.25"))  # H100 $4.50/h
-    assert {"type": "run_cost", "cost_usd": 2.25} in events(broadcast)
+    bill = await db.scalar(select(Artifact).where(Artifact.name == "cost_json"))
+    assert (bill.meta, bill.uri) == ({"usd": 2.25, "wall_usd": 2.25, "gpu_hours": 0.5, "billed_by": "executor"},
+                                     "nebius:train")
+    assert await cost(killed) == (2.25, 2.25) and {"type": "run_cost", "cost_usd": 2.25} in events(broadcast)
+    for usd, seq, total in ((1.0, 1, 2.25), (2.0, 2, 3.0),  # late flushes add only what the node reported beyond the bill
+                            (2.0, 2, 3.0),                   # a re-send of seq 2 (its POST broke after it landed): once
+                            (2.5, 2, 3.5)):                  # seq 2 sent again with more spend: only the difference
+        r = await client.post("/internal/artifact", json=cost_json(killed, "train", usd, seq))
+        assert (r.status_code, await cost(killed)) == (201, (total, total))
+    rows = (await db.scalars(select(Artifact).where(Artifact.name == "cost_json"))).all()
+    assert len(rows) == 4  # the bill and three reports: the re-send of seq 2 is not stored
+    for posing in ({"usd": -1.0}, {"usd": 0.0, "seq": 4, "billed_by": "executor", "wall_usd": 0.0}):
+        body = cost_json(killed, "train", 0, 0)
+        body["artifact"]["metadata"] = posing  # a node (gpu Jobs run third-party code) lowering its cost, or posing as the bill
+        await client.post("/internal/artifact", json=body)
+    assert await cost(killed) == (3.5, 3.5)
+    assert [a.meta.get("billed_by") for a in await db.scalars(select(Artifact).where(Artifact.name == "cost_json"))
+            ].count("executor") == 1
 
     gpu.script = {"train": {"exit": None}}  # a long training job, then Cancel
     gpu.started.clear()
@@ -397,19 +421,48 @@ async def test_a_gpu_pod_that_ends_without_cost_json_is_billed_its_wall_time_onc
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    await db.refresh(cancelled)
-    assert (cancelled.cost_usd, (await nodes(db, cancelled))["train"].error) == (Decimal("2.25"), "cancelled")
+    assert (await cost(cancelled), (await nodes(db, cancelled))["train"].error) == ((2.25, 2.25), "cancelled")
 
-    gpu.script = {"train": {"exit": 1, "cost": 0.4}}
-    paid = await seed(db, ONE_GPU)
-    await ex.run_workflow(paid.id, db, AsyncMock(), 1.0)
-    costs = (await db.scalars(select(Artifact).where(Artifact.name == "cost_json"))).all()
-    assert sorted(a.meta["usd"] for a in costs) == [0.4, 2.25, 2.25]  # no second cost_json for the node that wrote one
+    gpu.script = {"train": {"exit": 1, "cost": 0.4}}  # the node reports first (it may stop at its budget, say)
+    early = await seed(db, ONE_GPU)
+    await ex.run_workflow(early.id, db, AsyncMock(), 1.0)
+    assert await cost(early) == (2.25, 2.25)  # the bill adds only $1.85 above the node's $0.40
 
     gpu.script = {"train": {"exit": 1}}  # Retry node: the first attempt's cost_json does not cover the second
-    await ex.run_workflow(paid.id, db, AsyncMock(), 1.0)
-    costs = (await db.scalars(select(Artifact).where(Artifact.name == "cost_json"))).all()
-    assert sorted(a.meta["usd"] for a in costs) == [0.4, 2.25, 2.25, 2.25]
+    await ex.run_workflow(early.id, db, AsyncMock(), 1.0)
+    assert await cost(early) == (4.5, 4.5)
+
+
+async def test_a_cost_json_racing_the_executors_bill_is_counted_once(client, db, provider, gpu, monkeypatch):
+    """The node's flush lands while the executor bills, between its read of the attempt and its insert: one lock
+    orders them, so the attempt still totals max(the bill, the report), not their sum."""
+    monkeypatch.setattr(ex, "monotonic", lambda: 0.0 if not gpu.provisioned else 1800.0)
+    gpu.script = {"train": {"exit": 1}}
+    run = await seed(db, ONE_GPU)
+    read, landed = budget.attempt_costs, []
+
+    async def racing(session, node_run):
+        if not landed:  # the executor's read: the node's POST arrives now
+            landed.append(asyncio.create_task(client.post("/internal/artifact", json=cost_json(run, "train", 1.0, 1))))
+            for _ in range(20):
+                await asyncio.sleep(0)  # let the POST run as far as it can (to the lock, or into the database)
+        return await read(session, node_run)
+
+    from api.database import get_session
+    from api.main import app
+    sessions = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
+
+    async def per_request():  # its own session, as in production: never the executor's
+        async with sessions() as session:
+            yield session
+            await session.commit()
+
+    app.dependency_overrides[get_session] = per_request
+    monkeypatch.setattr(budget, "attempt_costs", racing)
+    await ex.run_workflow(run.id, db, AsyncMock(), 1.0)
+    assert (await landed[0]).status_code == 201
+    await db.refresh(run)
+    assert float(run.cost_usd) == 2.25  # max($2.25 billed, $1.00 reported)
 
 
 async def test_one_node_run_per_run_and_node(db):

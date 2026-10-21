@@ -102,7 +102,13 @@ async def report(run_id: uuid.UUID, db: Session, scale: Scale):
 
 
 @router.get("/templates")
-async def list_templates():
-    """→ [{slug, title, intent, rationale, plan, estimate, reduced_inputs, reduced: {plan, estimate}}]; one-click Run posts
-    a template's plan to /agent/run, and "Run it yourself" (the hosted demo's anonymous callers) posts `reduced.plan`."""
-    return [{**t, "estimate": planner.estimate(t["plan"])[0], "reduced": planner.reduced(t)} for t in planner.templates()]
+async def list_templates(scale: Scale):
+    """→ [{slug, title, intent, rationale, plan, estimate, reduced_inputs, reduced: {plan, estimate}, fits}]; one-click Run
+    posts a template's plan to /agent/run, and "Run it yourself" posts `reduced.plan`. fits: the reduced estimate is
+    within this caller's run cap (ORCHAPOD_MAX_RUN_USD × their scale)."""
+    out = []
+    for t in planner.templates():
+        small = planner.reduced(t)
+        out.append({**t, "estimate": planner.estimate(t["plan"])[0], "reduced": small,
+                    "fits": small["estimate"]["usd"] <= budget.run_cap(scale)})
+    return out

@@ -106,6 +106,11 @@ async def test_run_it_yourself_clones_each_template_at_reduced_scale(client, mon
         assert set(t["reduced_inputs"]) <= {n["id"] for n in t["plan"]["nodes"]}
         assert 0 < small["estimate"]["usd"] < t["estimate"]["usd"]
     assert [round(t["reduced"]["estimate"]["usd"], 2) for t in templates] == [0.88, 0.03, 0.02]
+    # fits: the reduced plan's estimate within the caller's run cap ($3 x ORCHAPOD_ANON_SCALE 0.1 when anonymous)
+    assert [t["fits"] for t in templates] == [False, True, True]  # real-estate is admin-only at the default scale
+    monkeypatch.setenv("ORCHAPOD_ADMIN_TOKEN", "s3cret")
+    admin = (await client.get("/agent/templates", headers={"X-Orchapod-Admin": "s3cret"})).json()
+    assert [t["fits"] for t in admin] == [True, True, True]
 
     launched = []  # intent #2 at reduced scale runs for an anonymous caller ($3 x 0.1 run cap)
     monkeypatch.setattr(ex, "launch", lambda run_id, scale: launched.append(scale))

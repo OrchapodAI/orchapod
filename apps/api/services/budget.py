@@ -49,10 +49,15 @@ async def spent_today(db: AsyncSession) -> float:
     return float(runs or 0) + float(ledger or 0)
 
 
+def run_cap(scale: float) -> float:
+    """ORCHAPOD_MAX_RUN_USD × the caller's scale."""
+    return float(os.environ.get("ORCHAPOD_MAX_RUN_USD") or 3) * scale
+
+
 async def left(db: AsyncSession, run: Run | None, scale: float) -> tuple[float, str, float]:
     """(budget left, the cap that binds: "run" | "day", that cap in $); both caps × scale. The day's budget left
     also excludes what other runs' running nodes were granted."""
-    run_cap = float(os.environ.get("ORCHAPOD_MAX_RUN_USD") or 3) * scale
+    run_max = run_cap(scale)
     day_cap = float(os.environ.get("ORCHAPOD_MAX_DAY_USD") or 15) * scale
     granted = dict(_granted)  # a node that ends while spend is read stays counted: its cost commits before release
     if run is not None:
@@ -60,9 +65,9 @@ async def left(db: AsyncSession, run: Run | None, scale: float) -> tuple[float, 
     spent = await spent_today(db)
     granted.update(_granted)  # no await from here to reserve()'s write, so two boundaries never share a grant
     granted.pop(run.id if run is not None else None, None)
-    run_left = run_cap - (float(run.cost_usd or 0) if run is not None else 0.0)
+    run_left = run_max - (float(run.cost_usd or 0) if run is not None else 0.0)
     day_left = day_cap - spent - sum(granted.values())
-    return (run_left, "run", run_cap) if run_left <= day_left else (day_left, "day", day_cap)
+    return (run_left, "run", run_max) if run_left <= day_left else (day_left, "day", day_cap)
 
 
 async def reserve(db: AsyncSession, run: Run, scale: float) -> tuple[float, str, float]:

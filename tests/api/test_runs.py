@@ -7,7 +7,6 @@ Tests for the run lifecycle API:
 """
 
 import uuid
-from unittest.mock import patch
 
 import pytest
 
@@ -16,12 +15,11 @@ import pytest
 # POST /inference/deploy  (one-click node execution)
 # ---------------------------------------------------------------------------
 
-async def test_deploy_valid_model_returns_202(client):
-    with patch("asyncio.create_task"):
-        resp = await client.post("/inference/deploy", json={
-            "model": "Qwen/Qwen3-4B-Instruct",
-            "mode":  "serve",
-        })
+async def test_deploy_valid_model_returns_202(client, no_bg_tasks):
+    resp = await client.post("/inference/deploy", json={
+        "model": "Qwen/Qwen3-4B-Instruct",
+        "mode":  "serve",
+    })
 
     assert resp.status_code == 202
     body = resp.json()
@@ -40,15 +38,14 @@ async def test_deploy_invalid_mode_returns_422(client):
     assert resp.status_code == 422
 
 
-async def test_deploy_creates_workflow_and_run_in_db(client, db):
+async def test_deploy_creates_workflow_and_run_in_db(client, db, no_bg_tasks):
     from sqlmodel import select
     from api.models.db import Run, Workflow
 
-    with patch("asyncio.create_task"):
-        resp = await client.post("/inference/deploy", json={
-            "model": "Qwen/Qwen3-4B-Instruct",
-            "mode":  "quantize-serve",
-        })
+    resp = await client.post("/inference/deploy", json={
+        "model": "Qwen/Qwen3-4B-Instruct",
+        "mode":  "quantize-serve",
+    })
 
     assert resp.status_code == 202
     body = resp.json()

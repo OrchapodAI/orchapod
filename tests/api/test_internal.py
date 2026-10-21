@@ -3,7 +3,6 @@ Tests for POST /internal/artifact, /internal/ttl, /internal/log
 """
 
 import uuid
-from unittest.mock import patch
 
 import pytest
 
@@ -68,17 +67,16 @@ async def test_register_artifact_unknown_kind_returns_422(client, seeded_node_ru
 # POST /internal/ttl
 # ---------------------------------------------------------------------------
 
-async def test_register_ttl_stores_endpoint_url_in_outputs(client, db, seeded_node_run):
+async def test_register_ttl_stores_endpoint_url_in_outputs(client, db, seeded_node_run, no_bg_tasks):
     run, node_run = seeded_node_run
 
-    with patch("asyncio.create_task"):
-        resp = await client.post("/internal/ttl", json={
-            "run_id":         str(run.id),
-            "node_id":        "node",
-            "action":         "register_ttl",
-            "keep_alive_min": 60,
-            "endpoint_url":   "https://pod-abc-8000.proxy.runpod.net/v1",
-        })
+    resp = await client.post("/internal/ttl", json={
+        "run_id":         str(run.id),
+        "node_id":        "node",
+        "action":         "register_ttl",
+        "keep_alive_min": 60,
+        "endpoint_url":   "https://pod-abc-8000.proxy.runpod.net/v1",
+    })
 
     assert resp.status_code == 202
     assert resp.json()["keep_alive_min"] == 60
@@ -87,20 +85,19 @@ async def test_register_ttl_stores_endpoint_url_in_outputs(client, db, seeded_no
     assert node_run.outputs["endpoint_url"] == "https://pod-abc-8000.proxy.runpod.net/v1"
 
 
-async def test_register_ttl_creates_endpoint_artifact(client, db, seeded_node_run):
+async def test_register_ttl_creates_endpoint_artifact(client, db, seeded_node_run, no_bg_tasks):
     from sqlmodel import select
     from api.models.db import Artifact, ArtifactKind
 
     run, node_run = seeded_node_run
 
-    with patch("asyncio.create_task"):
-        await client.post("/internal/ttl", json={
-            "run_id":         str(run.id),
-            "node_id":        "node",
-            "action":         "register_ttl",
-            "keep_alive_min": 30,
-            "endpoint_url":   "https://pod-abc-8000.proxy.runpod.net/v1",
-        })
+    await client.post("/internal/ttl", json={
+        "run_id":         str(run.id),
+        "node_id":        "node",
+        "action":         "register_ttl",
+        "keep_alive_min": 30,
+        "endpoint_url":   "https://pod-abc-8000.proxy.runpod.net/v1",
+    })
 
     result = await db.exec(
         select(Artifact).where(
@@ -114,15 +111,14 @@ async def test_register_ttl_creates_endpoint_artifact(client, db, seeded_node_ru
     assert artifact.meta["keep_alive_min"] == 30
 
 
-async def test_register_ttl_unknown_run_returns_404(client):
-    with patch("asyncio.create_task"):
-        resp = await client.post("/internal/ttl", json={
-            "run_id":         str(uuid.uuid4()),
-            "node_id":        "node",
-            "action":         "register_ttl",
-            "keep_alive_min": 60,
-            "endpoint_url":   "https://example.com/v1",
-        })
+async def test_register_ttl_unknown_run_returns_404(client, no_bg_tasks):
+    resp = await client.post("/internal/ttl", json={
+        "run_id":         str(uuid.uuid4()),
+        "node_id":        "node",
+        "action":         "register_ttl",
+        "keep_alive_min": 60,
+        "endpoint_url":   "https://example.com/v1",
+    })
 
     assert resp.status_code == 404
 

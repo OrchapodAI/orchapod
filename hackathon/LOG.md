@@ -322,3 +322,4 @@ worktrees:
   - Minors: bill in its own session (a rollback stranded multi-node runs in RUNNING); refuse non-finite or > 2× run cap usd; a double cancel must still bill; stop delete retries only on 400/401/403; attempt id in cost_json (or a ponytail note).
   - Fix round 2 → ae3dca2e95263a331.
   - Orchestrator at merge: drop the TOKEN fallback (import platform's); truncate vllm-serve STUB ids to 63 chars.
+- 2026-10-21T16:19Z Orchestrator: vllm-serve STUB ids capped at 63 chars (the backend's endpoint_id pattern would refuse longer ones), b4813b8. frontend-w5 dispatched (opus, base b4813b8), coding against backend-w5's contract lines (cancel_token from start and /agent/run, sent as X-Orchapod-Cancel-Token, kept in sessionStorage; RunOut.workflow_name; save a copy on 409; hf_token field removed); it merges after backend-w5.

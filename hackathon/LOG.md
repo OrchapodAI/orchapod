@@ -247,3 +247,10 @@ worktrees:
   - Running: E2E=1 (rebuilds all :dev, incl. new vllm-serve and the arm64-fixed judge-eval), then `e2e_agent.py --stub --strict` (ml-w4 acceptance: 3 PASS).
 - 2026-10-21T14:41Z MILESTONE (G1, STUB): all :dev images rebuilt from 3b80954; `make check E2E=1` exit 0 (688 passed; demo #2 PASS; agent 3 PASS / 0 SKIP / 0 FAIL). `scripts/e2e_agent.py --stub --strict`: intent #1 PASS (run fb293b38, 6 s, $0, estimate $1.621, report ready), #2 PASS (a2e22cc5, 24 s), #3 PASS (3ee82280, 4 s). ml-w4's acceptance is met → qa-w5 deletes the SKIP layer and restores --strict in the Makefile. Running `make ui-smoke` (golden path no longer skips).
 - 2026-10-21T14:42Z MILESTONE (G1 UI, STUB): `make ui-smoke` on 5910747: 4 passed / 0 skipped in 22.5 s — /agent intent #2 planned, run and reported; template one-click run to a dataset card; eval view + compare playground on the fixture; GOLDEN PATH template → run → eval view → compare playground (8.3 s). G1's 'golden path green from the UI' holds in STUB; the live version waits on NEBIUS_API_KEY (spike 1 decides tf-deploy vs vllm-serve).
+- 2026-10-21T14:46Z platform-w5 review (opus, spend + secrets): Needs fixes.
+  - Confirmed: safe on every re-send path; fields match the nebius/api protos; the CLI call is safe; its decisions accepted (1×H100/L40S only; https guard; idempotent terminate; bounded polling).
+  - Important: lost-create recovery looks only once, so a 504 that landed orphans a job (up to $4.50) and a retry pays twice → retries at 0/15/45 s + an error that names the job.
+  - Minors: CLI token validated (else the token can reach a public run page through h11's repr); _view https-only; bucket https; no URLs in node errors; NEBIUS_IAM_TOKEN filtered out of Job env; contract wording; drop the client-side sort.
+  - Added: a spend deadline in wait() (elapsed × price ≥ ORCHAPOD_MAX_COST_USD; R14 could exceed $3 on a hung job); pod.error carries the failure reason.
+  - RULING: the IAM token goes only to api nodes with rents_gpu (vllm-serve), never to gpu-runtime Jobs (backend-w5 corrected).
+  - Fix round 1 sent to afe7cf5b02abce878.

@@ -81,8 +81,8 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P2 pytest warnings now 126 (sqlmodel session.exec deprecations; datetime.utcnow) — TODO
 - [ ] P0 D2 provider contract tests from recorded responses + a $1/day real Token Factory call — TODO
 - [ ] P0 D3 scripts/e2e_demo.py: --stub DONE (qa-w2; green 2026-10-21); real with --max-cost + nightly — TODO (needs the key)
-- [x] P0 D3 scripts/e2e_agent.py --stub for the three canonical intents (+ plan-shape rules) — DONE (qa-w3); `--strict` returns with ml-w4's vllm-serve
-- [x] P0 D4 Playwright smoke (`make ui-smoke`, orchestrator-only): template → run → eval → playground; /agent intent #2 — DONE (qa-w3); golden path SKIPs until ml-w4
+- [x] P0 D3 scripts/e2e_agent.py --stub for the three canonical intents (+ plan-shape rules); strict by construction since qa-w5 (no SKIP path) — DONE
+- [x] P0 D4 Playwright smoke (`make ui-smoke`, orchestrator-only): /agent intent #2, template run, public-cap check, golden path — DONE (qa-w3..w5)
 - [ ] P0 D5 failure drills · D7 fresh-clone test < 20 min · D8 three rehearsals — TODO
 ### devrel
 - [x] P0 D2 README skeleton — DONE

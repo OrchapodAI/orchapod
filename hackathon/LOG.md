@@ -185,3 +185,11 @@ worktrees:
   - Ruling: drop --strict from the Makefile until ml-w4 merges (keep it in the script; ml-w4's acceptance = `e2e_agent --stub --strict` 3 PASS; the SKIP layer is deleted then) — a red gate for a known later-wave dependency hides real regressions.
   - Minors M1–M8 + ponytail -14 sent (incl. e2e API port starts at 8003, never 8002; logic tests never reach Docker; ui-smoke is orchestrator-only; required node types per intent).
   - Fix round 1 → a502aee2a0e17a685. Docker: no fake vllm-serve:dev remains. Leftover :ml-w3 images (hf-download, quantize) to remove after wave 4.
+- 2026-10-21T13:31Z backend-w4 review (opus, security gate): Needs fixes; no Critical in the diff.
+  - Important: the proxy advice was wrong. Behind Caddy, uvicorn's `*` already yields the real client, and dropping it would put all visitors in one bucket → Ruling: drop the custom XFF walk and ORCHAPOD_TRUSTED_PROXIES, key on request.client.host.
+  - Important: the contract overstated the ceiling fix (admin spend still counts against the anonymous share) → Ruling: accepted under the existing operating rule (no admin runs on the hosted instance); line reworded.
+  - Important: the sync rate-limit `take` races in the threadpool (500s, burst overshoot).
+  - Pre-existing D6 items folded in: the YAML alias bomb (600 B → ~4 GB, one anonymous request freezes the worker); /inference/extend unguarded with a signed extend_min (delete it); anonymous PUT/DELETE on workflows with runs (409) + a write bucket; gpu-runtime refused for anonymous callers.
+  - Minors: /health cached 10 s; compare refill 1/min; secret-looking inputs stripped at workflow ingest + node inputs redacted.
+  - Fix round 1 → ad26d49ed3a343a04.
+  - At merge (orchestrator, platform files): prod healthcheck → /livez (or the watchdog restarts the API on any dependency blip); Caddyfile `request_body max_size 1MB`; HOSTING.md warning never to give Caddy trusted_proxies or front it with a CDN while uvicorn trusts `*`; env-scan test also covers config.DEFAULTS; .env.example gains ORCHAPOD_CORS_ORIGINS.

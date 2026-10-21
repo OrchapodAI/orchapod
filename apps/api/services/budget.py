@@ -66,7 +66,9 @@ async def left(db: AsyncSession, run: Run | None, scale: float) -> tuple[float, 
 
 
 async def reserve(db: AsyncSession, run: Run, scale: float) -> tuple[float, str, float]:
-    """left() for the run's next node, granted to it until release(run.id)."""
+    """left() for the run's next node, granted to it until release(run.id).
+    ponytail: a node reserves its run's whole remaining budget, so an admin run in flight can leave anonymous callers
+    nothing for the day; D6 hardening reserves per-node estimates or keeps a separate anonymous day budget."""
     amount, which, cap = await left(db, run, scale)
     if amount > 0:
         _granted[run.id] = amount

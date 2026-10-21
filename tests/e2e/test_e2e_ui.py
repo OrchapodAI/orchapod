@@ -115,12 +115,22 @@ def test_run_playwright_returns_its_exit_code(monkeypatch):
 
 def test_run_playwright_that_outlives_its_timeout_is_stopped_with_its_children(monkeypatch, tmp_path):
     marker = tmp_path / "child.pid"
+
+    class Outlives(subprocess.Popen):
+        """The first wait is run_playwright's timeout: let the child start, then say that the time is up."""
+        asked = False
+
+        def wait(self, timeout=None):
+            if not Outlives.asked:
+                Outlives.asked = True
+                assert until(lambda: marker.exists() and marker.read_text().strip()), "the child never started"
+                raise subprocess.TimeoutExpired(self.args, timeout)
+            return super().wait(timeout)
+
+    monkeypatch.setattr(ui.subprocess, "Popen", Outlives)
     monkeypatch.setattr(ui, "PNPM", ["sh", "-c", f"sleep 60 & echo $! > {marker}; wait", "pnpm"])
-    monkeypatch.setattr(ui, "PLAYWRIGHT_TIMEOUT_S", 3)
-    with pytest.raises(RuntimeError, match="took over 3 s and was stopped"):
+    with pytest.raises(RuntimeError, match=f"took over {ui.PLAYWRIGHT_TIMEOUT_S} s and was stopped"):
         ui.run_playwright([], {"PATH": "/usr/bin:/bin"})
-    if not marker.exists() or not marker.read_text().strip():
-        pytest.skip("the machine was too loaded to start the child within the timeout")
     child = int(marker.read_text())
 
     def alive() -> bool:

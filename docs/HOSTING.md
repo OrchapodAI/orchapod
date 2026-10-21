@@ -80,7 +80,8 @@ A run in flight when the API restarts fails with "control plane restarted" (retr
 ## Rollback
 `ssh <vm> tail -3 /opt/orchapod/deploys.log`, then `git checkout <previous commit>`, deploy, and `git checkout -`. Code
 rolls back; data does not. The API only ever adds tables (`create_all`), so old code runs on a newer database; data comes
-back only by a restore.
+back only by a restore. Node images do not roll back: they float on `:latest` (CI pushes it from NebiusHackathon only), so a
+rollback runs the old API against today's nodes.
 
 ## Kill switch
 - Soft (the site stays up; plan, run, start and retry answer 503): set `ORCHAPOD_KILL_SWITCH=1` in `/opt/orchapod/.env`,
@@ -134,7 +135,7 @@ The project name keeps it, and the scripts it runs, off any other stack.
 ```
 export COMPOSE_PROJECT_NAME=orchapod-prodtest-$USER DOMAIN=orchapod.test POSTGRES_PASSWORD=smoke ORCHAPOD_INTERNAL_SECRET=smoke \
   ORCHAPOD_R2_ENDPOINT=http://minio:9000 ORCHAPOD_R2_REGION=auto ORCHAPOD_R2_ACCESS_KEY=orchapod ORCHAPOD_R2_SECRET_KEY=orchapod_dev STUB=1
-smoke() { docker compose -p "$COMPOSE_PROJECT_NAME" -f infra/docker-compose.prod.yml -f infra/docker-compose.smoke.yml "$@"; }
+smoke() { docker compose -p "${COMPOSE_PROJECT_NAME:?}" -f infra/docker-compose.prod.yml -f infra/docker-compose.smoke.yml "$@"; }
 smoke up -d --build --wait
 curl -kfsS --resolve api.orchapod.test:18443:127.0.0.1 https://api.orchapod.test:18443/health
 curl -kfsSL --resolve app.orchapod.test:18443:127.0.0.1 https://app.orchapod.test:18443/ | grep -o '<title>[^<]*'

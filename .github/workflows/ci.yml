@@ -121,6 +121,8 @@ jobs:
           - lm-eval
           - vllm-serve
           - synth-distilabel
+          - tf-finetune
+          - tf-deploy
 
     steps:
       - uses: actions/checkout@v4

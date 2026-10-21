@@ -31,10 +31,12 @@ class NodeType(str, Enum):
     # Training
     UNSLOTH_TRAIN        = "unsloth-train"
     DISTILL_SFT          = "distill-sft"
+    TF_FINETUNE          = "tf-finetune"
     # Post-training
     QUANTIZE             = "quantize"
     LM_EVAL              = "lm-eval"
     VLLM_SERVE           = "vllm-serve"
+    TF_DEPLOY            = "tf-deploy"
 
 
 class DataFormat(str, Enum):
@@ -372,4 +374,51 @@ NODE_REGISTRY: dict[NodeType, dict] = {
         "runtime": "gpu",
         "long_running": True,  # pod stays alive after container exits
     },
+}
+
+
+# ---------------------------------------------------------------------------
+# tf-finetune and tf-deploy: Lane A on Token Factory (ml-engineering; docs/contracts.md "ML nodes")
+# ---------------------------------------------------------------------------
+
+class TFFinetuneInputs(BaseModel):
+    model: str = Field(default="meta-llama/Llama-3.1-8B-Instruct",
+                       description="Token Factory fine-tune base (Llama, Qwen, gpt-oss, DeepSeek, Gemma; not Nemotron)")
+    train_data: str = Field(description="r2:// URI of the train JSONL, e.g. data-prep's train_jsonl")
+    eval_data: str = Field(default="", description="r2:// URI of the eval JSONL; empty, or an empty file, = no validation")
+    n_epochs: int = Field(default=2, ge=1)
+    hyperparameters: dict[str, Any] = Field(
+        default={}, description="Token Factory names verbatim (batch_size, learning_rate, lora_r, lora_alpha, lora_dropout, "
+                                "packing, context_length, warmup_ratio, weight_decay, max_grad_norm), merged over "
+                                "{lora: true, n_epochs}")
+    timeout_min: int = Field(default=60, ge=1, le=85, description="Then the job is cancelled and the node fails "
+                                                                 "(at most 85, under the executor's 90-min backstop)")
+
+class TFFinetuneOutputs(BaseModel):
+    job: str           # {job_id, model, status, checkpoint_id, checkpoint_step, train_loss, valid_loss, trained_tokens}
+    lora_adapter: str  # PEFT dir of the best checkpoint (lowest valid_loss, else the last)
+
+NODE_REGISTRY[NodeType.TF_FINETUNE] = {
+    "description": "LoRA fine-tune on Nebius Token Factory (Llama, Qwen, gpt-oss, DeepSeek, Gemma; not Nemotron). Keeps "
+                   "the checkpoint with the lowest validation loss as a PEFT adapter and reports the loss curve.",
+    "inputs_schema": TFFinetuneInputs,
+    "outputs_schema": TFFinetuneOutputs,
+    "runtime": "api",
+}
+
+
+class TFDeployInputs(BaseModel):
+    job: dict[str, Any] | str = Field(description="tf-finetune's job output (r2:// URI), or the same JSON inline")
+    name: str | None = Field(default=None, description="Deployment name; empty = orchapod-<run_id[:8]>")
+
+class TFDeployOutputs(BaseModel):
+    model_ref: str  # ModelRef JSON {base_url, model, api_key_env, base_model}; its metadata adds `proof`
+
+NODE_REGISTRY[NodeType.TF_DEPLOY] = {
+    "description": "Serve a tf-finetune checkpoint as a per-token LoRA model on Token Factory and prove it with one "
+                   "completion. If Token Factory has no per-token LoRA for the base, it fails: serve tf-finetune's "
+                   "lora_adapter with vllm-serve instead.",
+    "inputs_schema": TFDeployInputs,
+    "outputs_schema": TFDeployOutputs,
+    "runtime": "api",
 }

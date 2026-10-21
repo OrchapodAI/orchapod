@@ -11,9 +11,11 @@ from api.services.redact import REDACTED, redact
 
 def test_secret_looking_keys_are_redacted_at_any_depth():
     secrets = {"api_key", "API_KEY", "apiKey", "apikey", "x-api-key", "openai_api_key", "token", "accessToken",
-               "endpoint_token", "Authorization", "client_secret", "secret_key", "password"}
+               "endpoint_token", "Authorization", "client_secret", "secret_key", "password",
+               "hf_token_env"}  # an _env key whose value is not an env var's name is the secret itself
     alike = {"api_key_env": "ORCHAPOD_ENDPOINT_TOKEN", "max_tokens": 512, "trained_tokens": 9, "in_tokens": 1,
-             "tokenizer": "bpe", "keep_alive_min": 30}  # a ModelRef's env var name, counts and settings stay
+             "tokenizer": "bpe", "keep_alive_min": 30, "token_count": 3,  # a ModelRef's env var name, counts, settings
+             "usd_by_provider": {"token_factory": 0.12}}  # ... and Token Factory's provider name stay
     meta = {**{k: "sk-live" for k in secrets}, **alike,
             "nested": {"rows": [{"secret": {"x": 1}, "ok": 1}], "url": "https://e.example/v1"}}
 
@@ -23,6 +25,7 @@ def test_secret_looking_keys_are_redacted_at_any_depth():
     assert {k: out[k] for k in alike} == alike
     assert out["nested"] == {"rows": [{"secret": REDACTED, "ok": 1}], "url": "https://e.example/v1"}
     assert meta["api_key"] == "sk-live" and redact("text") == "text"  # the input stays as it was
+    assert redact({"api_key_env": "sk-live-1"}) == {"api_key_env": REDACTED}
 
 
 async def test_no_route_returns_an_artifact_secret(client, db, seeded_node_run):

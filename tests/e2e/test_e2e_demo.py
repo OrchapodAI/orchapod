@@ -72,6 +72,23 @@ def test_api_env_is_stub_local_and_cannot_spend(tmp_path):
     assert str(ROOT / "apps") in env["PYTHONPATH"] and str(ROOT / "packages/sdk-py") in env["PYTHONPATH"]
 
 
+def test_the_stub_api_never_takes_8002_the_dev_api(monkeypatch):
+    """The first port it may bind is 8003, even when 8002 is free; and the default is what start_api uses."""
+    import inspect
+
+    assert inspect.signature(e2e.listen_on_free_port).parameters["start"].default == 8003
+    asked = []
+
+    def refuse(*args):
+        asked.append(args)
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(e2e, "listen_on_free_port", refuse)
+    with pytest.raises(RuntimeError, match="stop here"):
+        e2e.start_api(Path("/nonexistent"))
+    assert asked == [()], "start_api asks for the default start, not a port of its own"
+
+
 def test_the_api_port_is_held_from_choice_to_start():
     """Two `make check` at once must not pick the same port, nor mistake each other's API for their own."""
     with socket.socket() as busy:

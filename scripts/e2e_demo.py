@@ -4,7 +4,7 @@
 
 It rebuilds and retags the shared `orchapod/<node>:dev` images, so parallel worktrees must not run it: it is opt-in.
 
-It starts its own API (STUB=1, throwaway SQLite DB, first free port from 8002, no paid key in its env), builds the images
+It starts its own API (STUB=1, throwaway SQLite DB, first free port from 8003, no paid key in its env), builds the images
 the plan needs (`orchapod/<node>:dev`), creates the workflow from GET /agent/templates, runs it and polls
 GET /runs/{id}/summary. Asserted: the run succeeded in under 5 minutes; data-prep registered dataset, train_jsonl and
 eval_jsonl; cost_usd is 0 with a cost_json on every node; the dataset's download link serves rows with exactly the
@@ -72,9 +72,10 @@ def api_env(port: int, db: Path, environ, extra: dict[str, str] | None = None) -
     } | (extra or {})
 
 
-def listen_on_free_port(start: int = 8002) -> socket.socket:
-    """A listening socket on the first free port from `start` (8000 and 8001 belong to other projects on this Mac, and the dev
-    API may hold 8002). The API gets this very socket, so no other process can take the port in between."""
+def listen_on_free_port(start: int = 8003) -> socket.socket:
+    """A listening socket on the first free port from `start` (8000 and 8001 belong to other projects on this Mac, and 8002 is the
+    dev API, which a stub run must never mistake for its own). The API gets this very socket, so no other process can take the
+    port in between."""
     for port in range(start, start + 50):
         sock = socket.socket()
         try:

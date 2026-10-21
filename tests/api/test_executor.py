@@ -574,6 +574,18 @@ def launched(db, monkeypatch):
     return tasks
 
 
+@pytest.fixture
+def admin(monkeypatch):
+    """The X-Orchapod-Admin header: the admin cancels any run, with no cancel token."""
+    monkeypatch.setenv("ORCHAPOD_ADMIN_TOKEN", "s3cret")
+    return {"X-Orchapod-Admin": "s3cret"}
+
+
+def owner(started) -> dict:
+    """The cancel token header from a start reply: only the caller who started a run (or the admin) cancels it."""
+    return {"X-Orchapod-Cancel-Token": started.json()["cancel_token"]}
+
+
 def published():
     from api.services.events import event_bus
     return [c.args[1] for c in event_bus.publish.await_args_list]
@@ -583,11 +595,11 @@ async def test_cancel_terminates_the_pod_and_ends_cancelled(client, db, provider
     provider.script = {"a": {"exit": None}}  # a long-polling node
     run = await seed(db, status=RunStatus.PENDING)
 
-    r = await client.post(f"/runs/{run.id}/start")
-    assert (r.status_code, r.json()["status"]) == (200, "provisioning_gpu")
+    started = await client.post(f"/runs/{run.id}/start")
+    assert (started.status_code, started.json()["status"]) == (200, "provisioning_gpu")
     await asyncio.wait_for(provider.started.wait(), 5)
 
-    r = await client.post(f"/runs/{run.id}/cancel")
+    r = await client.post(f"/runs/{run.id}/cancel", headers=owner(started))
 
     assert (r.status_code, r.json()["status"]) == (200, "cancelled")
     assert provider.terminated == ["a"]
@@ -597,21 +609,21 @@ async def test_cancel_terminates_the_pod_and_ends_cancelled(client, db, provider
     assert ev.index({"type": "node_status", "node_id": "a", "status": "failed", "error": "cancelled"}) \
         < ev.index({"type": "run_status", "status": "cancelled", "error": "cancelled"})
     assert run.id not in ex.running_tasks
-    assert (await client.post(f"/runs/{run.id}/cancel")).status_code == 409
+    assert (await client.post(f"/runs/{run.id}/cancel", headers=owner(started))).status_code == 409
 
 
-async def test_cancel_a_run_that_never_started(client, db):
+async def test_cancel_a_run_that_never_started(client, db, admin):
     run = await seed(db, status=RunStatus.PENDING)
-    r = await client.post(f"/runs/{run.id}/cancel")
+    r = await client.post(f"/runs/{run.id}/cancel", headers=admin)  # no token exists until a start
     assert (r.status_code, r.json()["status"]) == (200, "cancelled")
 
 
-async def test_cancel_rereads_the_run_before_deciding(client, db):
+async def test_cancel_rereads_the_run_before_deciding(client, db, admin):
     run = await seed(db, status=RunStatus.RUNNING)
     async with async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)() as other:
         (await other.get(Run, run.id)).status = RunStatus.SUCCEEDED  # finished meanwhile, elsewhere
         await other.commit()
-    r = await client.post(f"/runs/{run.id}/cancel")
+    r = await client.post(f"/runs/{run.id}/cancel", headers=admin)
     assert r.json()["status"] == "succeeded"
 
 
@@ -640,9 +652,9 @@ async def test_retry_reruns_the_failed_node_and_continues(client, db, provider, 
 async def test_retry_waits_for_a_provision_still_in_flight(client, db, provider, launched):
     provider.provision_gate = asyncio.Event()
     run = await seed(db, status=RunStatus.PENDING)
-    await client.post(f"/runs/{run.id}/start")
+    started = await client.post(f"/runs/{run.id}/start")
     await asyncio.wait_for(provider.provisioning.wait(), 5)
-    assert (await client.post(f"/runs/{run.id}/cancel")).json()["status"] == "cancelled"
+    assert (await client.post(f"/runs/{run.id}/cancel", headers=owner(started))).json()["status"] == "cancelled"
 
     r = await client.post(f"/runs/{run.id}/nodes/a/retry")
     assert r.status_code == 409  # the cancelled node's container is still coming up
@@ -781,7 +793,7 @@ async def test_cost_json_adds_to_run_cost(client, db, seeded_node_run):
         {"type": "run_cost", "cost_usd": 0.25}, {"type": "run_cost", "cost_usd": 0.5}]
 
 
-async def test_events_fire_only_after_their_change_is_committed(client, tmp_path, monkeypatch):
+async def test_events_fire_only_after_their_change_is_committed(client, tmp_path, monkeypatch, admin):
     """A client re-reads /runs/{id}/summary on run_cost, artifact and run_status: it must see the change."""
     from sqlalchemy.ext.asyncio import create_async_engine
     from sqlmodel import SQLModel
@@ -813,7 +825,7 @@ async def test_events_fire_only_after_their_change_is_committed(client, tmp_path
     event_bus.publish.side_effect = reread
     await client.post("/internal/artifact", json={"run_id": str(run.id), "node_id": "n", "artifact": {
         "name": "cost_json", "uri": "r2://b/runs/x/n/cost_json", "kind": "metrics", "metadata": {"usd": 0.25}}})
-    await client.post(f"/runs/{idle.id}/cancel")
+    await client.post(f"/runs/{idle.id}/cancel", headers=admin)
     await engine.dispose()
 
     assert seen == [("run_cost", "running", 0.25, ["cost_json"]), ("artifact", "running", 0.25, ["cost_json"]),

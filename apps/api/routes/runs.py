@@ -20,12 +20,14 @@ Routes:
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import secrets
 import uuid
 from collections import defaultdict
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,7 +36,8 @@ from sqlmodel import select
 from api.database import get_session
 from api.executor import run_workflow as executor
 from api.executor.dag import compile_dag
-from api.models.db import AgentRun, Run, NodeRun, RunStatus, NodeStatus, Workflow, Artifact, ArtifactKind, utcnow
+from api.models.db import (AgentRun, Artifact, ArtifactKind, CancelToken, NodeRun, NodeStatus, Run, RunStatus, Workflow,
+                           utcnow)
 from api.services import budget, ratelimit
 from api.services.events import event_bus
 from api.services.redact import redact
@@ -43,6 +46,7 @@ router = APIRouter()
 
 Session = Annotated[AsyncSession, Depends(get_session)]
 Scale = Annotated[float, Depends(budget.scale)]  # 1 for X-Orchapod-Admin, else ORCHAPOD_ANON_SCALE (R7)
+Admin = Annotated[bool, Depends(budget.admin)]
 
 TERMINAL = (RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED)
 
@@ -69,6 +73,10 @@ class RunOut(BaseModel):
     finished_at: datetime | None
     gpu_provider: str | None
     created_at: datetime
+
+
+class StartOut(RunOut):
+    cancel_token: str  # returned once: an anonymous cancel of this run needs it (X-Orchapod-Cancel-Token)
 
 
 class NodeRunOut(BaseModel):
@@ -118,27 +126,34 @@ async def create_run(body: RunCreate, db: Session):
     return _run_out(run, workflow.name)
 
 
-@router.post("/{run_id}/start", response_model=RunOut, dependencies=[Depends(ratelimit.limit("run"))])
+@router.post("/{run_id}/start", response_model=StartOut, dependencies=[Depends(ratelimit.limit("run"))])
 async def start_run(run_id: uuid.UUID, db: Session, scale: Scale):
-    """409 unless pending; 503 kill switch; 402 when no budget is left (caps × the caller's scale)."""
+    """409 unless pending; 503 kill switch; 402 when no budget is left (caps × the caller's scale). The reply carries
+    the run's cancel token, once."""
     run = await db.get(Run, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     if run.status == RunStatus.PENDING:
         await budget.guard(db, scale, run)
         budget.gpu_guard(await _to_run(db, run), scale)
-    if run.status != RunStatus.PENDING or not await _move(db, run, [RunStatus.PENDING]):
+    token, kept = cancel_token(run_id)
+    if run.status != RunStatus.PENDING or not await _move(db, run, [RunStatus.PENDING], kept):
         await db.refresh(run)
         raise HTTPException(status_code=409, detail=f"Run is {run.status.value}; only pending runs can be started")
     executor.launch(run_id, scale)
-    return _run_out(run, await _workflow_name(db, run))
+    return StartOut(**_run_out(run, await _workflow_name(db, run)).model_dump(), cancel_token=token)
 
 
 @router.post("/{run_id}/cancel", response_model=RunOut, dependencies=[Depends(ratelimit.limit("write"))])
-async def cancel_run(run_id: uuid.UUID, db: Session):
+async def cancel_run(run_id: uuid.UUID, db: Session, is_admin: Admin, x_orchapod_cancel_token: str = Header(default="")):
+    """The admin cancels any run; anyone else needs the run's cancel token, which start or /agent/run returned."""
     run = await db.get(Run, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
+    kept = None if is_admin else await db.get(CancelToken, run_id)
+    if not is_admin and not (kept and secrets.compare_digest(kept.sha256, _sha256(x_orchapod_cancel_token))):
+        raise HTTPException(status_code=403, detail="cancelling this run needs its cancel token (X-Orchapod-Cancel-Token, "
+                                                    "returned when it started) or the admin")
     if run.status in TERMINAL:
         raise HTTPException(status_code=409, detail=f"Run already in terminal state: {run.status}")
 
@@ -195,14 +210,16 @@ async def _to_run(db: AsyncSession, run: Run) -> list[str]:
     return [n.type for n in nodes if n.id not in done]
 
 
-async def _move(db: AsyncSession, run: Run, sources: list[RunStatus]) -> bool:
+async def _move(db: AsyncSession, run: Run, sources: list[RunStatus], *rows) -> bool:
     """Atomically move the run from one of `sources` to provisioning_gpu and commit (the executor reads it in its
-    own session), together with the caller's earlier statements; False when another request or worker changed it first."""
+    own session), together with the caller's earlier statements and `rows`; False when another request or worker
+    changed it first."""
     moved = await db.execute(update(Run).where(Run.id == run.id, Run.status.in_(sources))
                              .values(status=RunStatus.PROVISIONING_GPU, finished_at=None)
                              .execution_options(synchronize_session=False))
     if moved.rowcount != 1:
         return False
+    db.add_all(rows)
     await db.commit()
     await db.refresh(run)
     return True
@@ -314,6 +331,16 @@ async def cost_estimate(run_id: uuid.UUID, db: Session):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def cancel_token(run_id: uuid.UUID) -> tuple[str, CancelToken]:
+    """A new cancel token for the run, and the row that keeps only its SHA-256 (the token has 256 random bits)."""
+    token = secrets.token_urlsafe(32)
+    return token, CancelToken(run_id=run_id, sha256=_sha256(token))
+
+
+def _sha256(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
 
 async def _workflow_name(db: AsyncSession, run: Run) -> str | None:
     return await db.scalar(select(Workflow.name).where(Workflow.id == run.workflow_id)) if run.workflow_id else None

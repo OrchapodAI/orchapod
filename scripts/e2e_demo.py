@@ -273,17 +273,25 @@ def run_plan(c: httpx.Client, plan: dict) -> tuple[dict, float]:
     return poll_run(c, run_id, f"/runs/{run_id}/summary")
 
 
+def download(c: httpx.Client, summary: dict, node_id: str, name: str) -> tuple[str, str | None]:
+    """(text, problem) of a node's artifact, fetched through its download link (a 307 to a presigned URL)."""
+    link = next((a["download_url"] for a in summary["artifacts"] if a["node_id"] == node_id and a["name"] == name), None)
+    if not link:
+        return "", f"{node_id}.{name} has no download_url"
+    r = c.get(link, follow_redirects=True)
+    if r.is_error:
+        return "", f"GET {link} -> HTTP {r.status_code}"
+    return r.text, None
+
+
 def fetch_dataset(c: httpx.Client, summary: dict, plan: dict) -> list[str]:
     """Follow the data-prep dataset's download link (intent #2's deliverable) and check its rows."""
     prep = next(n["node_id"] for n in summary["nodes"] if n["type"] == "data-prep")
-    link = next(a["download_url"] for a in summary["artifacts"] if a["node_id"] == prep and a["name"] == "dataset")
-    if not link:
-        return ["the dataset artifact has no download_url"]
-    r = c.get(link, follow_redirects=True)
-    if r.is_error:
-        return [f"GET {link} -> HTTP {r.status_code}"]
-    say(f"downloaded the dataset through {link}: {len(r.text.splitlines())} rows")
-    return check_rows(r.text, (synth_inputs(plan) or {}).get("row_schema"))
+    text, problem = download(c, summary, prep, "dataset")
+    if problem:
+        return [problem]
+    say(f"downloaded the {prep} dataset: {len(text.splitlines())} rows")
+    return check_rows(text, (synth_inputs(plan) or {}).get("row_schema"))
 
 
 def run(c: httpx.Client) -> int:

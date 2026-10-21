@@ -1,0 +1,222 @@
+"""Stub e2e of the three canonical intents through the Orchapod Agent, through the API only: $0.
+
+    python scripts/e2e_agent.py --stub                       # all three; `make check E2E=1` runs it with --strict
+    python scripts/e2e_agent.py --stub --intent 2            # one canonical intent (1, 2 or 3), or any text: the STUB planner
+                                                             # answers with the closest canonical plan
+    python scripts/e2e_agent.py --intent "..." --max-cost 3  # real (`make agent-e2e INTENT=...`): refuses without --max-cost
+
+Per intent: POST /agent/plan (the STUB planner must return that intent's canonical plan, error-free, estimate under the $3 run
+cap) -> POST /agent/run -> GET /agent/runs/{id}/report every 2 s until `ready`. Asserted: the run succeeded in under 5 minutes
+with every node's contract artifacts and a cost_json, cost $0, the report names the plan, the data-prep dataset downloads
+(intent #2: rows with exactly the schema's fields), judge-eval's eval_summary has the contract's shape, and quantize
+keep_f16 registers the f16 baseline. It reuses e2e_demo.py: its stack (own API, STUB=1, throwaway DB, no paid key), image
+builds and run checks; the images it builds are the shared orchapod/<node>:dev, so it is opt-in like e2e_demo.py.
+
+Intents #1 and #3 need judge-eval, quantize's keep_f16 and vllm-serve to contract (PENDING below). While a plan's errors are
+exactly those named gaps the intent is SKIPped, loudly: exit 0, and --strict makes it 3. Any other plan error is a FAIL.
+
+The real run is not written: it needs the keys (spike 3). Without --max-cost it refuses, whatever else it is asked.
+"""
+
+import argparse
+import json
+import re
+import sys
+
+import e2e_demo as demo
+import httpx
+
+CAP_USD = 3.0  # ORCHAPOD_MAX_RUN_USD: a plan estimated above it can never run
+# The caps are pinned so a shell's ORCHAPOD_* cannot change the verdict; the UI is anonymous, so full scale is ANON_SCALE=1.
+FULL_CAPS = {"ORCHAPOD_ANON_SCALE": "1", "ORCHAPOD_MAX_RUN_USD": f"{CAP_USD:g}", "ORCHAPOD_MAX_DAY_USD": "15"}
+INTENTS = {"1": "tf-finetune", "2": "structured", "3": "quantize"}  # what each canonical plan contains
+
+VLLM = ("vllm-serve is not to contract yet (lora_adapter input, model_ref and base_model_ref outputs, runtime api; "
+        "contracts \"vllm-serve\"): no wave-3 brief owns it")
+# ponytail: wave-3 SKIP scaffolding. (node type or None, regex over the plan error "<node_id>: <problem>", the missing piece.)
+# Once ml-w3 and vllm-serve merge, delete PENDING, skip_reasons, the SKIP branch of run_one and --strict, and drop the
+# Makefile's --strict from this script's line (nothing can SKIP then).
+PENDING = (
+    (None, r"unknown node type 'judge-eval'", "ml-w3: judge-eval is not in NODE_REGISTRY"),
+    ("quantize", r"unknown input 'keep_f16'", "ml-w3: quantize has no keep_f16 (R11)"),
+    (None, r"\(quantize\) has no output 'gguf_f16'", "ml-w3: quantize has no gguf_f16 (R11)"),
+    ("vllm-serve", r"unknown input 'lora_adapter'|no GPU provider", VLLM),
+    (None, r"\(vllm-serve\) has no output '(base_)?model_ref'", VLLM),
+)
+EVAL_KEYS = ("n", "judged", "wins", "ties", "losses", "errors", "win_rate", "consistency", "exact_match", "base", "tuned",
+             "judge_model", "decoding", "stub", "samples")  # contracts "judge-eval": eval_summary
+
+
+# ---------------------------------------------------------------------------
+# Pure logic (unit-tested in tests/e2e)
+# ---------------------------------------------------------------------------
+
+def canonical(templates: list[dict], number: str) -> dict | None:
+    """The template of canonical intent 1, 2 or 3, found by what its plan contains (not by slug)."""
+    if number == "2":
+        return demo.find_intent2(templates)
+    return next((t for t in templates if INTENTS[number] in {n["type"] for n in demo.plan_of(t)["nodes"]}), None)
+
+
+def skip_reasons(errors: list[str], plan: dict) -> list[str] | None:
+    """The missing pieces when every plan error is a PENDING one (the intent SKIPs), else None (no error, or one that is
+    something else: that is a FAIL, never a SKIP)."""
+    types = {n["id"]: n["type"] for n in plan.get("nodes", [])}
+    reasons = []
+    for error in errors:
+        node_id, _, problem = error.partition(": ")
+        why = next((why for kind, pattern, why in PENDING
+                    if kind in (None, types.get(node_id)) and re.search(pattern, problem)), None)
+        if why is None:
+            return None
+        reasons.append(why)
+    return list(dict.fromkeys(reasons)) or None
+
+
+def check_eval_summary(s, exact_match: bool) -> list[str]:
+    """The shape the eval view reads (contracts "judge-eval"): all keys, sane counts and rates, STUB flagged, verdicts valid."""
+    if not isinstance(s, dict):
+        return ["eval_summary is not a JSON object"]
+    if missing := [k for k in EVAL_KEYS if k not in s]:
+        return [f"eval_summary has no {', '.join(missing)}"]
+    problems = []
+    counts = [s["n"], s["wins"], s["ties"], s["losses"], s["errors"]]
+    if not all(type(x) is int and x >= 0 for x in counts):
+        problems.append(f"n, wins, ties, losses and errors must be counts, not {counts}")
+    elif s["wins"] + s["ties"] + s["losses"] > s["n"]:
+        problems.append(f"{s['wins']} wins + {s['ties']} ties + {s['losses']} losses are more than the {s['n']} rows")
+    for k in ("win_rate", "consistency"):
+        if s[k] is not None and not (isinstance(s[k], (int, float)) and 0 <= s[k] <= 1):
+            problems.append(f"{k} is {s[k]!r}, not a share in [0, 1]")
+    if s["stub"] is not True:
+        problems.append(f"stub is {s['stub']!r} in a STUB run")
+    if bool(s["exact_match"]) != exact_match:
+        problems.append(f"exact_match is {s['exact_match']!r} but the plan asked for exact_match={exact_match}")
+    bad = [v for v in s["samples"] if not isinstance(v, dict) or v.get("verdict") not in ("win", "tie", "loss", None)]
+    if not isinstance(s["samples"], list) or bad:
+        problems.append("samples must be a list of verdicts with verdict win | tie | loss | null")
+    return problems
+
+
+def check_report(report: dict, intent: str, plan: dict) -> list[str]:
+    """What is wrong with the finished run and its report; empty = fine."""
+    problems = demo.check_run(report)
+    if report["status"] != "succeeded":
+        return problems
+    if report["intent"] != intent:
+        problems.append(f"the report is for the intent {report['intent']!r}, not the one asked")
+    text = (report["markdown"] or "").strip()
+    if not report["ready"] or not text:
+        problems.append("the run ended but the report is not ready (ready, markdown)")
+    elif plan["name"] not in text:
+        problems.append(f"the report never names the plan {plan['name']!r}")
+    return problems
+
+
+def check_outputs(c: httpx.Client, report: dict, plan: dict) -> list[str]:
+    """What a finished plan promised beyond its artifacts existing: data rows, the eval summary, the f16 baseline."""
+    problems = demo.fetch_dataset(c, report, plan)
+    for node in plan["nodes"]:
+        made = {a["name"] for a in report["artifacts"] if a["node_id"] == node["id"]}
+        inputs = node.get("inputs") or {}
+        if node["type"] == "quantize" and inputs.get("keep_f16") and "gguf_f16" not in made:
+            problems.append(f"quantize {node['id']!r} has keep_f16 but did not register gguf_f16")
+        if node["type"] == "judge-eval":
+            text, problem = demo.download(c, report, node["id"], "eval_summary")
+            try:
+                summary = None if problem else json.loads(text)
+            except ValueError:
+                problem = f"{node['id']}.eval_summary is not JSON: {text[:60]!r}"
+            problems += [problem] if problem else check_eval_summary(summary, bool(inputs.get("exact_match")))
+    return problems
+
+
+# ---------------------------------------------------------------------------
+# The run, through the API
+# ---------------------------------------------------------------------------
+
+def show(verb: str, label: str, lines: list[str], note: str = "") -> None:
+    print("\n".join([f"e2e {verb} {label}{note}", *(f"  - {x}" for x in lines)]), flush=True)
+
+
+def run_one(c: httpx.Client, label: str, intent: str, template: dict | None) -> str:
+    """One intent: PASS, SKIP (named gaps only) or FAIL."""
+    demo.say(f"--- {label}: {intent!r}")
+    reply = demo.call(c, "POST", "/agent/plan", json={"intent": intent})
+    plan, estimate, errors = reply["plan"], reply["estimate"], reply["errors"]
+    problems = []
+    if template and plan != template["plan"]:
+        problems.append("the STUB planner did not answer this canonical intent with its canonical plan")
+    if template and estimate != template["estimate"]:
+        problems.append(f"the plan's estimate {estimate['usd']} differs from the template's {template['estimate']['usd']}")
+    if not problems and (reasons := skip_reasons(errors, plan)):
+        show("SKIP", label, reasons, " (this is NOT a pass: it did not run; --strict turns it into a failure)")
+        return "SKIP"
+    problems += errors
+    if estimate["usd"] > CAP_USD:
+        problems.append(f"the estimate ${estimate['usd']} is over the ${CAP_USD:g} run cap")
+    if not problems:
+        demo.say(f"plan {plan['name']!r}: {[n['id'] for n in plan['nodes']]}, estimate ${estimate['usd']} / {estimate['minutes']} min")
+        if stack := demo.preflight():
+            problems = ["the stack is not ready:"] + [f"  {p}" for p in stack]
+        elif err := demo.build_images([n["type"] for n in plan["nodes"]]):
+            problems = [err]
+    if problems:
+        show("FAIL", label, problems)
+        return "FAIL"
+    run_id = demo.call(c, "POST", "/agent/run", json={"intent": intent, "plan": plan})["run_id"]
+    report, seconds = demo.poll_run(c, run_id, f"/agent/runs/{run_id}/report", done=lambda r: r["ready"])
+    problems = check_report(report, intent, plan)
+    if seconds >= demo.LIMIT_S:
+        problems.append(f"the run did not end within {demo.LIMIT_S} s, so it was cancelled")
+    if not problems:
+        problems = check_outputs(c, report, plan)
+    if problems:
+        show("FAIL", label, problems, f" (run {run_id} after {seconds:.0f} s)")
+        return "FAIL"
+    demo.say(f"PASS {label}: run {run_id} succeeded in {seconds:.0f} s (limit {demo.LIMIT_S} s), cost $0, "
+             f"estimate ${estimate['usd']}, report ready ({len(report['markdown'])} chars)")
+    return "PASS"
+
+
+def run_all(c: httpx.Client, which: str | None, strict: bool) -> int:
+    templates = demo.get_templates(c)
+    todo = []  # (label, intent text, its canonical template or None)
+    for number in [which] if which in INTENTS else [] if which else list(INTENTS):
+        template = canonical(templates, number)
+        if template is None:
+            return demo.fail(f"{len(templates)} templates, none is canonical intent #{number} (a plan with {INTENTS[number]})")
+        todo.append((f"intent #{number}", template["intent"], template))
+    if which and which not in INTENTS:
+        todo.append(("free-text intent", which, None))
+    results = {}
+    for label, intent, template in todo:
+        try:
+            results[label] = run_one(c, label, intent, template)
+        except RuntimeError as e:  # an HTTP error from the API fails this intent, not the others
+            show("FAIL", label, [str(e)])
+            results[label] = "FAIL"
+    count = {r: list(results.values()).count(r) for r in ("PASS", "SKIP", "FAIL")}
+    demo.say(f"{count['PASS']} PASS, {count['SKIP']} SKIP (not passes), {count['FAIL']} FAIL: "
+             + ", ".join(f"{label} {r}" for label, r in results.items()))
+    if count["FAIL"]:
+        return 1
+    return 3 if count["SKIP"] and strict else 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="Stub e2e of the canonical intents through the Agent (see the module docstring).")
+    ap.add_argument("--stub", action="store_true", help="STUB=1: $0, no keys, no network beyond the local stack")
+    ap.add_argument("--intent", help="1, 2 or 3 (a canonical intent), or any text; stub default: all three; a real run needs one")
+    ap.add_argument("--max-cost", type=float, help="USD cap of a real run; a real run is refused without it")
+    ap.add_argument("--strict", action="store_true", help="a SKIP (a wave-3 piece not merged yet) exits 3 instead of 0")
+    args = ap.parse_args(argv)
+    if not args.stub:
+        if args.max_cost is None or args.max_cost <= 0:
+            ap.error("refusing to run without --max-cost: a real run spends money, so it needs a USD cap above 0")
+        ap.error("only --stub exists so far; the real run is written once the keys exist (spike 3)")
+    return demo.with_stack(lambda c: run_all(c, args.intent, args.strict), FULL_CAPS)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

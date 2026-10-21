@@ -137,7 +137,7 @@ Open http://localhost:3000. `make down` stops Postgres, Redis and MinIO. `pnpm t
 
 ## Run the demo
 
-- **Hosted.** TODO(D8): URL. The hosted app ships a real, pre-completed golden run (artifacts, logs, verdicts) and a guarded "Run it yourself" button that launches the pipeline at reduced scale under a per-run spend cap.
+- **Hosted.** TODO(D8): the URL of the hosted app, which is to ship a real, pre-completed golden run (artifacts, logs, verdicts) and a guarded "Run it yourself" button that launches the pipeline at reduced scale under a per-run spend cap. Neither the app nor the golden run exists yet.
 - **Locally, from the Agent.** Open http://localhost:3000/agent and paste one of the three intents above, or pick a template. Read the plan card: nodes, models, estimated cost and minutes, warnings. Run stays disabled while the plan has errors, and Edit opens the plan on the canvas. Press Run to follow the live run view (node timeline, logs, cost meter). When the run ends, the report card shows what ran, the metrics, the cost against the estimate and how to use the result.
 - **Headless.** `make agent-e2e INTENT="Create synthetic data of movie likes, shares and subscribes."` runs one intent through the Agent, capped at $3. `make e2e` runs the real golden pipeline under the same cap, and `make demo` seeds the golden run for the hosted app. TODO(D8): the scripts behind these three targets are still being written.
 - **Without keys.** Start the API with `STUB=1` to run the same flow on deterministic stubs: no network beyond your local stack, and $0. TODO(D8): the stub e2e is not verified end to end yet.
@@ -178,7 +178,7 @@ The submission period is Aug 26 – Oct 30, 2026. Orchapod predates it: its git 
 During the period (the dated list is [CHANGELOG.md](CHANGELOG.md)):
 
 - Oct 2–8: first Nebius × NVIDIA integration: a Token Factory service, a Nebius provider, the Nemotron 3 Super teacher node (`synth-distilabel`), Token Factory model ids verified against the live catalog, and the executor fixes that let a CPU workflow run end to end.
-- Oct 20: repo clean-up; `make up`, `make check`, `make e2e`, `make agent-e2e` and `make demo`; a green `make check` with CI running lint and unit tests on every push; interface contracts v1 ([docs/contracts.md](docs/contracts.md)) and the Agent's knowledge base ([docs/agent_knowledge.md](docs/agent_knowledge.md)).
+- Oct 20: repo clean-up; `make up` and `make check` (TODO(D8): `make e2e`, `make agent-e2e` and `make demo` are in the Makefile, but their scripts are not written yet); a green `make check` with CI running lint and unit tests on every push; interface contracts v1 ([docs/contracts.md](docs/contracts.md)) and the Agent's knowledge base ([docs/agent_knowledge.md](docs/agent_knowledge.md)).
 - TODO(D8): replace this list with the final CHANGELOG entries (Tavily research, grounded and structured synthetic data, Token Factory fine-tuning and deploy, Nebius Serverless, judge-eval, the Agent, the budget guard).
 
 ## License

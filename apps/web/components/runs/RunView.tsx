@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { api, apiDate, explainError } from "@/lib/api";
+import { api, apiDate, cancelToken, explainError, toastError } from "@/lib/api";
 import { applyRunEvent, canRetry, finished, type RunViewState } from "@/lib/runEvents";
 import { useRunStream } from "@/lib/ws";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -25,7 +25,7 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
   const [cancelling,   setCancelling]   = useState(false);
   const [retrying,     setRetrying]     = useState<string | null>(null);
   const [attempt,      setAttempt]      = useState(0);   // bumped by a retry to reconnect the socket
-  const [error,        setError]        = useState("");  // a failed cancel or retry
+  const [error,        setError]        = useState("");  // a failed retry (a failed cancel is a toast)
   const [loadError,    setLoadError]    = useState("");  // a failed snapshot
 
   const { events, connected } = useRunStream(id, attempt);
@@ -82,7 +82,7 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
       const run = await api.runs.cancel(id);
       setView((v) => v && { ...v, run });
     } catch (err) {
-      setError(explainError(err));
+      toastError("Couldn't cancel the run")(err); // a 403: this tab has no valid cancel token for the run
     } finally {
       setCancelling(false);
     }
@@ -122,6 +122,7 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
     ...(dataset ? ["dataset" as const] : []), ...(refs.length >= 2 ? ["compare" as const] : [])];
 
   const canCancel = ["provisioning_gpu", "running"].includes(run.status);
+  const starter = cancelToken(id) !== null; // read here, not in state: on /agent the id changes under one RunView
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -145,10 +146,14 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
         <span className="pill mono tnum" title="Spent so far: Run.cost_usd, updated live by run_cost events">
           Cost ${(run.cost_usd ?? 0).toFixed(3)}
         </span>
+        {canCancel && !starter && (
+          <span id="cancel-note" className="muted" style={{ fontSize: 11.5 }}>Only the tab that started this run can cancel it</span>
+        )}
         {canCancel && (
           <button
             onClick={handleCancel}
-            disabled={cancelling}
+            disabled={cancelling || !starter}
+            aria-describedby={starter ? undefined : "cancel-note"}
             className="btn btn-sm"
             style={{ color: "var(--rose-ink)", background: "var(--rose-soft)", borderColor: "var(--rose)" }}
           >

@@ -38,6 +38,7 @@ export function explainError(err: unknown): string {
     : typeof raw === "string" ? raw : JSON.stringify(raw);
   if (status === 404 && detail === "Not Found") return `The API at ${BASE} has no ${path} route yet (404).`;
   if (status === 402) return `Over budget: ${detail}`;
+  if (status === 403 && path?.endsWith("/cancel")) return "Only the tab that started this run can cancel it (403).";
   // On the agent's routes a 502/503 is the planner or reporter; elsewhere (e.g. /compare) the detail says what failed.
   const agent = path?.startsWith("/agent");
   if (agent && status === 502) return `Nemotron on Token Factory did not answer after retries (502): ${detail}`;
@@ -58,6 +59,21 @@ export function toast(text: string) {
 export const toastError = (what: string) => (err: unknown) => toast(`${what}: ${explainError(err)}`);
 
 export const usd = (n: number | null | undefined) => (n == null ? "–" : `$${n.toFixed(2)}`);
+
+// The run's cancel token (D6): start and /agent/run return it once, and an anonymous cancel needs it. It stays in this tab's
+// sessionStorage, keyed by run id: never in localStorage, a URL or a log. Storage switched off = only the admin can cancel.
+const cancelKey = (runId: string) => `orchapod:cancel-token:${runId}`;
+
+/** This tab's cancel token for the run, or null: the run page's Cancel is disabled without one. */
+export function cancelToken(runId: string): string | null {
+  try { return globalThis.sessionStorage?.getItem(cancelKey(runId)) ?? null; } catch { return null; }
+}
+
+/** Keeps a reply's cancel_token and returns the reply without it, so no page holds the token. */
+function keepCancelToken<T extends { cancel_token?: string }>(runId: string, { cancel_token, ...reply }: T): Omit<T, "cancel_token"> {
+  try { if (cancel_token) globalThis.sessionStorage?.setItem(cancelKey(runId), cancel_token); } catch { /* the run started anyway */ }
+  return reply;
+}
 
 // What a run costs, worded from GET /agent/templates: one-click Run posts a template's reduced plan when the API has one.
 
@@ -118,11 +134,12 @@ export const api = {
         body: JSON.stringify({ workflow_id: workflowId, inputs }),
       });
     },
-    start(id: string): Promise<Run> {
-      return req(`/runs/${id}/start`, { method: "POST" });
+    async start(id: string): Promise<Run> {
+      return keepCancelToken(id, await req<Run & { cancel_token?: string }>(`/runs/${id}/start`, { method: "POST" }));
     },
     cancel(id: string): Promise<Run> {
-      return req(`/runs/${id}/cancel`, { method: "POST" });
+      const token = cancelToken(id);
+      return req(`/runs/${id}/cancel`, { method: "POST", headers: token ? { "X-Orchapod-Cancel-Token": token } : {} });
     },
     /** Re-runs the failed node of a failed or cancelled run, then continues downstream (202). */
     retry(id: string, nodeId: string): Promise<Run> {
@@ -183,8 +200,9 @@ export const api = {
     plan(intent: string): Promise<AgentPlan> {
       return req("/agent/plan", { method: "POST", body: JSON.stringify({ intent }) });
     },
-    run(intent: string, plan: Plan): Promise<AgentRunOut> {
-      return req("/agent/run", { method: "POST", body: JSON.stringify({ intent, plan }) });
+    async run(intent: string, plan: Plan): Promise<AgentRunOut> {
+      const out = await req<AgentRunOut & { cancel_token?: string }>("/agent/run", { method: "POST", body: JSON.stringify({ intent, plan }) });
+      return keepCancelToken(out.run_id, out);
     },
     report(runId: string): Promise<AgentReport> {
       return req(`/agent/runs/${runId}/report`);

@@ -100,6 +100,14 @@ def last_error():
     return je.log.error.call_args.args[0]
 
 
+def test_the_image_drops_ggml_arm64_fp16_cpu_variants():
+    """On an M1 (Docker), ggml's fp16-vector-arithmetic CPU kernels turn Qwen2.5's f16, bf16 and q8_0 GGUF answers into
+    "????" after ~13 tokens (b11223 and b11783), so intent #3's f16 baseline scored 0; armv8.2_1 (dotprod) is correct."""
+    dockerfile = (Path(__file__).parents[2] / "containers/judge-eval/Dockerfile").read_text()
+    assert "rm -f /opt/llama/libggml-cpu-armv8.2_[23].so /opt/llama/libggml-cpu-armv8.6_*.so /opt/llama/libggml-cpu-armv9*.so" \
+        in dockerfile
+
+
 def test_registry_row_and_defaults():
     meta = NODE_REGISTRY[NodeType.JUDGE_EVAL]
     assert (meta["runtime"], meta["inputs_schema"], meta["outputs_schema"]) == ("api", JudgeEvalInputs, JudgeEvalOutputs)

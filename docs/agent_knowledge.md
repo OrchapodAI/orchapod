@@ -25,7 +25,7 @@ Source of truth: `NODE_REGISTRY` in packages/workflow_schema/models.py. On every
 3. "Quantize a model which is an expert in maths": pick from the maths shortlist below and say why → hf-download → quantize (GGUF q4_k_m on CPU, keep_f16; AWQ needs a GPU job) → data-prep (hf://openai/gsm8k, main, test[:50], qa) → judge-eval (base = quantize gguf_f16, tuned = gguf_file, exact_match, n_judge 20) → artifact and report.
 
 ## Maths shortlist (intent #3)
-Rule: at most 2B parameters and a short chain of thought, because judge-eval answers with llama.cpp on CPU (a 276-token answer took 214 s on a busy laptop CPU). Parameter counts and licences are from the Hugging Face API on 2026-10-21.
+Rule: at most 2B parameters and a short chain of thought, because judge-eval answers with llama.cpp on CPU (measured 2026-10-21 on an M1 Pro's Docker VM under load: 50 GSM8K rows answered by both the f16 and the q4_k_m GGUF of Qwen2.5-Math-1.5B in 18 min, about 305 tokens per answer). Parameter counts and licences are from the Hugging Face API on 2026-10-21.
 | Model | Params | Licence | Why |
 | --- | --- | --- | --- |
 | Qwen/Qwen2.5-Math-1.5B-Instruct (default) | 1.54B | Apache-2.0, not gated | Maths-tuned; its chat template asks for step-by-step reasoning with the answer in \boxed{}, so answers are short and exact match reads them. Proven here: q4_k_m 0.99 GB from a 3.09 GB f16 GGUF, and the q4 answered GSM8K test item 1 correctly. |

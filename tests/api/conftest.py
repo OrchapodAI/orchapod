@@ -9,10 +9,8 @@ so pytest stays free of "coroutine ... was never awaited".
 
 from __future__ import annotations
 
-import asyncio
 import os
 import uuid
-from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -35,7 +33,7 @@ os.environ.setdefault("ORCHAPOD_CONTROL_URL",   "http://localhost:8000")
 # the db fixture calls create_all, so no tables are created.
 from api.models.db import (  # noqa: F401
     Run, NodeRun, Artifact, Model, Workflow,
-    RunStatus, NodeStatus, ArtifactKind, ModelFormat,
+    RunStatus, NodeStatus, ArtifactKind, ModelFormat, utcnow,
 )
 
 
@@ -55,19 +53,6 @@ async def db():
         yield session
 
     await engine.dispose()
-
-
-@pytest_asyncio.fixture(autouse=True)
-async def _clear_ttl_tasks():
-    """Cancel and drop TTL tasks at teardown: api.routes.internal._ttl_tasks is module-global."""
-    yield
-    from api.routes import internal
-
-    tasks = [t for t in internal._ttl_tasks.values() if isinstance(t, asyncio.Task)]
-    internal._ttl_tasks.clear()
-    for t in tasks:
-        t.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
 
 
 @pytest.fixture
@@ -127,7 +112,7 @@ async def seeded_node_run(db):
         node_id="node",
         node_type="vllm-serve",
         status=NodeStatus.RUNNING,
-        started_at=datetime.utcnow(),
+        started_at=utcnow(),
         inputs={"model": "Qwen/Qwen3-4B-Instruct"},
         gpu_provider="vastai",
         gpu_pod_id="12345678",

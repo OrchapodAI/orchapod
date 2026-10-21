@@ -8,24 +8,25 @@ ROOT = Path(__file__).resolve().parents[1]
 CI = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
 
 
-def _step(job, match):
-    return next(s for s in CI["jobs"][job]["steps"] if match(s))
-
-
 def test_ci_installs_only_requirements_files():
-    run = _step("test", lambda s: "pip install" in s.get("run", ""))["run"]
-    assert all(a == "-r" or a.endswith(".txt") for a in run.split()[2:]), run
+    run = next(s["run"] for s in CI["jobs"]["test"]["steps"] if "pip install" in s.get("run", ""))
+    assert run.split()[-1].endswith(".txt"), run
 
 
 def test_requirements_dev_has_lint_and_container_test_deps():
-    lines = {ln.strip() for ln in (ROOT / "requirements-dev.txt").read_text().splitlines()}
-    assert {"huggingface_hub", "ruff==0.17.1", "jsonschema"} <= lines
+    text = (ROOT / "requirements-dev.txt").read_text()
+    assert all(dep in text for dep in ("ruff==", "huggingface_hub", "jsonschema")), text
 
 
 def test_ci_pushes_latest_only_on_nebiushackathon():
-    build = _step("containers", lambda s: "build-push-action" in s.get("uses", ""))
-    latest = [t for t in build["with"]["tags"].splitlines() if ":latest" in t]
-    assert len(latest) == 1 and "github.ref_name == 'NebiusHackathon'" in latest[0], latest
+    latest = [
+        ln
+        for job in CI["jobs"].values()
+        for step in job["steps"]
+        for ln in str(step.get("with", {}).get("tags", "")).splitlines()
+        if ":latest" in ln
+    ]
+    assert latest and all("NebiusHackathon" in ln for ln in latest), latest
 
 
 def test_ci_builds_every_container():

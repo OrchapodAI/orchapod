@@ -15,16 +15,17 @@ If RESEND_API_KEY is not set, all sends are silently skipped — safe for local 
 from __future__ import annotations
 
 import logging
-import os
 from datetime import datetime, timezone
 
 import httpx
 
+from api import config
+
 log = logging.getLogger(__name__)
 
-_RESEND_API_KEY    = os.environ.get("RESEND_API_KEY", "")
-_FROM_EMAIL        = os.environ.get("ORCHAPOD_FROM_EMAIL", "noreply@orchapod.ai")
-_ALERT_EMAIL       = os.environ.get("ORCHAPOD_ALERT_EMAIL", "")
+_RESEND_API_KEY    = config.env("RESEND_API_KEY")
+_FROM_EMAIL        = config.env("ORCHAPOD_FROM_EMAIL")
+_ALERT_EMAIL       = config.env("ORCHAPOD_ALERT_EMAIL")
 _RESEND_SEND_URL   = "https://api.resend.com/emails"
 
 
@@ -46,7 +47,7 @@ async def send_endpoint_expiry_warning(
         log.info("Email not configured — skipping endpoint expiry warning for run %s", run_id)
         return
 
-    control_url = os.environ.get("ORCHAPOD_CONTROL_URL", "https://orchapod.ai")
+    control_url = config.env("ORCHAPOD_CONTROL_URL")
     run_url     = f"{control_url}/runs/{run_id}"
     now_str     = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 

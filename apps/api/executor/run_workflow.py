@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 import uuid
 from datetime import datetime, timezone
@@ -26,6 +25,7 @@ from typing import Awaitable, Callable
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from api import config
 from api.executor.dag import DAGNode, compile_dag
 from api.models.db import NodeRun, NodeStatus, Run, RunStatus, Workflow, utcnow
 from api.services import budget
@@ -43,16 +43,10 @@ _inflight: dict[uuid.UUID, set[asyncio.Future]] = {}
 _SDK_LINE = re.compile(r"\[[^\]]+\] \[(INFO|WARN|ERROR|PROGRESS)\] ")
 _REF = re.compile(r"\$\{\{\s*(?:inputs\.(\w+)|nodes\.([^.\s}]+)\.outputs\.(\w+))\s*\}\}")
 
-# contracts "Config": exactly these reach containers, with their defaults (blank = default).
-_FORWARD = {
-    "NEBIUS_API_KEY": "", "NEBIUS_BASE_URL": "https://api.tokenfactory.nebius.com/v1",
-    "TAVILY_API_KEY": "", "HF_TOKEN": "",
-    "NEBIUS_PROJECT_ID": "", "NEBIUS_IAM_TOKEN": "", "ORCHAPOD_ENDPOINT_TOKEN": "",
-    "ORCHAPOD_R2_ENDPOINT": "http://localhost:9000", "ORCHAPOD_R2_REGION": "auto",
-    "ORCHAPOD_R2_ACCESS_KEY": "orchapod", "ORCHAPOD_R2_SECRET_KEY": "orchapod_dev",
-    "ORCHAPOD_R2_BUCKET": "orchapod-artifacts",
-    "ORCHAPOD_CONTROL_URL": "http://localhost:8001", "STUB": "",
-}
+# contracts "Config": exactly these reach containers, with config's defaults.
+FORWARD = ("NEBIUS_API_KEY", "NEBIUS_BASE_URL", "TAVILY_API_KEY", "HF_TOKEN", "NEBIUS_PROJECT_ID", "NEBIUS_IAM_TOKEN",
+           "ORCHAPOD_ENDPOINT_TOKEN", "ORCHAPOD_R2_ENDPOINT", "ORCHAPOD_R2_REGION", "ORCHAPOD_R2_ACCESS_KEY",
+           "ORCHAPOD_R2_SECRET_KEY", "ORCHAPOD_R2_BUCKET", "ORCHAPOD_CONTROL_URL", "STUB")
 
 
 class NodeFailed(Exception):
@@ -199,7 +193,7 @@ async def _execute_node(
     from api.services.provider_selector import pick_local_docker, pick_provider
     from packages.workflow_schema.models import NODE_REGISTRY, NodeType, ResourceSpec
 
-    timeout = float(os.environ.get("ORCHAPOD_NODE_TIMEOUT_S") or 5400)  # backstop above node-level timeouts
+    timeout = float(config.env("ORCHAPOD_NODE_TIMEOUT_S"))  # backstop above node-level timeouts
     node_run.inputs = _resolve_inputs(dag_node.inputs, run, rows)  # resolved inputs = lineage
 
     # cpu and api nodes run on LocalDocker; gpu nodes on a GPU provider
@@ -211,7 +205,7 @@ async def _execute_node(
         raise NodeFailed(f"no {runtime} provider: {e}")
 
     env = _build_env(node_run, max_cost)
-    image = f"{os.environ.get('ORCHAPOD_IMAGE_PREFIX') or 'ghcr.io/bangadpurva'}/{dag_node.type}:latest"
+    image = f"{config.env('ORCHAPOD_IMAGE_PREFIX')}/{dag_node.type}:latest"
     prov = asyncio.ensure_future(provider.provision(gpu_spec=gpu_spec, image=image, env=env))
     try:
         pod = await asyncio.shield(prov)  # a cancel mid-provision (image pull, jobs.create) leaves it running
@@ -295,7 +289,7 @@ def _resolve_inputs(inputs: dict, run: Run, rows: dict[str, NodeRun]) -> dict:
 def _build_env(node_run: NodeRun, max_cost_usd: float) -> dict[str, str]:
     from api.routes.internal import INTERNAL_SECRET
 
-    env = {k: os.environ.get(k) or default for k, default in _FORWARD.items()}
+    env = {k: config.env(k) for k in FORWARD}
     env.update({
         "ORCHAPOD_INTERNAL_SECRET":  INTERNAL_SECRET,
         "ORCHAPOD_MAX_COST_USD":     f"{max_cost_usd:.4f}",

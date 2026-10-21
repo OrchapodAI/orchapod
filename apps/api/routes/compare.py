@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from datetime import datetime, timezone
 from typing import Annotated, Iterator, Literal
 
@@ -23,6 +22,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api import config
 from api.agent.planner import tf_base
 from api.database import get_session
 from api.models.db import Artifact, ArtifactKind
@@ -43,7 +43,7 @@ _streams: set[asyncio.Task] = set()
 # Each compare holds two worker threads until both answers end; past this many, 503. The default pool has
 # min(32, cpus + 4) threads, so the planner and reporter (asyncio.to_thread too) find a free one on 5+ CPUs;
 # on smaller hosts they wait behind running answers (bounded by max_tokens, no deadlock).
-_slots = asyncio.Semaphore(int(os.environ.get("ORCHAPOD_MAX_COMPARES") or 4))
+_slots = asyncio.Semaphore(int(config.env("ORCHAPOD_MAX_COMPARES")))
 
 
 class ModelRef(BaseModel):
@@ -119,9 +119,9 @@ async def _key(db: AsyncSession, ref: ModelRef) -> str:
     with an endpoint registered through /internal/ttl. Anything else would hand our key (or our network) to a caller's URL."""
     url = ref.base_url.strip().rstrip("/")
     if ref.api_key_env == "NEBIUS_API_KEY" and url == tf_base():
-        return os.environ.get("NEBIUS_API_KEY") or ""
+        return config.env("NEBIUS_API_KEY")
     if ref.api_key_env == "ORCHAPOD_ENDPOINT_TOKEN" and await _registered(db, url):
-        return os.environ.get("ORCHAPOD_ENDPOINT_TOKEN") or ""
+        return config.env("ORCHAPOD_ENDPOINT_TOKEN")
     raise HTTPException(status_code=422, detail=f"refused ModelRef {ref.model} at {ref.base_url} with {ref.api_key_env!r}: "
                                                 "NEBIUS_API_KEY goes only to Token Factory, ORCHAPOD_ENDPOINT_TOKEN only to "
                                                 "an endpoint registered through /internal/ttl")

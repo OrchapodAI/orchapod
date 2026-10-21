@@ -10,12 +10,12 @@ Start: uvicorn api.main:app --reload
 from __future__ import annotations
 
 import asyncio
-import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from api import config
 from api.database import AsyncSessionLocal, create_tables
 from api.executor.run_workflow import sweep
 from api.services.events import event_bus
@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
     # MinIO in dev starts without the bucket; off the event loop, so a slow or absent store never delays startup
     asyncio.get_running_loop().run_in_executor(None, ensure_bucket_exists)
 
-    register_providers(vastai_key=os.environ.get("VASTAI_API_KEY", ""))
+    register_providers(vastai_key=config.env("VASTAI_API_KEY"))
 
     yield
     # Shutdown

@@ -13,7 +13,6 @@ import copy
 import json
 import logging
 import math
-import os
 import re
 from collections import Counter
 from pathlib import Path
@@ -24,13 +23,14 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field, StringConstraints, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api import config
 from api.executor.dag import compile_dag
 from api.executor.run_workflow import _REF as REF
 from api.models.db import AgentRun
 from api.services import budget
 from api.services.provider_selector import get_providers
 from orchapod.prices import PRICES
-from packages.providers.tokenfactory import LIGHTNING, SUPER, TF_BASE, ULTRA
+from packages.providers.tokenfactory import LIGHTNING, SUPER, ULTRA
 from packages.workflow_schema.models import NODE_REGISTRY, ResourceSpec
 
 log = logging.getLogger("api.agent")
@@ -218,7 +218,7 @@ def _input_problems(key: str, value: Any, n: PlanNode, nodes: dict[str, PlanNode
 
 def tf_base() -> str:
     """$NEBIUS_BASE_URL (default Token Factory) as the pairing rule compares base URLs: stripped, no trailing slash."""
-    return (os.environ.get("NEBIUS_BASE_URL") or TF_BASE).strip().rstrip("/")
+    return config.env("NEBIUS_BASE_URL").strip().rstrip("/")
 
 
 def _model_ref_problems(ref: dict) -> list[str]:
@@ -314,12 +314,12 @@ async def make_plan(intent: str, db: AsyncSession, scale: float) -> dict:
     if budget.kill_switch():
         raise HTTPException(status_code=503, detail="the kill switch is on (ORCHAPOD_KILL_SWITCH)")
     left = await budget.left(db, None, scale)
-    if os.environ.get("STUB") == "1":  # the closest canonical template; no model call
+    if config.env("STUB") == "1":  # the closest canonical template; no model call
         t = max(templates(), key=lambda t: len(_words(intent) & _words(f"{t['intent']} {t['title']}")))
         errors, warnings, est = review(t["plan"], left)
         return {"plan": t["plan"], "rationale": f"STUB=1: the canonical plan '{t['slug']}'. {t['rationale']}",
                 "estimate": est, "warnings": warnings, "errors": errors}
-    if not (os.environ.get("NEBIUS_API_KEY") or "").strip():
+    if not config.env("NEBIUS_API_KEY").strip():
         raise HTTPException(status_code=503, detail="NEBIUS_API_KEY is not set")
     if left[0] <= 0:
         raise HTTPException(status_code=402, detail=f"{left[1]} cap ${left[2]:g}: nothing left")
@@ -358,7 +358,7 @@ and say that Retry node resumes from it."""
 async def write_report(agent_run: AgentRun, summary: dict, db: AsyncSession, scale: float) -> str:
     """Nemotron 3.5 Lightning writes the report; STUB=1, the kill switch, an empty day budget or a failed call fall back
     to the deterministic template."""
-    if os.environ.get("STUB") != "1" and not budget.kill_switch() and (await budget.left(db, None, scale))[0] > 0:
+    if config.env("STUB") != "1" and not budget.kill_switch() and (await budget.left(db, None, scale))[0] > 0:
         facts = json.dumps({"intent": agent_run.intent, "plan": agent_run.plan, "estimate": agent_run.estimate,
                             "run": summary}, default=str)[:20_000]
         try:

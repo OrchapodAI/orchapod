@@ -11,26 +11,26 @@ This module is for the API to interact with R2 on behalf of the user.
 
 from __future__ import annotations
 
-import os
-
 import boto3
 from botocore.config import Config
+
+from api import config
 
 
 def _get_client():
     return boto3.client(
         "s3",
-        endpoint_url=os.environ.get("ORCHAPOD_R2_ENDPOINT") or "http://localhost:9000",
-        aws_access_key_id=os.environ.get("ORCHAPOD_R2_ACCESS_KEY") or "orchapod",
-        aws_secret_access_key=os.environ.get("ORCHAPOD_R2_SECRET_KEY") or "orchapod_dev",
-        region_name=os.environ.get("ORCHAPOD_R2_REGION") or "auto",
+        endpoint_url=config.env("ORCHAPOD_R2_ENDPOINT"),
+        aws_access_key_id=config.env("ORCHAPOD_R2_ACCESS_KEY"),
+        aws_secret_access_key=config.env("ORCHAPOD_R2_SECRET_KEY"),
+        region_name=config.env("ORCHAPOD_R2_REGION"),
         # presigning needs no network; the short timeouts bound ensure_bucket_exists when the store is down
         config=Config(signature_version="s3v4", connect_timeout=5, read_timeout=10, retries={"max_attempts": 2}),
     )
 
 
 def _bucket() -> str:
-    return os.environ.get("ORCHAPOD_R2_BUCKET") or "orchapod-artifacts"
+    return config.env("ORCHAPOD_R2_BUCKET")
 
 
 def presigned_upload_url(key: str, content_type: str = "application/octet-stream", expires: int = 3600) -> str:

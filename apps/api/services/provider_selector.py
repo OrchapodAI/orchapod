@@ -10,8 +10,7 @@ V1:  price-aware routing with reliability scoring + spot instance support.
 
 from __future__ import annotations
 
-import os
-
+from api import config
 from packages.providers.base import GPUProvider, GPUSpec, NoCapacity
 from packages.providers.vastai import VastAIProvider
 from packages.providers.local_docker import LocalDockerProvider
@@ -39,9 +38,9 @@ def build_providers() -> dict[str, GPUProvider]:
     Any provider whose key is missing is silently omitted.
     """
     providers: dict[str, GPUProvider] = {}
-    if os.environ.get("NEBIUS_PROJECT_ID") and NebiusProvider:
+    if config.env("NEBIUS_PROJECT_ID") and NebiusProvider:
         providers["nebius"] = NebiusProvider()
-    if os.environ.get("VASTAI_API_KEY"):
+    if config.env("VASTAI_API_KEY"):
         providers["vastai"] = VastAIProvider()
     return providers
 

@@ -8,7 +8,6 @@ the anonymous scale, and the day ledger of control-plane spend (planner, reporte
 from __future__ import annotations
 
 import asyncio
-import os
 import secrets
 import uuid
 from decimal import Decimal
@@ -19,6 +18,7 @@ from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from api import config
 from api.models.db import Run, Spend, utcnow
 from packages.providers.tokenfactory import TokenFactory
 
@@ -30,15 +30,15 @@ _granted: dict[uuid.UUID, float] = {}
 def scale(x_orchapod_admin: str = Header(default="")) -> float:
     """FastAPI dependency: 1 for a caller sending X-Orchapod-Admin: $ORCHAPOD_ADMIN_TOKEN, else
     ORCHAPOD_ANON_SCALE (R7). A blank token is unset, so then everyone is anonymous."""
-    token = (os.environ.get("ORCHAPOD_ADMIN_TOKEN") or "").strip()
+    token = config.env("ORCHAPOD_ADMIN_TOKEN").strip()
     if token and secrets.compare_digest(x_orchapod_admin.strip().encode(), token.encode()):
         return 1.0
-    return float(os.environ.get("ORCHAPOD_ANON_SCALE") or 0.1)
+    return float(config.env("ORCHAPOD_ANON_SCALE"))
 
 
 def kill_switch() -> bool:
     """ORCHAPOD_KILL_SWITCH: anything but blank or 0 is on, so a typo fails safe."""
-    return (os.environ.get("ORCHAPOD_KILL_SWITCH") or "0").strip() != "0"
+    return config.env("ORCHAPOD_KILL_SWITCH").strip() != "0"
 
 
 async def spent_today(db: AsyncSession) -> float:
@@ -51,14 +51,14 @@ async def spent_today(db: AsyncSession) -> float:
 
 def run_cap(scale: float) -> float:
     """ORCHAPOD_MAX_RUN_USD × the caller's scale."""
-    return float(os.environ.get("ORCHAPOD_MAX_RUN_USD") or 3) * scale
+    return float(config.env("ORCHAPOD_MAX_RUN_USD")) * scale
 
 
 async def left(db: AsyncSession, run: Run | None, scale: float) -> tuple[float, str, float]:
     """(budget left, the cap that binds: "run" | "day", that cap in $); both caps × scale. The day's budget left
     also excludes what other runs' running nodes were granted."""
     run_max = run_cap(scale)
-    day_cap = float(os.environ.get("ORCHAPOD_MAX_DAY_USD") or 15) * scale
+    day_cap = float(config.env("ORCHAPOD_MAX_DAY_USD")) * scale
     granted = dict(_granted)  # a node that ends while spend is read stays counted: its cost commits before release
     if run is not None:
         await db.refresh(run)  # Run.cost_usd grows as nodes register cost_json

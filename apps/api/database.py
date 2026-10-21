@@ -7,17 +7,14 @@ Supports PostgreSQL (production) and SQLite (tests/dev).
 
 from __future__ import annotations
 
-import os
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlmodel import SQLModel
 
+from api import config
 
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "sqlite+aiosqlite:///./orchapod_dev.db",
-)
+DATABASE_URL = config.env("DATABASE_URL")
 
 # pool_size / max_overflow are not valid kwargs for SQLite
 _pool_kwargs = (

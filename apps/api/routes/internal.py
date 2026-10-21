@@ -17,7 +17,6 @@ The node's exit code decides its status (executor); every call carries X-Orchapo
 from __future__ import annotations
 
 import asyncio
-import os
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -30,6 +29,7 @@ from sqlalchemy import func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from api import config
 from api.database import get_session, AsyncSessionLocal
 from api.models.db import (
     utcnow,
@@ -51,7 +51,7 @@ Session = Annotated[AsyncSession, Depends(get_session)]
 
 # R2: /internal/* is never open. Unset (or blank) → a random secret for this process, which the
 # executor passes to containers; set it explicitly when running more than one API worker.
-INTERNAL_SECRET = os.environ.get("ORCHAPOD_INTERNAL_SECRET") or secrets.token_urlsafe(32)
+INTERNAL_SECRET = config.env("ORCHAPOD_INTERNAL_SECRET") or secrets.token_urlsafe(32)
 
 
 def _verify_secret(x_orchapod_secret: str = Header(default="")) -> None:

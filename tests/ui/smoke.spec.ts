@@ -2,6 +2,9 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 // Run by scripts/e2e_ui.py (`make ui-smoke`) against a STUB API (every run costs $0) and the web app.
 const API = process.env.E2E_API_URL ?? "";
+// a second API at the public demo's scale, ORCHAPOD_ANON_SCALE=0.1 (scripts/e2e_ui.py PUBLIC_CAPS): $3 x 0.1 per run
+const PUBLIC_API = process.env.E2E_PUBLIC_API_URL ?? "";
+const PUBLIC_RUN_CAP = 3 * 0.1;
 const STRICT = process.env.E2E_STRICT === "1";
 // canonical intent -> why it cannot run yet, from the planner's own errors (scripts/e2e_agent.py PENDING)
 const PENDING: Record<string, string[]> = JSON.parse(process.env.E2E_PENDING || "{}");
@@ -11,6 +14,7 @@ const SLUGS: Record<string, string> = JSON.parse(process.env.E2E_SLUGS || "{}");
 type Template = {
   slug: string; title: string; intent: string; estimate: { usd: number; minutes: number };
   plan: { name: string; nodes: { type: string; inputs?: Record<string, unknown> }[] };
+  reduced?: { estimate: { usd: number } }; fits?: boolean;
 };
 
 const usd = (n: number) => `$${n.toFixed(2)}`; // the page's own formats
@@ -116,6 +120,35 @@ test("templates: one click runs intent #2 to a finished run with its dataset car
   const file = await page.request.get((await download.getAttribute("href"))!); // the API's 307 to object storage, followed
   expect(file.ok()).toBe(true);
   expect((await file.text()).split("\n").filter(Boolean)).toHaveLength(shown);
+  expect(problems).toEqual([]);
+});
+
+// frontend-w4: on the public app a template whose reduced plan is above the per-run cap (`fits: false`) keeps Run disabled and
+// says why; the page reads GET /agent/templates from the public-scale API, since its own runs at full scale.
+test("templates: at ORCHAPOD_ANON_SCALE=0.1 a template above the per-run cap cannot be run and says why", async ({ page }) => {
+  const problems = watch(page);
+  const r = await fetch(`${PUBLIC_API}/agent/templates`);
+  if (!r.ok) throw new Error(`GET ${PUBLIC_API}/agent/templates -> HTTP ${r.status}`);
+  const all: Template[] = await r.json();
+  const over = all.filter((t) => t.fits === false);
+  expect(over.length, "at the public scale some template is above the cap, and some is not").toBeGreaterThan(0);
+  expect(over.length).toBeLessThan(all.length);
+  await page.route(`${API}/agent/templates`, (route) => route.continue({ url: `${PUBLIC_API}/agent/templates` }));
+
+  await page.goto("/agent");
+  for (const t of all) {
+    const run = page.getByRole("button", { name: `Run template: ${t.title}`, exact: true });
+    if (t.fits !== false) {
+      await expect(run).toBeEnabled();
+      continue;
+    }
+    const usdOver = (t.reduced ?? t).estimate.usd;
+    expect(usdOver, `${t.slug}: its card says it is above the $${PUBLIC_RUN_CAP.toFixed(2)} cap`).toBeGreaterThan(PUBLIC_RUN_CAP);
+    await expect(run).toBeDisabled();
+    await expect(run).toHaveAccessibleDescription(`about ${usd(usdOver)} — above the public demo's per-run cap; watch the golden run`);
+    await expect(page.locator(`#cap-${t.slug}`).getByRole("link", { name: "watch the golden run" }))
+      .toHaveAttribute("href", `/runs?q=${encodeURIComponent(t.plan.name)}`);
+  }
   expect(problems).toEqual([]);
 });
 

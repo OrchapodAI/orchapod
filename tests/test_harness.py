@@ -1,6 +1,7 @@
 """Harness checks: CI wiring that nothing else would notice breaking."""
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -36,6 +37,18 @@ def test_ci_pushes_latest_only_on_nebiushackathon():
 def test_ci_builds_every_container():
     matrix = set(CI["jobs"]["containers"]["strategy"]["matrix"]["node"])
     assert matrix == {p.parent.name for p in (ROOT / "containers").glob("*/Dockerfile")}
+
+
+def test_ci_builds_the_prod_images_on_nebiushackathon_and_pushes_neither():
+    """infra/docker-compose.prod.yml's two images (platform-w4) keep building; the web build stops without its NEXT_PUBLIC_*
+    build args, so CI passes every ARG its Dockerfile declares."""
+    job = CI["jobs"]["prod-images"]
+    assert job["if"] == "github.event_name == 'push' && github.ref_name == 'NebiusHackathon'"
+    builds = {s["with"]["file"]: s["with"] for s in job["steps"] if s.get("uses", "").startswith("docker/build-push-action")}
+    assert {f: b["context"] for f, b in builds.items()} == {"apps/api/Dockerfile": ".", "apps/web/Dockerfile": "apps/web"}
+    assert [b["push"] for b in builds.values()] == [False, False]
+    args = re.findall(r"^ARG (\w+)", (ROOT / "apps/web/Dockerfile").read_text(), re.M)
+    assert args and set(args) <= {a.split("=", 1)[0] for a in builds["apps/web/Dockerfile"]["build-args"].split()}
 
 
 def test_ci_web_job_runs_the_web_tests():

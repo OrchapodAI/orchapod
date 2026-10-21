@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from tests.docs.test_readme import STALE
+from tests.docs.test_readme import MODELS, STALE
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -24,12 +24,54 @@ def _section(text: str, title: str) -> str:
     return match.group(1)
 
 
+CHANGELOG = _read("CHANGELOG.md")
+DEVPOST = _read("docs", "devpost.md")
 FEEDBACK = _read("docs", "feedback.md")
-DOCS = {"feedback": FEEDBACK}
+DOCS = {"devpost": DEVPOST, "feedback": FEEDBACK}
 
+FIELDS = [
+    "Title",
+    "Tagline",
+    "Description",
+    "Built with",
+    "Track",
+    "Links",
+    "What changed during the submission period",
+]
+# The plan's checklist: the description names the sponsor pieces explicitly.
+SPONSORS = [
+    "Nebius Token Factory",
+    "Nebius AI Cloud",
+    "Serverless Jobs",
+    "Serverless Endpoints",
+    "Object Storage",
+    "NVIDIA Nemotron",
+    "Tavily",
+]
 AREAS = ["Token Factory", "Nebius AI Cloud", "NVIDIA Nemotron models"]
 # The first version must carry these findings; each needle appears only in its own bullet.
 SEEDS = ["/v0/models", "Llama-3.3-70B", "2026-08-31", "over REST", "beta", "404"]
+
+
+def test_devpost_fields_and_track():
+    for title in FIELDS:
+        assert _section(DEVPOST, title).strip(), f"empty or missing field: {title}"
+    assert _section(DEVPOST, "Track").strip() == "Best Apps and Agents"
+
+
+def test_devpost_tagline_is_short():
+    assert len(_section(DEVPOST, "Tagline").strip()) <= 200  # assumed Devpost limit: confirm on the form
+
+
+def test_devpost_names_the_sponsor_pieces_and_model_ids():
+    description = _section(DEVPOST, "Description")
+    assert [s for s in SPONSORS + MODELS if s not in description] == []
+
+
+def test_devpost_period_paragraph_matches_the_changelog():
+    first = re.search(r"first commit is (\w+ \d+, \d{4})", CHANGELOG)
+    assert first, "CHANGELOG.md must state the date of the first commit"
+    assert first.group(1) in _section(DEVPOST, "What changed during the submission period")
 
 
 def test_every_feedback_finding_cites_a_source():

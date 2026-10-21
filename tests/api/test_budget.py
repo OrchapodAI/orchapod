@@ -12,8 +12,7 @@ import pytest
 
 from api.executor import run_workflow as ex
 from api.models.db import NodeRun, NodeStatus, RunStatus, Spend, utcnow
-from sqlalchemy.ext.asyncio import async_sessionmaker
-from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.services import budget
 from tests.api.test_executor import FakeProvider, drain, launched, nodes, provider, seed  # noqa: F401 (fixtures)
 

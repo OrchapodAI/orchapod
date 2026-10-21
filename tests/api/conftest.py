@@ -17,9 +17,8 @@ import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.pool import StaticPool
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlmodel import SQLModel
-from sqlmodel.ext.asyncio.session import AsyncSession
 
 # Set required env vars before importing the app
 os.environ.setdefault("DATABASE_URL",           "sqlite+aiosqlite:///:memory:")
@@ -53,6 +52,15 @@ async def db():
         yield session
 
     await engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def no_grants():
+    """Budget grants live in this process (services/budget._granted): none leaks from one test into the next."""
+    from api.services import budget
+    budget._granted.clear()
+    yield
+    budget._granted.clear()
 
 
 @pytest.fixture

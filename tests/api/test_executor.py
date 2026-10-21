@@ -10,9 +10,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import select
-from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.executor import run_workflow as ex
 from api.models.db import Artifact, ArtifactKind, NodeRun, NodeStatus, Run, RunStatus, Workflow

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { api, apiDate, explainError } from "@/lib/api";
-import { applyRunEvent, canRetry, type RunViewState } from "@/lib/runEvents";
+import { applyRunEvent, canRetry, finished, type RunViewState } from "@/lib/runEvents";
 import { useRunStream } from "@/lib/ws";
 import { StatusBadge } from "@/components/StatusBadge";
 import { LogStream, type LogLine } from "@/components/runs/LogStream";
@@ -228,7 +228,7 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
 
             {tab === "artifacts" && (
               <div className="card" style={{ padding: 16 }}>
-                <ArtifactList artifacts={artifacts} done={!canCancel && run.status !== "pending"} />
+                <ArtifactList artifacts={artifacts} done={finished(run.status)} />
               </div>
             )}
 

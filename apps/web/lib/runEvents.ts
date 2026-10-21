@@ -19,6 +19,9 @@ export function applyRunEvent(s: RunViewState, e: WsEvent): RunViewState {
 /** The API retries a node only in a stopped run (409 otherwise). */
 export const canRetry = (status: RunStatus) => status === "failed" || status === "cancelled";
 
+/** A run that will change no more (until a retry). */
+export const finished = (status: RunStatus) => status === "succeeded" || canRetry(status);
+
 /** One side of the compare playground. */
 export interface CompareSide { text: string; done: boolean; usd: number | null; error?: string }
 

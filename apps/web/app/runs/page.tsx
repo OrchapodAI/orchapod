@@ -68,7 +68,8 @@ export default function RunsPage() {
 
   function load() {
     setLoading(true); setError("");
-    Promise.all([api.runs.list(), api.workflows.list()])
+    // ponytail: newest 500 runs; use NEXT_PUBLIC_GOLDEN_RUN_ID once D8 fixes the id
+    Promise.all([api.runs.list(undefined, 500), api.workflows.list()])
       .then(([rs, wfs]) => { setRuns(rs); setWorkflows(wfs); })
       .catch((err) => { setError(explainError(err)); toastError("Couldn't load runs")(err); })
       .finally(() => setLoading(false));
@@ -164,7 +165,7 @@ export default function RunsPage() {
             <h3 style={{ fontWeight: 500 }}>{error ? "Couldn't load runs" : search ? "No runs match your filter" : "No runs yet"}</h3>
             <p className="muted" style={{ fontSize: 13.5, marginTop: 6, maxWidth: 520 }}>
               {error ? <>{error} <span style={{ whiteSpace: "nowrap" }}>↻ Refresh tries again.</span></> : <>
-                Press Run on a template on the <Link href="/agent" style={{ color: "var(--brand)", fontWeight: 500 }}>Agent</Link> page,
+                Press Run on a template on the <Link href="/agent" style={{ color: "var(--brand)", fontWeight: 500, textDecoration: "underline" }}>Agent</Link> page,
                 or open a workflow and click <span style={{ color: "var(--brand)", fontWeight: 500 }}>Run</span>.
               </>}
             </p>

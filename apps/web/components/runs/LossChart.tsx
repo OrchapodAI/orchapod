@@ -6,6 +6,7 @@ import {
 } from "recharts";
 import { api, toastError } from "@/lib/api";
 import { lossPoints, lossSources, TRAINERS } from "@/lib/results";
+import { finished } from "@/lib/runEvents";
 import type { RunSummary, WsEvent } from "@/lib/types";
 
 /** Training loss: each fine-tune node's loss_curve on load (finished and seeded runs; events have no replay), then live
@@ -16,6 +17,7 @@ export function LossChart({ summary, events }: { summary: RunSummary; events: Ws
   const [files, setFiles] = useState<Record<string, unknown[]>>({});
 
   // A curve that is not in the metrics meta is in the file behind its download link (fetched once, when the tab opens).
+  // ponytail: delete when unsloth-train writes its curve via io.write_metrics (ml-w4)
   useEffect(() => {
     let live = true;
     for (const url of urls ? urls.split("\n") : []) {
@@ -41,8 +43,9 @@ export function LossChart({ summary, events }: { summary: RunSummary; events: Ws
     return (
       <div className="flex items-center justify-center h-full text-slate-700 text-sm">
         {loading ? "Loading the loss curve…"
-          : summary.nodes.some((n) => TRAINERS.has(n.type)) ? "Loss chart will appear once training starts"
-          : "This run has no training node, so there is no loss to chart."}
+          : !summary.nodes.some((n) => TRAINERS.has(n.type)) ? "This run has no training node, so there is no loss to chart."
+          : finished(summary.status) ? "No loss was recorded for this run."
+          : "Loss chart will appear once training starts"}
       </div>
     );
   }

@@ -192,7 +192,7 @@ export default function CanvasPage() {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "center", justifyContent: "center", height: "100%", padding: 16 }}>
         {loadError ? <>
-          <span role="alert" style={{ fontSize: 13, color: "var(--rose-ink)" }}>{loadError}</span>
+          <span style={{ fontSize: 13, color: "var(--rose-ink)" }}>{loadError}</span>
           <Link href="/workflows" className="btn btn-sm" style={{ textDecoration: "none" }}>← Workflows</Link>
         </> : <span className="muted">Loading…</span>}
       </div>

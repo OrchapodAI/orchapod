@@ -144,7 +144,7 @@ export default function AgentPage() {
               : !templates ? <p className="muted" style={{ fontSize: 13 }}>Loading templates…</p>
               : templates.length === 0 ? (
                 <p className="muted" style={{ fontSize: 13, gridColumn: "1 / -1" }}>
-                  No templates on this server (apps/api/agent/templates/ is empty). Describe what you want above and press Plan.
+                  No templates are available yet. Describe what you want above and press Plan.
                 </p>
               )
               : templates.map((t) => { const cap = capNote(t); return (
@@ -162,7 +162,7 @@ export default function AgentPage() {
                   </div>
                   {cap && (
                     <p id={`cap-${t.slug}`} style={{ fontSize: 12, fontWeight: 400, color: "var(--amber-ink)" }}>
-                      {cap.text}; <Link href={cap.href}>watch the golden run</Link>
+                      {cap.text}; <Link href={cap.href} style={{ color: "var(--brand)", textDecoration: "underline" }}>watch the golden run</Link>
                     </p>
                   )}
                 </div>

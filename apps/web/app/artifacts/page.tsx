@@ -111,7 +111,7 @@ export default function ArtifactsPage() {
             </p>
             {!error && (
               <p className="muted" style={{ fontSize: 13, marginTop: 4 }}>
-                Press Run on a template on the <Link href="/agent" style={{ color: "var(--brand)" }}>Agent</Link> page to make a dataset, a model or an eval.
+                Press Run on a template on the <Link href="/agent" style={{ color: "var(--brand)", textDecoration: "underline" }}>Agent</Link> page to make a dataset, a model or an eval.
               </p>
             )}
           </div>

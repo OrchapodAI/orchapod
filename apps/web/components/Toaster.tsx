@@ -1,11 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { TOAST_EVENT } from "@/lib/api";
 
-/** Shows what toast() raises (failed fetches and actions): bottom right, each for 8 s or until dismissed, at most 3. */
+const SHOW_MS = 8000;
+const short = (s: string) => (s.length > 60 ? `${s.slice(0, 60)}…` : s);
+
+/** Shows what toast() raises (failed fetches and actions): bottom right, at most 3, each until dismissed or for 8 s of time
+ *  the stack is neither hovered nor focused. The one always-mounted live region announces each new toast. */
 export function Toaster() {
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
+  const [hover, setHover] = useState(false);
+  const [focus, setFocus] = useState(false);
   const drop = (id: number) => setToasts((ts) => ts.filter((t) => t.id !== id));
 
   useEffect(() => {
@@ -13,24 +19,40 @@ export function Toaster() {
     const show = (e: Event) => {
       const id = ++next, text = String((e as CustomEvent).detail);
       setToasts((ts) => [...ts.filter((t) => t.text !== text), { id, text }].slice(-3)); // a repeated failure shows once
-      setTimeout(() => drop(id), 8000);
     };
     window.addEventListener(TOAST_EVENT, show);
     return () => window.removeEventListener(TOAST_EVENT, show);
   }, []);
 
   return (
-    <div style={{ position: "fixed", right: 16, bottom: 16, zIndex: 1000, display: "flex", flexDirection: "column", gap: 8, width: 380, maxWidth: "calc(100vw - 32px)" }}>
+    <div aria-live="assertive" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      onFocus={() => setFocus(true)} onBlur={(e) => setFocus(e.currentTarget.contains(e.relatedTarget))}
+      style={{ position: "fixed", right: 16, bottom: 16, zIndex: 1000, display: "flex", flexDirection: "column", gap: 8, width: 380, maxWidth: "calc(100vw - 32px)" }}>
       {toasts.map((t) => (
-        <div key={t.id} role="alert" className="row" style={{
-          gap: 8, alignItems: "flex-start", padding: "10px 12px", borderRadius: 8, fontSize: 13, lineHeight: 1.5,
-          background: "var(--rose-soft)", border: "1px solid var(--rose)", color: "var(--rose-ink)", boxShadow: "var(--sh-3)",
-        }}>
-          <span style={{ flex: 1, minWidth: 0, wordBreak: "break-word" }}>{t.text}</span>
-          <button type="button" className="btn btn-sm btn-ghost" aria-label="Dismiss" onClick={() => drop(t.id)}
-            style={{ color: "inherit", padding: "0 6px" }}>×</button>
-        </div>
+        // a removed button takes focus with it without a blur event, so Dismiss clears the focus pause itself
+        <Toast key={t.id} text={t.text} paused={hover || focus} onDone={() => drop(t.id)} onDismiss={() => { setFocus(false); drop(t.id); }} />
       ))}
+    </div>
+  );
+}
+
+/** One toast. Its timer counts only while unpaused: pausing keeps the time left. */
+function Toast({ text, paused, onDone, onDismiss }: { text: string; paused: boolean; onDone: () => void; onDismiss: () => void }) {
+  const left = useRef(SHOW_MS);
+  useEffect(() => {
+    if (paused) return;
+    const start = Date.now(), timer = setTimeout(onDone, left.current);
+    return () => { clearTimeout(timer); left.current -= Date.now() - start; };
+  }, [paused]); // onDone only drops this toast's id, so the first one serves
+
+  return (
+    <div className="row" style={{
+      gap: 8, alignItems: "flex-start", padding: "10px 12px", borderRadius: 8, fontSize: 13, lineHeight: 1.5,
+      background: "var(--rose-soft)", border: "1px solid var(--rose)", color: "var(--rose-ink)", boxShadow: "var(--sh-3)",
+    }}>
+      <span style={{ flex: 1, minWidth: 0, wordBreak: "break-word" }}>{text}</span>
+      <button type="button" className="btn btn-sm btn-ghost" aria-label={`Dismiss: ${short(text)}`} onClick={onDismiss}
+        style={{ color: "inherit", padding: "0 6px" }}>×</button>
     </div>
   );
 }

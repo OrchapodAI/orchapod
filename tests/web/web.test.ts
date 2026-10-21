@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { yamlValue, buildYamlFromGraph, planYaml } from "../../apps/web/lib/workflowYaml.ts";
 import { api, apiDate, capNote, demoNote, explainError, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
-import { applyCompareEvent, applyRunEvent, canRetry } from "../../apps/web/lib/runEvents.ts";
+import { applyCompareEvent, applyRunEvent, canRetry, finished } from "../../apps/web/lib/runEvents.ts";
 import { defaultInputs, NODE_FORMS } from "../../apps/web/lib/nodeForms.ts";
 import { datasetOf, evalOf, lossPoints, lossSources, modelRefsOf } from "../../apps/web/lib/results.ts";
 
@@ -96,7 +96,11 @@ test("the run page reads GET /runs/{id}/summary and retries with POST /runs/{id}
   };
   await api.runs.summary("r1");
   await api.runs.retry("r1", "prep");
-  assert.deepEqual(calls, ["GET http://localhost:8001/runs/r1/summary", "POST http://localhost:8001/runs/r1/nodes/prep/retry"]);
+  await api.runs.list(undefined, 500); // /runs asks for 500: the seeded golden run keeps its old timestamps
+  await api.runs.list("w1");
+  await api.runs.list();
+  assert.deepEqual(calls, ["GET http://localhost:8001/runs/r1/summary", "POST http://localhost:8001/runs/r1/nodes/prep/retry",
+    "GET http://localhost:8001/runs?limit=500", "GET http://localhost:8001/runs?workflow_id=w1", "GET http://localhost:8001/runs"]);
 });
 
 test("run events drive the cost meter, the run status and each node's status and verbatim error", () => {
@@ -116,6 +120,7 @@ test("run events drive the cost meter, the run status and each node's status and
 test("Retry node is enabled only once the run has stopped (failed or cancelled)", () => {
   const statuses = ["pending", "provisioning_gpu", "running", "succeeded", "failed", "cancelled"] as const;
   assert.deepEqual(statuses.filter(canRetry), ["failed", "cancelled"]);
+  assert.deepEqual(statuses.filter(finished), ["succeeded", "failed", "cancelled"]); // the loss chart's and artifact list's "this run is over"
 });
 
 test("dropped nodes start from contract defaults: no teacher_kind, vllm-serve keep-alive 30 min", () => {
@@ -278,8 +283,6 @@ test("the demo banner says what a run costs (the estimates one-click Run uses) a
   assert.equal(demoNote([template(0.15, true), template(0.88, false), template(0.02)]),
     "Every run shows its estimated cost before you press Run: $0.02 to $0.88 for the templates below. "
     + "Public runs are capped per run and per day; a template above the per-run cap links to its golden run instead.");
-  assert.equal(demoNote([template(0.15)]),
-    "Every run shows its estimated cost before you press Run: $0.15 for the template below. Public runs are capped per run and per day.");
 });
 
 test("a failed fetch with no error display of its own raises one readable toast", () => {
@@ -287,11 +290,15 @@ test("a failed fetch with no error display of its own raises one readable toast"
   Object.assign(globalThis, { dispatchEvent: (e: CustomEvent) => raised.push(e) });
   try {
     toastError("Couldn't load runs")(new TypeError("Failed to fetch"));
+    // a non-JSON error body (S3 AccessDenied XML names the bucket, key and request id) is cut to 300 characters
+    toastError("Couldn't load the loss curve")(Object.assign(new Error("403"), { status: 403, path: "/x", body: "<Error>" + "k".repeat(500) }));
   } finally {
     delete (globalThis as { dispatchEvent?: unknown }).dispatchEvent;
   }
-  assert.deepEqual(raised.map((e) => [e.type, e.detail]),
+  assert.deepEqual(raised.slice(0, 1).map((e) => [e.type, e.detail]),
     [[TOAST_EVENT, "Couldn't load runs: Can't reach the Orchapod API at http://localhost:8001. Is it running?"]]);
+  assert.equal(raised[1].detail.length, 300);
+  assert.match(raised[1].detail, /^Couldn't load the loss curve: 403 on \/x: <Error>k+$/);
 });
 
 test("the loss chart fills on load from each fine-tune node's loss_curve: its metrics meta, else the file behind download_url", () => {
@@ -311,6 +318,9 @@ test("the loss chart fills on load from each fine-tune node's loss_curve: its me
   assert.deepEqual(lossPoints([{ node_id: "tune", rows: tf }], []), [
     { node_id: "tune", step: 1, loss: 1.0, valid_loss: 1.0 }, { node_id: "tune", step: 2, loss: 0.5, valid_loss: 0.5 },
   ]);
+  // a checkpoint with only a validation loss is drawn on that line alone; a row with neither loss is not a point
+  const sparse = [...tf, { step: 3, train_loss: null, valid_loss: 0.4 }, { step: 4, train_loss: null, valid_loss: null }];
+  assert.deepEqual(lossPoints([{ node_id: "tune", rows: sparse }], []).slice(2), [{ node_id: "tune", step: 3, valid_loss: 0.4 }]);
   assert.deepEqual(lossSources(summary([nodeRun("prep", "data-prep")], [art("prep", "metrics_json", { total: 3 })])), []);
 });
 

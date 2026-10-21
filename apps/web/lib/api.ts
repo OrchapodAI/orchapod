@@ -48,9 +48,10 @@ export function explainError(err: unknown): string {
 /** The toast event: toast() raises it and <Toaster /> (components/Toaster.tsx, in the root layout) shows it. */
 export const TOAST_EVENT = "orchapod:toast";
 
-/** Shows `text` as an error toast; outside the browser there is nowhere to show it. */
+/** Shows `text` as an error toast, cut to 300 characters (a storage error body names the bucket, key and request id);
+ *  outside the browser there is nowhere to show it. */
 export function toast(text: string) {
-  globalThis.dispatchEvent?.(new CustomEvent(TOAST_EVENT, { detail: text }));
+  globalThis.dispatchEvent?.(new CustomEvent(TOAST_EVENT, { detail: text.slice(0, 300) }));
 }
 
 /** A .catch() for fetches and actions that have no error display of their own: "<what>: <explainError>" as a toast. */
@@ -71,8 +72,7 @@ export function capNote(t: AgentTemplate): { text: string; href: string } | null
 export function demoNote(templates: AgentTemplate[] | null): string {
   const costs = (templates ?? []).map((t) => (t.reduced ?? t).estimate?.usd).filter((n): n is number => typeof n === "number");
   const low = usd(Math.min(...costs)), high = usd(Math.max(...costs));
-  const range = !costs.length ? "" : costs.length === 1 ? `: ${low} for the template below`
-    : `: ${low === high ? low : `${low} to ${high}`} for the templates below`;
+  const range = costs.length ? `: ${low === high ? low : `${low} to ${high}`} for the templates below` : "";
   const over = templates?.some((t) => t.fits === false) ? "; a template above the per-run cap links to its golden run instead" : "";
   return `Every run shows its estimated cost before you press Run${range}. Public runs are capped per run and per day${over}.`;
 }
@@ -102,9 +102,12 @@ export const api = {
   },
 
   runs: {
-    list(workflowId?: string): Promise<Run[]> {
-      const qs = workflowId ? `?workflow_id=${workflowId}` : "";
-      return req(`/runs${qs}`);
+    /** Newest first; the API's default limit is 50. */
+    list(workflowId?: string, limit?: number): Promise<Run[]> {
+      const qs = new URLSearchParams();
+      if (workflowId) qs.set("workflow_id", workflowId);
+      if (limit) qs.set("limit", String(limit));
+      return req(`/runs${qs.toString() ? `?${qs}` : ""}`); // not qs.size: Safari < 17 lacks it
     },
     get(id: string): Promise<Run> {
       return req(`/runs/${id}`);

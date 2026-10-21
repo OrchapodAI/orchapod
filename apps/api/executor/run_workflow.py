@@ -237,8 +237,9 @@ async def _execute_node(
         stream.cancel()
 
     await db.refresh(node_run)  # outputs and the last ERROR line arrive through /internal webhooks
-    if exit_code != 0:
-        raise NodeFailed(f"exit {exit_code}: {node_run.error}" if node_run.error else f"exit {exit_code}")
+    if exit_code != 0:  # the node's last ERROR line, else why its provider ended the pod (platform-w5's pod.error)
+        raise NodeFailed(f"exit {exit_code}: {node_run.error}" if node_run.error
+                         else getattr(pod, "error", None) or f"exit {exit_code}")
     return node_run.outputs or {}
 
 

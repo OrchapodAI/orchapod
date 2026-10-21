@@ -74,6 +74,8 @@ class FakeProvider:
             nr.outputs = {**(nr.outputs or {}), **step.get("outputs", {})}
             nr.error = step.get("error")
             await self.db.commit()
+        if "pod_error" in step:  # platform-w5's NebiusProvider: why the job ended, set before wait() returns
+            pod.error = step["pod_error"]
         if "exit" in step and step["exit"] is None:
             await asyncio.Event().wait()
         return step.get("exit", 0)
@@ -339,6 +341,22 @@ async def test_an_endpoint_node_without_a_token_fails_before_it_starts(db, provi
     stub = await seed(db, SERVE_ONLY)
     await ex.run_workflow(stub.id, db, AsyncMock(), 1.0)
     assert (await nodes(db, stub))["serve"].status == NodeStatus.SUCCEEDED
+
+
+async def test_why_the_provider_ended_a_pod_is_the_node_error(db, provider, gpu):
+    """A Nebius job that never ran its container (no capacity, preempted) ends with no ERROR line from the node: the
+    provider's reason says more than "exit 1". A node's own last ERROR line still wins."""
+    one = "name: t\nnodes:\n  - {id: train, type: unsloth-train, inputs: {train_data: r2://b/t}}\n"
+    reason = "FAILED NotEnoughResources: no gpu-h100-sxm capacity within 30 min"
+    gpu.script = {"train": {"exit": 1, "pod_error": reason}}
+    capacity = await seed(db, one)
+    await ex.run_workflow(capacity.id, db, AsyncMock(), 1.0)
+    assert (await nodes(db, capacity))["train"].error == reason
+
+    gpu.script = {"train": {"exit": 1, "pod_error": "FAILED ContainerFailed: exit 1", "error": "CUDA out of memory"}}
+    oom = await seed(db, one)
+    await ex.run_workflow(oom.id, db, AsyncMock(), 1.0)
+    assert (await nodes(db, oom))["train"].error == "exit 1: CUDA out of memory"
 
 
 async def test_one_node_run_per_run_and_node(db):

@@ -48,7 +48,7 @@ class DeployRequest(BaseModel):
     keep_alive_min: int = Field(default=60, ge=5, le=1440, description="Minutes before vLLM pod auto-terminates")
     precision: Literal["q4_k_m", "q5_k_m", "q8_0"] = Field(default="q4_k_m", description="GGUF precision (quantize-gguf mode)")
     served_model_name: str | None = Field(default=None, description="Override the model name in /v1/models")
-    hf_token: str | None = Field(default=None, description="HuggingFace token for gated models")
+    # no hf_token: nodes get HF_TOKEN from the executor's env, and a token here would be stored in the workflow
 
 
 class DeployResponse(BaseModel):
@@ -325,8 +325,6 @@ def _build_workflow_yaml(req: DeployRequest) -> tuple[str, str]:
         extra = ""
         if req.served_model_name:
             extra += f"\n      served_model_name: \"{req.served_model_name}\""
-        if req.hf_token:
-            extra += f"\n      hf_token: \"{req.hf_token}\""
         yaml = f"""name: {name}
 version: 1
 nodes:
@@ -344,7 +342,6 @@ nodes:
 
     elif req.mode == "quantize-serve":
         name = f"quantize-serve-{slug}"
-        hf_tok_line = f'\n      hf_token: "{req.hf_token}"' if req.hf_token else ""
         serve_name_line = f'\n      served_model_name: "{req.served_model_name}"' if req.served_model_name else ""
         yaml = f"""name: {name}
 version: 1
@@ -354,7 +351,7 @@ nodes:
     inputs:
       model: "{req.model}"
       method: awq
-      bits: 4{hf_tok_line}
+      bits: 4
     resources:
       gpu: {req.gpu}
       provider_pref:
@@ -376,7 +373,6 @@ nodes:
 
     else:  # quantize-gguf
         name = f"quantize-gguf-{slug}"
-        hf_tok_line = f'\n      hf_token: "{req.hf_token}"' if req.hf_token else ""
         yaml = f"""name: {name}
 version: 1
 nodes:
@@ -385,7 +381,7 @@ nodes:
     inputs:
       model: "{req.model}"
       method: gguf
-      precision: {req.precision}{hf_tok_line}
+      precision: {req.precision}
     resources:
       gpu: {req.gpu}
       provider_pref:

@@ -58,6 +58,23 @@ async def test_deploy_creates_workflow_and_run_in_db(client, db, no_bg_tasks):
     assert "vllm-serve" in workflow.yaml
 
 
+async def test_deploy_never_stores_an_hf_token(client, db, no_bg_tasks):
+    """Nodes get HF_TOKEN from the executor's env (hf-download and quantize take no hf_token input), so a token in a
+    deploy request goes nowhere: never into the stored workflow, its graph or the run."""
+    import json
+    from sqlmodel import select
+    from api.models.db import Run, Workflow
+
+    for mode in ("serve", "quantize-serve", "quantize-gguf"):
+        r = await client.post("/inference/deploy", json={"model": "meta-llama/Llama-3.2-3B-Instruct", "mode": mode,
+                                                          "hf_token": "hf_secret123"})
+        assert r.status_code == 202
+    stored = json.dumps([[w.yaml, w.graph_json] for w in await db.scalars(select(Workflow))]
+                        + [r.inputs for r in await db.scalars(select(Run))])
+    assert stored.count("Llama-3.2-3B") == 6  # three workflows, each in its YAML and its graph
+    assert "hf_token" not in stored and "hf_secret123" not in stored
+
+
 # ---------------------------------------------------------------------------
 # GET /runs/{run_id}
 # ---------------------------------------------------------------------------

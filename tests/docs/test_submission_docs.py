@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-from tests.docs.test_readme import MODELS, README, ROOT, STALE, _read
+from tests.docs.test_readme import BARE_TODO, MODELS, README, ROOT, STALE, _read
 
 
 def _section(text: str, title: str) -> str:
@@ -106,7 +106,7 @@ def test_the_report_is_written_by_lightning_or_a_deterministic_template():
 def test_docs_have_no_stale_strings_or_bare_todos():
     for name, text in DOCS.items():
         assert [s for s in STALE if s in text] == [], name
-        assert not re.search(r"TODO(?!\(D8\))", text), f"{name}: every TODO names its day"
+        assert not re.search(BARE_TODO, text), f"{name}: every TODO names its day"
 
 
 def test_cited_repo_paths_exist():

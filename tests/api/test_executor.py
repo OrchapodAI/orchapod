@@ -126,7 +126,7 @@ def nebius_cli(tmp_path, monkeypatch):
     """`nebius` on the API host's PATH: `iam get-access-token` prints a token; `calls` lists each run's arguments."""
     cli = tmp_path / "bin" / "nebius"
     cli.parent.mkdir()
-    cli.write_text(f'#!/bin/sh\necho "$@" >> {tmp_path / "calls"}\necho " iam-token-1 "\n')
+    cli.write_text(f'#!/bin/sh\necho "$@" >> {tmp_path / "calls"}\necho "Note: a newer CLI is out"\necho " iam-token-1 "\n')
     cli.chmod(0o755)
     monkeypatch.setenv("PATH", f"{cli.parent}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.delenv("NEBIUS_IAM_TOKEN", raising=False)  # hosted: blank, so the CLI signs one
@@ -315,20 +315,26 @@ async def test_only_an_api_node_that_creates_endpoints_gets_a_fresh_iam_token(db
     rows = await nodes(db, run)
     assert "iam-token-1" not in caplog.text + json.dumps([r.inputs for r in rows.values()])
 
-    monkeypatch.setenv("NEBIUS_IAM_TOKEN", "iam-set")  # an explicit token wins (contracts "Config": CLI fallback)
+    monkeypatch.setenv("NEBIUS_IAM_TOKEN", "iam-set")  # a fresh token from the CLI beats a static one, which may be stale
     again = await seed(db, EVERY_RUNTIME)
     await ex.run_workflow(again.id, db, AsyncMock(), 1.0)
+    assert provider.envs["serve"]["NEBIUS_IAM_TOKEN"] == "iam-token-1"
+    assert nebius_cli.calls.read_text() == "iam get-access-token\n" * 2
+    nebius_cli.path.unlink()  # a host without the CLI uses the static token
+    last = await seed(db, EVERY_RUNTIME)
+    await ex.run_workflow(last.id, db, AsyncMock(), 1.0)
     assert [(n, env["NEBIUS_IAM_TOKEN"]) for n, env in {**provider.envs, **gpu.envs}.items()
             if "NEBIUS_IAM_TOKEN" in env] == [("serve", "iam-set")]
-    assert nebius_cli.calls.read_text() == "iam get-access-token\n"
 
 
 SERVE_ONLY = "name: s\nnodes:\n  - {id: serve, type: vllm-serve, inputs: {model: m}}\n"
 
 
 @pytest.mark.parametrize("cli, error", [
-    (None, "no Nebius IAM token: NEBIUS_IAM_TOKEN is blank and the API host has no nebius CLI"),
-    ('echo "not logged in" >&2\nexit 3', "no Nebius IAM token: nebius iam get-access-token exited 3: not logged in"),
+    (None, "no Nebius IAM token: the API host has no nebius CLI, and NEBIUS_IAM_TOKEN is blank or malformed"),
+    # stderr can name profiles, tenants, projects or a federation URL, and node errors are public: never shown
+    ('echo "profile /home/sa/.nebius tenant-e00secret" >&2\nexit 3', "no Nebius IAM token: nebius iam get-access-token exited 3"),
+    ('echo "token: x"\necho "Warning: rotate soon"', "no Nebius IAM token: nebius iam get-access-token printed no token"),
     ("exec sleep 5", "no Nebius IAM token: nebius iam get-access-token took over 0.2 s"),
 ])
 async def test_an_endpoint_node_without_a_token_fails_before_it_starts(db, provider, nebius_cli, endpoint_node,

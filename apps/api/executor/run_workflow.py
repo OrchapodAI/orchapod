@@ -33,6 +33,11 @@ from api.executor.dag import DAGNode, compile_dag
 from api.models.db import Artifact, ArtifactKind, NodeRun, NodeStatus, Run, RunStatus, Workflow, utcnow
 from api.services import budget
 
+try:  # what may go into an Authorization header: no space, no newline
+    from packages.providers.nebius import TOKEN
+except ImportError:  # ponytail: platform-w5's nebius.py defines it; delete this fallback once it is merged here
+    TOKEN = re.compile(r"[A-Za-z0-9._~+/=-]+")
+
 Broadcast = Callable[[uuid.UUID, dict], Awaitable[None]]
 
 log = logging.getLogger("api.executor")
@@ -348,26 +353,29 @@ IAM_TIMEOUT_S = 10
 
 
 async def _iam_token() -> str:
-    """NEBIUS_IAM_TOKEN for an api node that creates Nebius endpoints: the API's own when set, else a fresh one (tokens
-    expire) from the nebius CLI on the API host (R15's profile; node images have no CLI). Never logged; NodeFailed when
-    there is none."""
-    if token := config.env("NEBIUS_IAM_TOKEN").strip():
-        return token
+    """NEBIUS_IAM_TOKEN for an api node that creates Nebius endpoints: a fresh one (tokens expire) from the nebius CLI on
+    the API host (R15's profile; node images have no CLI), whose last stdout line must look like a token; the API's own
+    NEBIUS_IAM_TOKEN only on a host without the CLI. NodeFailed otherwise, with a fixed message: node errors are public,
+    and the CLI's stderr can name profiles, tenants and projects. The token is never logged."""
     try:
         cli = await asyncio.create_subprocess_exec("nebius", "iam", "get-access-token", stdout=asyncio.subprocess.PIPE,
                                                    stderr=asyncio.subprocess.PIPE)
     except OSError:
-        raise NodeFailed("no Nebius IAM token: NEBIUS_IAM_TOKEN is blank and the API host has no nebius CLI")
+        if TOKEN.fullmatch(token := config.env("NEBIUS_IAM_TOKEN").strip()):
+            return token
+        raise NodeFailed("no Nebius IAM token: the API host has no nebius CLI, and NEBIUS_IAM_TOKEN is blank or malformed")
     try:
-        out, err = await asyncio.wait_for(cli.communicate(), IAM_TIMEOUT_S)
+        out, _ = await asyncio.wait_for(cli.communicate(), IAM_TIMEOUT_S)
     except TimeoutError:
         cli.kill()
         await cli.wait()
         raise NodeFailed(f"no Nebius IAM token: nebius iam get-access-token took over {IAM_TIMEOUT_S:g} s")
-    if cli.returncode or not out.strip():
-        raise NodeFailed(f"no Nebius IAM token: nebius iam get-access-token exited {cli.returncode}: "
-                         f"{err.decode(errors='replace').strip()[-200:]}")
-    return out.decode().strip()
+    if cli.returncode:
+        raise NodeFailed(f"no Nebius IAM token: nebius iam get-access-token exited {cli.returncode}")
+    token = (out.decode(errors="replace").strip().splitlines() or [""])[-1].strip()
+    if not TOKEN.fullmatch(token):
+        raise NodeFailed("no Nebius IAM token: nebius iam get-access-token printed no token")
+    return token
 
 
 def node_order(workflow: Workflow | None, run: Run) -> list[str]:

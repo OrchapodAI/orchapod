@@ -180,3 +180,8 @@ worktrees:
   - Ledger: data-w4 fix rounds 1/5, 0 open. Merged; make check green (617 + web 27).
   - Open for spike 3: web-research keeps Tavily's reply order; the docs template's cap assumes request order.
   - The data-prep image needs rebuilding (E2E=1 does it).
+- 2026-10-21T13:30Z qa-w3 review (sonnet): Needs fixes; harness hygiene and assertion strength rated above the bar.
+  - Important: test_e2e_agent.py:45 (addressed in c301b8f, verify in re-review); `--strict` makes E2E=1 red until ml-w4; the reviewed head was not the live tree.
+  - Ruling: drop --strict from the Makefile until ml-w4 merges (keep it in the script; ml-w4's acceptance = `e2e_agent --stub --strict` 3 PASS; the SKIP layer is deleted then) — a red gate for a known later-wave dependency hides real regressions.
+  - Minors M1–M8 + ponytail -14 sent (incl. e2e API port starts at 8003, never 8002; logic tests never reach Docker; ui-smoke is orchestrator-only; required node types per intent).
+  - Fix round 1 → a502aee2a0e17a685. Docker: no fake vllm-serve:dev remains. Leftover :ml-w3 images (hf-download, quantize) to remove after wave 4.

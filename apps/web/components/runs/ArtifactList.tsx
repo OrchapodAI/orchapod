@@ -1,7 +1,8 @@
 "use client";
 
 import { Database, Box, BarChart2, FileText, Globe, Download } from "lucide-react";
-import type { Artifact } from "@/lib/types";
+import { BASE } from "@/lib/api";
+import type { RunSummary } from "@/lib/types";
 
 const KIND_META: Record<string, { icon: React.ElementType; accent: string; bg: string }> = {
   dataset:  { icon: Database,  accent: "#0065FF", bg: "#DEEBFF" },
@@ -11,15 +12,7 @@ const KIND_META: Record<string, { icon: React.ElementType; accent: string; bg: s
   endpoint: { icon: Globe,     accent: "#DE350B", bg: "#FFEBE6" },
 };
 
-function formatBytes(bytes: number | null) {
-  if (!bytes) return null;
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
-  return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
-}
-
-export function ArtifactList({ artifacts }: { artifacts: Artifact[] }) {
+export function ArtifactList({ artifacts }: { artifacts: RunSummary["artifacts"] }) {
   if (artifacts.length === 0) {
     return (
       <p className="text-sm text-[#97A0AF] italic py-4">
@@ -33,7 +26,6 @@ export function ArtifactList({ artifacts }: { artifacts: Artifact[] }) {
       {artifacts.map((art) => {
         const meta = KIND_META[art.kind] ?? KIND_META["log"];
         const Icon = meta.icon;
-        const size = formatBytes(art.size_bytes);
 
         return (
           <div
@@ -53,9 +45,8 @@ export function ArtifactList({ artifacts }: { artifacts: Artifact[] }) {
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              {size && <span className="text-[11px] text-[#6B778C]">{size}</span>}
               <a
-                href={art.uri}
+                href={art.download_url ? `${BASE}${art.download_url}` : art.uri}
                 target="_blank"
                 rel="noreferrer"
                 download

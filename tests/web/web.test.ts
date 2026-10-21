@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { yamlValue, buildYamlFromGraph, planYaml } from "../../apps/web/lib/workflowYaml.ts";
 import { api, explainError } from "../../apps/web/lib/api.ts";
+import { applyRunEvent, canRetry } from "../../apps/web/lib/runEvents.ts";
 import { defaultInputs } from "../../apps/web/lib/nodeForms.ts";
 
 const node = (id: string, node_type: string, inputs: Record<string, unknown>) =>
@@ -79,6 +80,36 @@ test("explainError turns each agent failure into a readable sentence", () => {
   assert.match(explainError(http(502, "/agent/plan", { detail: "token_factory server 503" })), /Token Factory/);
   assert.match(explainError(http(503, "/agent/plan", { detail: "kill switch" })), /kill switch/);
   assert.equal(explainError(http(500, "/agent/plan", "Internal Server Error")), "500 on /agent/plan: Internal Server Error");
+});
+
+test("the run page reads GET /runs/{id}/summary and retries with POST /runs/{id}/nodes/{node_id}/retry", async () => {
+  const calls: string[] = [];
+  globalThis.fetch = async (url: string, init?: RequestInit) => {
+    calls.push(`${init?.method ?? "GET"} ${url}`);
+    return new Response("{}");
+  };
+  await api.runs.summary("r1");
+  await api.runs.retry("r1", "prep");
+  assert.deepEqual(calls, ["GET http://localhost:8001/runs/r1/summary", "POST http://localhost:8001/runs/r1/nodes/prep/retry"]);
+});
+
+test("run events drive the cost meter, the run status and each node's status and verbatim error", () => {
+  const view = {
+    run: { status: "running", cost_usd: null },
+    summary: { nodes: [{ node_id: "prep", status: "running", error: null }, { node_id: "train", status: "pending", error: null }] },
+  } as never;
+  assert.equal(applyRunEvent(view, { type: "run_cost", cost_usd: 0.0123 }).run.cost_usd, 0.0123);
+  assert.equal(applyRunEvent(view, { type: "run_status", status: "failed", error: "x" }).run.status, "failed");
+  const error = 'exit 1: token_factory bad_request 400: {"detail": "no price"}\n  second line';
+  const failed = applyRunEvent(view, { type: "node_status", node_id: "prep", status: "failed", error });
+  assert.deepEqual(failed.summary.nodes.map((n) => [n.status, n.error]), [["failed", error], ["pending", null]]);
+  assert.equal(applyRunEvent(failed, { type: "node_status", node_id: "prep", status: "running" }).summary.nodes[0].error, null);
+  assert.equal(applyRunEvent(view, { type: "log", node_id: "prep", ts: "", level: "INFO", message: "hi" }), view);
+});
+
+test("Retry node is enabled only once the run has stopped (failed or cancelled)", () => {
+  const statuses = ["pending", "provisioning_gpu", "running", "succeeded", "failed", "cancelled"] as const;
+  assert.deepEqual(statuses.filter(canRetry), ["failed", "cancelled"]);
 });
 
 test("dropped nodes start from contract defaults: no teacher_kind, vllm-serve keep-alive 30 min", () => {

@@ -84,6 +84,19 @@ export interface Artifact {
   created_at: string;
 }
 
+/** GET /runs/{id}/summary (docs/contracts.md "Run control API"). */
+export interface RunSummary {
+  run_id: string;
+  status: RunStatus;
+  cost_usd: number;
+  error: string | null;
+  nodes: { node_id: string; type: string; status: NodeStatus; usd: number; error: string | null;
+           started_at: string | null; finished_at: string | null }[];
+  /** download_url is an API path (/artifacts/{id}/download) for r2:// artifacts, else null. */
+  artifacts: { id: string; node_id: string; name: string; kind: Artifact["kind"]; uri: string;
+               download_url: string | null; meta: Record<string, unknown> }[];
+}
+
 // ── Registry ─────────────────────────────────────────────────────────────────
 
 export type NodeType =
@@ -268,7 +281,7 @@ export interface AgentReport {
 export type WsEvent =
   | { type: "run_status"; status: RunStatus; error?: string }
   | { type: "run_cost"; cost_usd: number }
-  | { type: "node_status"; node_id: string; status: NodeStatus; outputs?: Record<string, string> }
+  | { type: "node_status"; node_id: string; status: NodeStatus; outputs?: Record<string, string>; error?: string }
   | { type: "log"; node_id: string; ts: string; level: string; message: string }
   | { type: "progress"; node_id: string; step: number; total?: number; loss?: number }
   | { type: "artifact"; node_id: string; name: string; uri: string; kind: string; expires_at?: string }

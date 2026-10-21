@@ -3,11 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { api, apiDate, explainError } from "@/lib/api";
-import { applyRunEvent, canRetry, type RunViewState } from "@/lib/runEvents";
+import { applyRunEvent, canRetry, finished, type RunViewState } from "@/lib/runEvents";
 import { useRunStream } from "@/lib/ws";
 import { StatusBadge } from "@/components/StatusBadge";
 import { LogStream, type LogLine } from "@/components/runs/LogStream";
-import { LossChart, type ProgressPoint } from "@/components/runs/LossChart";
+import { LossChart } from "@/components/runs/LossChart";
 import { NodeTimeline } from "@/components/runs/NodeTimeline";
 import { ArtifactList } from "@/components/runs/ArtifactList";
 import { EvalView } from "@/components/runs/EvalView";
@@ -73,16 +73,6 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
         level:   (e as { level: string }).level,
         node_id: (e as { node_id: string }).node_id,
         message: (e as { message: string }).message,
-      }));
-  }, [events]);
-
-  const progressPoints = useMemo<ProgressPoint[]>(() => {
-    return events
-      .filter((e) => e.type === "progress" && (e as { loss?: number }).loss != null)
-      .map((e) => ({
-        step:    (e as { step: number }).step,
-        loss:    (e as { loss: number }).loss,
-        node_id: (e as { node_id: string }).node_id,
       }));
   }, [events]);
 
@@ -231,14 +221,14 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
                   <span className="muted mono" style={{ fontSize: 10.5, letterSpacing: "0.06em", textTransform: "uppercase" }}>Training Loss</span>
                 </div>
                 <div style={{ flex: 1, padding: 16 }}>
-                  <LossChart data={progressPoints} />
+                  <LossChart summary={summary} events={events} />
                 </div>
               </div>
             )}
 
             {tab === "artifacts" && (
               <div className="card" style={{ padding: 16 }}>
-                <ArtifactList artifacts={artifacts} />
+                <ArtifactList artifacts={artifacts} done={finished(run.status)} />
               </div>
             )}
 

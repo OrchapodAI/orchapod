@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { api, toastError } from "@/lib/api";
 import type { BaseModel, PublicDataset, TrainingMethod } from "@/lib/types";
 
 type Tab = "Models" | "Datasets" | "Methods";
@@ -13,9 +13,11 @@ export default function RegistryPage() {
   const [methods, setMethods] = useState<TrainingMethod[]>([]);
 
   useEffect(() => {
-    api.registry.models().then((r) => setModels(r.models));
-    api.registry.datasets().then((r) => setDatasets(r.datasets));
-    api.registry.methods().then((r) => setMethods(r.methods));
+    Promise.all([ // each list shows when it arrives; one outage is one toast
+      api.registry.models().then((r) => setModels(r.models)),
+      api.registry.datasets().then((r) => setDatasets(r.datasets)),
+      api.registry.methods().then((r) => setMethods(r.methods)),
+    ]).catch(toastError("Couldn't load the registry"));
   }, []);
 
   return (

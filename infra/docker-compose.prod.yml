@@ -72,6 +72,7 @@ services:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
     healthcheck:
+      # once backend-w4 makes /health deep, point this at its shallow /livez, or a Postgres outage restarts the api every minute
       test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8000/health"]
       interval: 30s
       timeout: 5s

@@ -4,6 +4,7 @@
 # (every minute), the nightly database backup and a weekly prune of the dangling images that rebuilds leave.
 # SSH access comes from the console's SSH key field. If the console drops it once user data is set, add:
 #   users: [default, {name: hari, sudo: "ALL=(ALL) NOPASSWD:ALL", shell: /bin/bash, ssh_authorized_keys: ["<your public key>"]}]
+ssh_pwauth: false
 package_update: true
 package_upgrade: true
 packages: [docker.io, docker-compose-v2, docker-buildx, rsync, ufw, unattended-upgrades]

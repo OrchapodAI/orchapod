@@ -197,6 +197,29 @@ def test_check_report_says_what_is_missing():
     assert any("exit 1: boom" in p for p in problems) and not any("report" in p for p in problems), problems
 
 
+def test_a_run_that_outlives_the_limit_is_cancelled_with_the_token_agent_run_returned(monkeypatch):
+    """An anonymous cancel without the run's token is a 403 (contracts "Run control API"), and /agent/run returns it once."""
+    monkeypatch.setattr(demo, "LIMIT_S", 0)
+    monkeypatch.setattr(demo, "preflight", lambda: [])  # past the Docker guard of this file: the plan is good, the run never ends
+    monkeypatch.setattr(demo, "build_images", lambda types: None)
+    posts = []
+
+    def handler(request):
+        path = request.url.path
+        if path == "/agent/plan":
+            return httpx.Response(200, json={"plan": I2["plan"], "rationale": "", "estimate": I2["estimate"], "warnings": [], "errors": []})
+        if path == "/agent/run":
+            return httpx.Response(201, json={"run_id": "r1", "workflow_id": "w1", "estimate": I2["estimate"], "cancel_token": "tok-agent"})
+        if request.method == "GET":
+            return httpx.Response(200, json=good_report() | {"status": "running", "ready": False, "markdown": None})
+        posts.append((path, request.headers.get("x-orchapod-cancel-token")))
+        return httpx.Response(200, json={"id": "r1"})
+
+    api = httpx.Client(base_url="http://api", transport=httpx.MockTransport(handler))
+    assert agent.run_one(api, "intent #2", I2["intent"], I2, "2") == "FAIL"  # it did not end within the limit
+    assert posts == [("/runs/r1/cancel", "tok-agent")]
+
+
 def eval_summary(**changes):
     verdict = {"i": 0, "question": "q", "reference": "r", "context": None, "source_url": None, "base": "a", "tuned": "b",
                "base_correct": None, "tuned_correct": None, "verdict": "win", "error": None,

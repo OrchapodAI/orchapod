@@ -155,8 +155,10 @@ def run_one(c: httpx.Client, label: str, intent: str, template: dict | None, num
     if problems:
         show("FAIL", label, problems)
         return "FAIL"
-    run_id = demo.call(c, "POST", "/agent/run", json={"intent": intent, "plan": plan})["run_id"]
-    report, seconds = demo.poll_run(c, run_id, f"/agent/runs/{run_id}/report", done=lambda r: r["ready"])
+    started = demo.call(c, "POST", "/agent/run", json={"intent": intent, "plan": plan})  # run_id, cancel_token (once), ...
+    run_id = started["run_id"]
+    report, seconds = demo.poll_run(c, run_id, f"/agent/runs/{run_id}/report", done=lambda r: r["ready"],
+                                    cancel_token=started["cancel_token"])
     problems = check_report(report, intent, plan)
     if seconds >= demo.LIMIT_S:
         problems.append(f"the run did not end within {demo.LIMIT_S} s, so it was cancelled")

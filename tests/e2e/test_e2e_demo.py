@@ -270,24 +270,61 @@ def test_extra_env_lands_last_but_the_stub_basics_stay(tmp_path):
     assert env["ORCHAPOD_ANON_SCALE"] == "1" and env["STUB"] == "1" and env["ORCHAPOD_KILL_SWITCH"] == "0"
 
 
-def test_poll_run_cancels_a_run_that_outlives_the_limit(monkeypatch):
+RUNNING = {"status": "running", "nodes": [{"node_id": "a", "status": "running"}]}
+
+
+def test_poll_run_cancels_a_run_that_outlives_the_limit_with_its_cancel_token(monkeypatch):
+    """An anonymous cancel without the run's token is a 403 (contracts "Run control API"), and the e2e's API has no admin."""
     seen = []
 
     def api(request):
-        seen.append((request.method, request.url.path))
-        return httpx.Response(200, json={"status": "running", "nodes": [{"node_id": "a", "status": "running"}]})
+        seen.append((request.method, request.url.path, request.headers.get("x-orchapod-cancel-token")))
+        return httpx.Response(200, json=RUNNING)
 
     monkeypatch.setattr(e2e, "LIMIT_S", 0)
-    reply, _ = e2e.poll_run(httpx.Client(base_url="http://api", transport=httpx.MockTransport(api)), "r1", "/runs/r1/summary")
+    reply, _ = e2e.poll_run(httpx.Client(base_url="http://api", transport=httpx.MockTransport(api)), "r1", "/runs/r1/summary",
+                            cancel_token="tok-1")
     assert reply["status"] == "running"
-    assert seen == [("GET", "/runs/r1/summary"), ("POST", "/runs/r1/cancel")]
+    assert seen == [("GET", "/runs/r1/summary", None), ("POST", "/runs/r1/cancel", "tok-1")]
+
+
+def test_a_cancel_the_api_refuses_is_a_failure_but_a_run_that_just_ended_is_not(monkeypatch):
+    monkeypatch.setattr(e2e, "LIMIT_S", 0)
+
+    def client(cancel_status):
+        def api(request):
+            if request.method == "POST":
+                return httpx.Response(cancel_status, json={"detail": "cancelling this run needs its cancel token"})
+            return httpx.Response(200, json=RUNNING)
+
+        return httpx.Client(base_url="http://api", transport=httpx.MockTransport(api))
+
+    with pytest.raises(RuntimeError, match="POST /runs/r1/cancel -> HTTP 403: .*cancel token"):
+        e2e.poll_run(client(403), "r1", "/runs/r1/summary", cancel_token="wrong")  # it would run on: say so, never "so it was cancelled"
+    reply, _ = e2e.poll_run(client(409), "r1", "/runs/r1/summary", cancel_token="tok-1")  # 409: it ended while we asked
+    assert reply["status"] == "running"
+
+
+def test_run_plan_cancels_with_the_token_start_returned(monkeypatch):
+    monkeypatch.setattr(e2e, "LIMIT_S", 0)
+    posts = []
+
+    def api(request):
+        if request.method == "GET":
+            return httpx.Response(200, json=RUNNING)
+        posts.append((request.url.path, request.headers.get("x-orchapod-cancel-token")))
+        made = {"/workflows": {"id": "w1"}, "/runs": {"id": "r1"}, "/runs/r1/start": {"id": "r1", "cancel_token": "tok-start"}}
+        return httpx.Response(200, json=made.get(request.url.path, {"id": "r1"}))
+
+    e2e.run_plan(httpx.Client(base_url="http://api", transport=httpx.MockTransport(api)), INTENT2["plan"])
+    assert posts == [("/workflows", None), ("/runs", None), ("/runs/r1/start", None), ("/runs/r1/cancel", "tok-start")]
 
 
 def test_poll_run_ends_when_the_done_test_says_so(monkeypatch):
     replies = iter([{"status": "succeeded", "ready": False, "nodes": []}, {"status": "succeeded", "ready": True, "nodes": []}])
     monkeypatch.setattr(e2e.time, "sleep", lambda s: None)
     c = httpx.Client(base_url="http://api", transport=httpx.MockTransport(lambda r: httpx.Response(200, json=next(replies))))
-    reply, _ = e2e.poll_run(c, "r1", "/agent/runs/r1/report", done=lambda r: r["ready"])  # terminal is not enough
+    reply, _ = e2e.poll_run(c, "r1", "/agent/runs/r1/report", done=lambda r: r["ready"], cancel_token="tok-1")  # terminal is not enough
     assert reply["ready"] is True
 
 

@@ -243,9 +243,11 @@ def get_templates(c: httpx.Client) -> list[dict]:
     return call(c, "GET", "/agent/templates")
 
 
-def poll_run(c: httpx.Client, run_id: str, path: str, done=lambda reply: reply["status"] in TERMINAL) -> tuple[dict, float]:
+def poll_run(c: httpx.Client, run_id: str, path: str, done=lambda reply: reply["status"] in TERMINAL, *,
+             cancel_token: str) -> tuple[dict, float]:
     """Poll `path` (a /summary-shaped reply: the summary, or an agent report) until done(reply) or LIMIT_S passes (then
-    cancel the run); the last reply and the seconds taken.
+    cancel the run with `cancel_token`, which start or /agent/run returned: the stack has no admin, so an anonymous cancel
+    without it is a 403); the last reply and the seconds taken.
     ponytail: a fixed 2 s poll and no retry of a failed call; add backoff if the API ever flaps."""
     t0 = time.monotonic()
     last = None
@@ -260,10 +262,9 @@ def poll_run(c: httpx.Client, run_id: str, path: str, done=lambda reply: reply["
             break
         time.sleep(2)
     if not done(reply):
-        try:
-            call(c, "POST", f"/runs/{run_id}/cancel", timeout=90)
-        except RuntimeError:
-            pass  # it may have just ended
+        r = c.post(f"/runs/{run_id}/cancel", headers={"X-Orchapod-Cancel-Token": cancel_token}, timeout=90)
+        if r.is_error and r.status_code != 409:  # 409: it ended while we asked; anything else leaves it running
+            raise RuntimeError(f"POST /runs/{run_id}/cancel -> HTTP {r.status_code}: {r.text[:300]}")
     return reply, seconds
 
 
@@ -271,8 +272,8 @@ def run_plan(c: httpx.Client, plan: dict) -> tuple[dict, float]:
     """Create the workflow and a run, start it, poll the summary until it ends or LIMIT_S passes (then cancel it)."""
     wf = call(c, "POST", "/workflows", json={"name": plan.get("name") or "e2e-intent-2", "yaml": plan_yaml(plan)})
     run_id = call(c, "POST", "/runs", json={"workflow_id": wf["id"], "inputs": {}})["id"]
-    call(c, "POST", f"/runs/{run_id}/start")
-    return poll_run(c, run_id, f"/runs/{run_id}/summary")
+    started = call(c, "POST", f"/runs/{run_id}/start")  # RunOut plus cancel_token, once
+    return poll_run(c, run_id, f"/runs/{run_id}/summary", cancel_token=started["cancel_token"])
 
 
 def download(c: httpx.Client, summary: dict, node_id: str, name: str) -> tuple[str, str | None]:

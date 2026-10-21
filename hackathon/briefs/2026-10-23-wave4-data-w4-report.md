@@ -207,3 +207,109 @@ Both full files: 78 passed (73 before).
 - /Users/hari/src/orchapod-hack/.claude/worktrees/data-w4/docs/contracts.md
 - /Users/hari/src/orchapod-hack/.claude/worktrees/data-w4/tests/api/test_agent.py
 - /Users/hari/src/orchapod-hack/.claude/worktrees/data-w4/tests/containers/test_synth_distilabel.py
+
+## Fix round 1 (2026-10-21)
+**Commits:**
+- a587b1f docs(contracts): data-prep keeps one test and one eval row from 3 rows on; the docs template's vllm-serve fallback
+- 14a3f09 fix(data-prep): from 3 rows on a requested test or eval split keeps a row, from the largest source (G1)
+- e73c646 fix(agent): docs specialist seeds carry prices: Compute and Object Storage pricing, Dedicated deploy API, manage pages last
+
+This section supersedes the earlier seed table and the reduced split of 5/0/1.
+
+### G1 blocker: real-estate's reduced plan had no test row (qa-w3)
+I fixed the root cause in data-prep rather than turning the template knob. The fix covers every small run of any template, user-made plans included. It keeps real-estate's reduced research at 4 pages, and it touches no backend file.
+
+What `split()` does now:
+- **Floors.** From 3 rows on, a requested `test_split` keeps at least one row. So does an eval share above 0, with a tolerance of 1e-9, because 1 − 0.9 − 0.1 is 3e-17, not a share.
+- **Where the rows come from.** They come off the end of the stratified order, which holds the largest sources' last rows.
+- **Tie-break.** At equal positions the larger source now sorts later. Without it, the shape qa-w3 hit (a 3-row source plus a 1-row source, n=4) held out the 1-row source.
+- **Below 3 rows** a split can still be empty, and the existing warning still fires.
+
+| n at train/test | Before | After |
+| --- | --- | --- |
+| 2 at 0.8/0.1 | 2/0/0 | 2/0/0 |
+| 3 at 0.8/0.1 | 2/1/0 | 1/1/1 |
+| **4 at 0.8/0.1 (real-estate reduced, STUB)** | **3/1/0** | **2/1/1** |
+| 4 at 0.9/0 | 4/0/0 | 3/1/0 |
+| 5 at 0.9/0.1 | 4/1/0 | 4/0/1 |
+| **6 at 0.8/0.1 (docs reduced, STUB)** | **5/0/1** | **4/1/1** |
+| 12 at 0.8/0.1 | 10/1/1 | 10/1/1 |
+| 20 at 0.8/0.1 | 16/2/2 | 16/2/2 |
+
+Live runs of 20 rows or more are unchanged.
+
+Through the real SDK in STUB, both templates' reduced data half now leaves judge-eval a row:
+- `[intent1-reduced-stub-teacher]`: 4 rows → 2/1/1.
+- `[docs-reduced-stub-teacher]`: 6 rows → 4/1/1.
+
+The five-pair cases give 16/2/2 and 24/3/3, with every source putting 4 rows in train and 1 in held-out.
+
+**Before re-running qa-w3's gallery check:** LocalDocker runs `orchapod/data-prep:dev`, so rebuild that shared image after the merge. `make check E2E=1` rebuilds it as part of intent #2.
+
+### Seeds (all 20: HTTP 200, 0 redirects, 2026-10-21T13:08:51Z)
+**Out:**
+- the nginx endpoint quickstart;
+- overview/quotas;
+- the thin Dedicated-endpoints overview (1,668 chars), as the third swap.
+
+**In:**
+- Compute pricing (12,870 chars);
+- Object Storage pricing (5,414 chars);
+- TF dedicated-endpoints/deploy-api (4,185 chars).
+
+**What deploy-api covers.** It has no LoRA-specific text. It is the Dedicated-endpoint API how-to: GET `/v0/dedicated_endpoints/templates`, POST `/v0/dedicated_endpoints`, `routing_key` and regional base URLs. That is the deploy path TF's models page names for Meta fine-tunes; custom weights there stay "beta, on request" (seed 8).
+
+**Order.** The first six, which the reduced run reads, are unchanged. The two `manage` pages are now 19 and 20.
+
+The final order:
+
+| # | URL |
+| --- | --- |
+| 1 | https://docs.tokenfactory.nebius.com/post-training/how-to-fine-tune |
+| 2 | https://docs.tokenfactory.nebius.com/post-training/models |
+| 3 | https://docs.nebius.com/serverless/overview |
+| 4 | https://docs.nebius.com/serverless/tutorials/deploy-model |
+| 5 | https://docs.nebius.com/serverless/quickstart/jobs |
+| 6 | https://docs.nebius.com/serverless/pricing-quotas |
+| 7 | https://docs.tokenfactory.nebius.com/post-training/datasets |
+| 8 | https://docs.tokenfactory.nebius.com/ai-models-inference/dedicated-endpoints/custom-weights |
+| 9 | https://docs.tokenfactory.nebius.com/ai-models-inference/dedicated-endpoints/deploy-api |
+| 10 | https://docs.tokenfactory.nebius.com/ai-models-inference/overview |
+| 11 | https://docs.tokenfactory.nebius.com/ai-models-inference/rate-limits |
+| 12 | https://docs.tokenfactory.nebius.com/other-capabilities/billing-new |
+| 13 | https://docs.nebius.com/compute/resources/pricing |
+| 14 | https://docs.nebius.com/object-storage/resources/pricing |
+| 15 | https://docs.nebius.com/serverless/tutorials/fine-tuning |
+| 16 | https://docs.nebius.com/object-storage/overview |
+| 17 | https://docs.nebius.com/object-storage/quickstart |
+| 18 | https://docs.nebius.com/compute/resources/quotas-limits |
+| 19 | https://docs.nebius.com/serverless/jobs/manage |
+| 20 | https://docs.nebius.com/serverless/endpoints/manage |
+
+**What the 300-row cap trims.** Synth walks the corpus in order (`generate`, i = 0, 1, …) and stops at `n_samples`.
+- My HTML measure gives about 65 passages before the `manage` pages and about 89 in all; your 47k-char measure of those two pages gives about 113.
+- So k is 3 or 4 pairs per passage, every page before 19 is used in full, and the cap trims only the `manage` pages.
+- This assumes Tavily returns extract results in request order. STUB does; live behaviour is for spike 3 to check.
+
+**Instructions** now end: "Where a page lists prices by date, quote the latest (as listed after October 1, 2026), never an older one." The Compute page has three price columns: before Oct 1, Oct 1–8, and from Oct 8 (preemptible). "Latest" covers the Oct 8 change too.
+
+**Estimates** are unchanged at $0.766 full and $0.552 reduced. They depend on `max_pages`, not on which pages are read.
+
+### Minors
+- **Knowledge line:**
+  - It now names `n_samples` 300, `max_tokens` 800, `max_samples` 30 and the price-date rule.
+  - It now says spike 1 settles the 8B spelling (`Meta-Llama-3.1-8B-Instruct` on TF's models page) and that PRICES is keyed by it.
+  - The drift guard is now exact and ordered: `re.findall(r"https://docs\.[\w./-]*[\w-]", knowledge) == seeds`. agent_knowledge.md has no other docs URLs.
+- **contracts.md:** the templates line adds "(or vllm-serve if spike 1 refuses per-token LoRA)". The data-prep `test_split` bullet states the floors.
+- **test_agent.py:** checks that every template's estimate is under $3, not only templates[0].
+- **test_synth_distilabel.py:** uses `planner.reduced(template)["plan"]`, and adds the intent #1 reduced case.
+
+### Proof
+- **Covering tests** (`pytest tests/containers/test_synth_distilabel.py tests/containers/test_data_prep.py tests/api/test_agent.py -v -k "data_half or keeps_a_row or largest_source or empty_requested or docs or canonical or reduced_scale or closest"`): **22 passed**. That is the data half ×8 (intent1, intent1-reduced, docs and docs-reduced, each with both teachers), the split table ×8, largest-source, the empty-split warning, and the four agent template tests.
+- **`make check`:** ruff "All checks passed!", **610 passed** (2 warnings), 22 web tests pass, stub e2e SKIP (orchestrator only).
+- **Mutation checks** (each restored, confirmed by cmp):
+  - With no floor: 8 failures, including the intent1-reduced and docs-reduced STUB data halves.
+  - With no size tie-break: the largest-source test fails.
+  - With the two `manage` seeds swapped in the template only: the drift guard fails.
+
+**Cost:** $0.

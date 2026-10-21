@@ -165,3 +165,4 @@ worktrees:
   - New env: ORCHAPOD_CORS_ORIGINS, ORCHAPOD_TRUSTED_PROXIES. Platform must drop `--forwarded-allow-ips "*"` and point the watchdog/healthcheck at /livez.
   - OPEN per its report: anonymous PUT/DELETE of any workflow (incl. the golden run's); admin spend counts against the anonymous share; GPU nodes bounded only by the node timeout. One gitleaks false positive for .gitleaksignore.
   - Trial merge clean. Review dispatched (opus, security gate), reviewer id.
+- 2026-10-21T13:10Z data-w4 fix round 1 landed (a587b1f contracts, 14a3f09 data-prep keeps one test and one eval row from n ≥ 3 out of the largest source — fixes qa-w3's G1 blocker at the root (real-estate reduced STUB 2/1/1, docs 4/1/1), e73c646 seeds with Compute/Object Storage pricing + Dedicated deploy-api, manage pages last; make check 610). After merge: rebuild orchapod/data-prep:dev before the gallery check. Scoped re-review (sonnet) with edge-case probes of the split change.

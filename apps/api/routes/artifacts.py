@@ -22,6 +22,7 @@ from sqlmodel import select
 
 from api.database import get_session
 from api.models.db import Artifact, ArtifactKind, NodeRun, Run, Workflow
+from api.services.redact import redact
 from api.services.storage import presigned_download_url, r2_uri_to_key
 
 router = APIRouter()
@@ -78,7 +79,7 @@ async def list_artifacts(
             kind=artifact.kind,
             uri=artifact.uri,
             size_bytes=artifact.size_bytes,
-            meta=artifact.meta or {},
+            meta=redact(artifact.meta or {}),
             created_at=artifact.created_at,
         ))
     return items

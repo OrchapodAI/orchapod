@@ -19,5 +19,6 @@
       {"id": "prep", "type": "data-prep", "needs": ["synth"], "inputs": {
         "dataset": "${{ nodes.synth.outputs.dataset }}", "format": "structured"}}
     ]
-  }
+  },
+  "reduced_inputs": {"synth": {"n_samples": 100, "max_usd": 0.05}}
 }

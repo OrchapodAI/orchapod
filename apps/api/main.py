@@ -20,7 +20,7 @@ from api.database import AsyncSessionLocal, create_tables
 from api.executor.run_workflow import sweep
 from api.services.events import event_bus
 from api.services.storage import ensure_bucket_exists
-from api.routes import agent, workflows, runs, models, internal, ws, inference, model_registry, artifacts
+from api.routes import agent, compare, workflows, runs, models, internal, ws, inference, model_registry, artifacts
 from packages.providers.vastai import register_providers
 
 
@@ -65,6 +65,7 @@ app.include_router(internal.router,        prefix="/internal",  tags=["internal"
 app.include_router(inference.router,       prefix="/inference", tags=["inference"])
 app.include_router(artifacts.router,       prefix="/artifacts", tags=["artifacts"])
 app.include_router(agent.router,           prefix="/agent",     tags=["agent"])
+app.include_router(compare.router,         prefix="/compare",   tags=["compare"])
 
 # WebSocket
 app.include_router(ws.router, tags=["websocket"])

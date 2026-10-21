@@ -49,10 +49,15 @@ async def spent_today(db: AsyncSession) -> float:
     return float(runs or 0) + float(ledger or 0)
 
 
+def run_cap(scale: float) -> float:
+    """ORCHAPOD_MAX_RUN_USD × the caller's scale."""
+    return float(os.environ.get("ORCHAPOD_MAX_RUN_USD") or 3) * scale
+
+
 async def left(db: AsyncSession, run: Run | None, scale: float) -> tuple[float, str, float]:
     """(budget left, the cap that binds: "run" | "day", that cap in $); both caps × scale. The day's budget left
     also excludes what other runs' running nodes were granted."""
-    run_cap = float(os.environ.get("ORCHAPOD_MAX_RUN_USD") or 3) * scale
+    run_max = run_cap(scale)
     day_cap = float(os.environ.get("ORCHAPOD_MAX_DAY_USD") or 15) * scale
     granted = dict(_granted)  # a node that ends while spend is read stays counted: its cost commits before release
     if run is not None:
@@ -60,13 +65,15 @@ async def left(db: AsyncSession, run: Run | None, scale: float) -> tuple[float, 
     spent = await spent_today(db)
     granted.update(_granted)  # no await from here to reserve()'s write, so two boundaries never share a grant
     granted.pop(run.id if run is not None else None, None)
-    run_left = run_cap - (float(run.cost_usd or 0) if run is not None else 0.0)
+    run_left = run_max - (float(run.cost_usd or 0) if run is not None else 0.0)
     day_left = day_cap - spent - sum(granted.values())
-    return (run_left, "run", run_cap) if run_left <= day_left else (day_left, "day", day_cap)
+    return (run_left, "run", run_max) if run_left <= day_left else (day_left, "day", day_cap)
 
 
 async def reserve(db: AsyncSession, run: Run, scale: float) -> tuple[float, str, float]:
-    """left() for the run's next node, granted to it until release(run.id)."""
+    """left() for the run's next node, granted to it until release(run.id).
+    ponytail: a node reserves its run's whole remaining budget, so an admin run in flight can leave anonymous callers
+    nothing for the day; D6 hardening reserves per-node estimates or keeps a separate anonymous day budget."""
     amount, which, cap = await left(db, run, scale)
     if amount > 0:
         _granted[run.id] = amount
@@ -87,14 +94,23 @@ async def guard(db: AsyncSession, scale: float, run: Run | None = None, need: fl
                                                      + (f", the plan needs ${need:.2f}" if need else ""))
 
 
+def meter(usage: list[float]) -> Callable:
+    """An on_usage hook that appends each call's $ to `usage`; it runs on worker threads, and list.append is atomic."""
+    return lambda *_, usd=None, **__: usage.append(usd or 0.0)
+
+
+async def record(db: AsyncSession, source: str, usd: float) -> None:
+    """One row of control-plane spend in today's ledger (R6)."""
+    db.add(Spend(source=source, usd=Decimal(str(round(usd, 6)))))
+    await db.commit()
+
+
 async def control_plane(db: AsyncSession, source: str, call: Callable[[TokenFactory], dict]) -> dict:
     """Run one sync Token Factory call in a worker thread; whatever it bills goes into today's ledger,
     also when the call then fails (TF bills before the reply is parsed)."""
-    usage: list[float] = []  # on_usage runs on the worker thread; list.append is atomic
-    tf = TokenFactory(on_usage=lambda *_, usd=None, **__: usage.append(usd or 0.0))
+    usage: list[float] = []
     try:
-        return await asyncio.to_thread(call, tf)
+        return await asyncio.to_thread(call, TokenFactory(on_usage=meter(usage)))
     finally:
         if usage:
-            db.add(Spend(source=source, usd=Decimal(str(round(sum(usage), 6)))))
-            await db.commit()
+            await record(db, source, sum(usage))

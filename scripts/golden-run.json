@@ -1,0 +1,1015 @@
+{
+ "bucket": "orchapod-artifacts",
+ "workflow": {
+  "user_id": "ae813777-33fb-4142-83e9-7c78a4b6747d",
+  "id": "ec178483-0056-45d1-b17c-d4e9fff42233",
+  "yaml": "name: real-estate-compliance-llama-3b\nnodes:\n- id: research\n  type: web-research\n  needs: []\n  inputs:\n    queries:\n    - Fair Housing Act obligations of real estate agents and landlords\n    - RESPA Section 8 kickbacks and referral fees in real estate\n    - TILA-RESPA integrated disclosure (TRID) loan estimate and closing disclosure\n      timing\n    - US state real estate license requirements and continuing education\n    - seller property condition disclosure requirements by state\n    max_pages: 20\n- id: synth\n  type: synth-distilabel\n  needs:\n  - research\n  inputs:\n    pipeline_template: grounded\n    corpus: ${{ nodes.research.outputs.corpus }}\n    teacher_model: nvidia/nemotron-3-super-120b-a12b\n    n_samples: 300\n    max_usd: 0.5\n    max_tokens: 800\n    instructions: Questions a US real-estate agent, broker or loan officer asks about\n      compliance; answers in at most three sentences, using only the passage.\n- id: prep\n  type: data-prep\n  needs:\n  - synth\n  inputs:\n    dataset: ${{ nodes.synth.outputs.dataset }}\n    format: chatml\n    train_split: 0.8\n    test_split: 0.1\n- id: finetune\n  type: tf-finetune\n  needs:\n  - prep\n  inputs:\n    model: meta-llama/Llama-3.2-3B-Instruct\n    train_data: ${{ nodes.prep.outputs.train_jsonl }}\n    eval_data: ${{ nodes.prep.outputs.eval_jsonl }}\n    n_epochs: 2\n- id: serve\n  type: vllm-serve\n  needs:\n  - finetune\n  inputs:\n    model: meta-llama/Llama-3.2-3B-Instruct\n    lora_adapter: ${{ nodes.finetune.outputs.lora_adapter }}\n    keep_alive_min: 30\n- id: evaluate\n  type: judge-eval\n  needs:\n  - prep\n  - serve\n  inputs:\n    test_data: ${{ nodes.prep.outputs.test_jsonl }}\n    base_model_ref: ${{ nodes.serve.outputs.base_model_ref }}\n    tuned_model_ref: ${{ nodes.serve.outputs.model_ref }}\n    judge_model: nvidia/Nemotron-3-Ultra-550b-a55b\n    max_samples: 30\n",
+  "version": 1,
+  "updated_at": "2026-10-21T02:15:52.110715",
+  "graph_json": {
+   "nodes": [
+    {
+     "id": "research",
+     "type": "orchapodNode",
+     "position": {
+      "x": 0,
+      "y": 0
+     },
+     "data": {
+      "node_type": "web-research",
+      "label": "research",
+      "inputs": {
+       "queries": [
+        "Fair Housing Act obligations of real estate agents and landlords",
+        "RESPA Section 8 kickbacks and referral fees in real estate",
+        "TILA-RESPA integrated disclosure (TRID) loan estimate and closing disclosure timing",
+        "US state real estate license requirements and continuing education",
+        "seller property condition disclosure requirements by state"
+       ],
+       "max_pages": 20
+      },
+      "resources": {}
+     }
+    },
+    {
+     "id": "synth",
+     "type": "orchapodNode",
+     "position": {
+      "x": 280,
+      "y": 0
+     },
+     "data": {
+      "node_type": "synth-distilabel",
+      "label": "synth",
+      "inputs": {
+       "pipeline_template": "grounded",
+       "corpus": "${{ nodes.research.outputs.corpus }}",
+       "teacher_model": "nvidia/nemotron-3-super-120b-a12b",
+       "n_samples": 300,
+       "max_usd": 0.5,
+       "max_tokens": 800,
+       "instructions": "Questions a US real-estate agent, broker or loan officer asks about compliance; answers in at most three sentences, using only the passage."
+      },
+      "resources": {}
+     }
+    },
+    {
+     "id": "prep",
+     "type": "orchapodNode",
+     "position": {
+      "x": 560,
+      "y": 0
+     },
+     "data": {
+      "node_type": "data-prep",
+      "label": "prep",
+      "inputs": {
+       "dataset": "${{ nodes.synth.outputs.dataset }}",
+       "format": "chatml",
+       "train_split": 0.8,
+       "test_split": 0.1
+      },
+      "resources": {}
+     }
+    },
+    {
+     "id": "finetune",
+     "type": "orchapodNode",
+     "position": {
+      "x": 840,
+      "y": 0
+     },
+     "data": {
+      "node_type": "tf-finetune",
+      "label": "finetune",
+      "inputs": {
+       "model": "meta-llama/Llama-3.2-3B-Instruct",
+       "train_data": "${{ nodes.prep.outputs.train_jsonl }}",
+       "eval_data": "${{ nodes.prep.outputs.eval_jsonl }}",
+       "n_epochs": 2
+      },
+      "resources": {}
+     }
+    },
+    {
+     "id": "serve",
+     "type": "orchapodNode",
+     "position": {
+      "x": 1120,
+      "y": 0
+     },
+     "data": {
+      "node_type": "vllm-serve",
+      "label": "serve",
+      "inputs": {
+       "model": "meta-llama/Llama-3.2-3B-Instruct",
+       "lora_adapter": "${{ nodes.finetune.outputs.lora_adapter }}",
+       "keep_alive_min": 30
+      },
+      "resources": {}
+     }
+    },
+    {
+     "id": "evaluate",
+     "type": "orchapodNode",
+     "position": {
+      "x": 1400,
+      "y": 0
+     },
+     "data": {
+      "node_type": "judge-eval",
+      "label": "evaluate",
+      "inputs": {
+       "test_data": "${{ nodes.prep.outputs.test_jsonl }}",
+       "base_model_ref": "${{ nodes.serve.outputs.base_model_ref }}",
+       "tuned_model_ref": "${{ nodes.serve.outputs.model_ref }}",
+       "judge_model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+       "max_samples": 30
+      },
+      "resources": {}
+     }
+    }
+   ],
+   "edges": [
+    {
+     "id": "research->synth",
+     "source": "research",
+     "target": "synth"
+    },
+    {
+     "id": "synth->prep",
+     "source": "synth",
+     "target": "prep"
+    },
+    {
+     "id": "prep->finetune",
+     "source": "prep",
+     "target": "finetune"
+    },
+    {
+     "id": "finetune->serve",
+     "source": "finetune",
+     "target": "serve"
+    },
+    {
+     "id": "prep->evaluate",
+     "source": "prep",
+     "target": "evaluate"
+    },
+    {
+     "id": "serve->evaluate",
+     "source": "serve",
+     "target": "evaluate"
+    }
+   ]
+  },
+  "name": "real-estate-compliance-llama-3b",
+  "created_at": "2026-10-21T02:15:52.110703"
+ },
+ "run": {
+  "id": "5b45f389-2ba5-46da-8b45-df7c9ddf3c18",
+  "status": "succeeded",
+  "cost_usd": "0E-10",
+  "finished_at": "2026-10-21T02:15:58.266344",
+  "gpu_pod_id": null,
+  "inputs": {},
+  "workflow_id": "ec178483-0056-45d1-b17c-d4e9fff42233",
+  "user_id": "ae813777-33fb-4142-83e9-7c78a4b6747d",
+  "started_at": "2026-10-21T02:15:52.115988",
+  "gpu_provider": null,
+  "created_at": "2026-10-21T02:15:52.116077"
+ },
+ "nodes": [
+  {
+   "id": "7e231b41-4ea8-48e5-bf70-a3823899248e",
+   "node_type": "web-research",
+   "started_at": "2026-10-21T02:15:52.144682",
+   "inputs": {
+    "queries": [
+     "Fair Housing Act obligations of real estate agents and landlords",
+     "RESPA Section 8 kickbacks and referral fees in real estate",
+     "TILA-RESPA integrated disclosure (TRID) loan estimate and closing disclosure timing",
+     "US state real estate license requirements and continuing education",
+     "seller property condition disclosure requirements by state"
+    ],
+    "max_pages": 20
+   },
+   "logs_uri": null,
+   "gpu_pod_id": null,
+   "status": "succeeded",
+   "run_id": "5b45f389-2ba5-46da-8b45-df7c9ddf3c18",
+   "node_id": "research",
+   "finished_at": "2026-10-21T02:15:52.957496",
+   "outputs": {
+    "corpus": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/research/corpus",
+    "metrics_json": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/research/metrics_json",
+    "cost_json": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/research/cost_json",
+    "logs": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/research/logs"
+   },
+   "error": null,
+   "gpu_provider": null
+  },
+  {
+   "id": "728626c3-52c1-4006-8b82-65b451f48172",
+   "node_type": "synth-distilabel",
+   "started_at": "2026-10-21T02:15:52.986594",
+   "inputs": {
+    "pipeline_template": "grounded",
+    "corpus": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/research/corpus",
+    "teacher_model": "nvidia/nemotron-3-super-120b-a12b",
+    "n_samples": 300,
+    "max_usd": 0.5,
+    "max_tokens": 800,
+    "instructions": "Questions a US real-estate agent, broker or loan officer asks about compliance; answers in at most three sentences, using only the passage."
+   },
+   "logs_uri": null,
+   "gpu_pod_id": null,
+   "status": "succeeded",
+   "run_id": "5b45f389-2ba5-46da-8b45-df7c9ddf3c18",
+   "node_id": "synth",
+   "finished_at": "2026-10-21T02:15:53.901123",
+   "outputs": {
+    "dataset": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/synth/dataset",
+    "metrics_json": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/synth/metrics_json",
+    "cost_json": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/synth/cost_json",
+    "logs": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/synth/logs"
+   },
+   "error": null,
+   "gpu_provider": null
+  },
+  {
+   "id": "5b5741cf-1094-412e-98d4-06094866f684",
+   "node_type": "data-prep",
+   "started_at": "2026-10-21T02:15:53.948982",
+   "inputs": {
+    "dataset": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/synth/dataset",
+    "format": "chatml",
+    "train_split": 0.8,
+    "test_split": 0.1
+   },
+   "logs_uri": null,
+   "gpu_pod_id": null,
+   "status": "succeeded",
+   "run_id": "5b45f389-2ba5-46da-8b45-df7c9ddf3c18",
+   "node_id": "prep",
+   "finished_at": "2026-10-21T02:15:54.919229",
+   "outputs": {
+    "dataset": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/prep/dataset",
+    "test_jsonl": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/prep/test_jsonl",
+    "train_jsonl": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/prep/train_jsonl",
+    "eval_jsonl": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/prep/eval_jsonl",
+    "metrics_json": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/prep/metrics_json",
+    "cost_json": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/prep/cost_json",
+    "logs": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/prep/logs"
+   },
+   "error": null,
+   "gpu_provider": null
+  },
+  {
+   "id": "e286e477-21c1-4524-a120-92c3288993b9",
+   "node_type": "tf-finetune",
+   "started_at": "2026-10-21T02:15:54.972504",
+   "inputs": {
+    "model": "meta-llama/Llama-3.2-3B-Instruct",
+    "train_data": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/prep/train_jsonl",
+    "eval_data": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/prep/eval_jsonl",
+    "n_epochs": 2
+   },
+   "logs_uri": null,
+   "gpu_pod_id": null,
+   "status": "succeeded",
+   "run_id": "5b45f389-2ba5-46da-8b45-df7c9ddf3c18",
+   "node_id": "finetune",
+   "finished_at": "2026-10-21T02:15:56.085776",
+   "outputs": {
+    "job": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/finetune/job",
+    "lora_adapter": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/finetune/lora_adapter",
+    "metrics_json": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/finetune/metrics_json",
+    "cost_json": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/finetune/cost_json",
+    "logs": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/finetune/logs"
+   },
+   "error": null,
+   "gpu_provider": null
+  },
+  {
+   "id": "2e784580-0f52-40fb-b681-90d6b8a99d57",
+   "node_type": "vllm-serve",
+   "started_at": "2026-10-21T02:15:56.114114",
+   "inputs": {
+    "model": "meta-llama/Llama-3.2-3B-Instruct",
+    "lora_adapter": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/finetune/lora_adapter",
+    "keep_alive_min": 30
+   },
+   "logs_uri": null,
+   "gpu_pod_id": null,
+   "status": "succeeded",
+   "run_id": "5b45f389-2ba5-46da-8b45-df7c9ddf3c18",
+   "node_id": "serve",
+   "finished_at": "2026-10-21T02:15:57.124697",
+   "outputs": {
+    "model_ref": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/serve/model_ref",
+    "base_model_ref": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/serve/base_model_ref",
+    "endpoint_url": "http://stub.invalid/v1",
+    "expires_at": "2026-10-21T02:45:56.693647+00:00",
+    "metrics_json": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/serve/metrics_json",
+    "cost_json": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/serve/cost_json",
+    "logs": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/serve/logs"
+   },
+   "error": null,
+   "gpu_provider": null
+  },
+  {
+   "id": "bb3cde97-03bb-4d3b-b949-275dfd8247da",
+   "node_type": "judge-eval",
+   "started_at": "2026-10-21T02:15:57.172868",
+   "inputs": {
+    "test_data": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/prep/test_jsonl",
+    "base_model_ref": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/serve/base_model_ref",
+    "tuned_model_ref": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/serve/model_ref",
+    "judge_model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+    "max_samples": 30
+   },
+   "logs_uri": null,
+   "gpu_pod_id": null,
+   "status": "succeeded",
+   "run_id": "5b45f389-2ba5-46da-8b45-df7c9ddf3c18",
+   "node_id": "evaluate",
+   "finished_at": "2026-10-21T02:15:58.200070",
+   "outputs": {
+    "eval_summary": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/evaluate/eval_summary",
+    "metrics_json": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/evaluate/metrics_json",
+    "cost_json": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/evaluate/cost_json",
+    "logs": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/evaluate/logs"
+   },
+   "error": null,
+   "gpu_provider": null
+  }
+ ],
+ "artifacts": [
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/research/corpus",
+   "name": "corpus",
+   "meta": {},
+   "kind": "dataset",
+   "node_run_id": "7e231b41-4ea8-48e5-bf70-a3823899248e",
+   "id": "7d3fe373-741b-40dc-9775-a3c97d2689bc",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:52.738079"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/research/metrics_json",
+   "name": "metrics_json",
+   "meta": {
+    "stub": true,
+    "queries": 5,
+    "urls": 20,
+    "urls_failed": 0,
+    "passages": 20,
+    "duplicates_dropped": 0,
+    "failed_calls": 0
+   },
+   "kind": "metrics",
+   "node_run_id": "7e231b41-4ea8-48e5-bf70-a3823899248e",
+   "id": "2f0111d9-024a-4836-931e-fcea52b8cc25",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:52.764391"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/research/cost_json",
+   "name": "cost_json",
+   "meta": {
+    "usd": 0.0
+   },
+   "kind": "metrics",
+   "node_run_id": "7e231b41-4ea8-48e5-bf70-a3823899248e",
+   "id": "cd4f1895-89eb-4cef-bdd0-9ad8390bd42e",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:52.820740"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/research/logs",
+   "name": "logs",
+   "meta": {},
+   "kind": "log",
+   "node_run_id": "7e231b41-4ea8-48e5-bf70-a3823899248e",
+   "id": "3937cc12-fb50-4c58-9e1e-3677bde644f5",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:52.879479"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/synth/dataset",
+   "name": "dataset",
+   "meta": {},
+   "kind": "dataset",
+   "node_run_id": "728626c3-52c1-4006-8b82-65b451f48172",
+   "id": "e1a494f1-60f1-4cee-8758-4543cccd65d2",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:53.537908"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/synth/metrics_json",
+   "name": "metrics_json",
+   "meta": {
+    "stub": true,
+    "template": "grounded",
+    "teacher_model": "nvidia/nemotron-3-super-120b-a12b",
+    "n_requested": 300,
+    "n_rows": 20,
+    "calls": 20,
+    "failed_calls": 0,
+    "invalid_rows": 0,
+    "stopped": "exhausted"
+   },
+   "kind": "metrics",
+   "node_run_id": "728626c3-52c1-4006-8b82-65b451f48172",
+   "id": "68563846-1f6f-4a9d-a2f2-75547dea0c67",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:53.615372"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/synth/cost_json",
+   "name": "cost_json",
+   "meta": {
+    "usd": 0.0
+   },
+   "kind": "metrics",
+   "node_run_id": "728626c3-52c1-4006-8b82-65b451f48172",
+   "id": "4658e2aa-cebc-4cd6-a455-795b57522eca",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:53.680071"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/synth/logs",
+   "name": "logs",
+   "meta": {},
+   "kind": "log",
+   "node_run_id": "728626c3-52c1-4006-8b82-65b451f48172",
+   "id": "a0259bf4-905c-4640-a164-75be08c94878",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:53.755675"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/prep/dataset",
+   "name": "dataset",
+   "meta": {},
+   "kind": "dataset",
+   "node_run_id": "5b5741cf-1094-412e-98d4-06094866f684",
+   "id": "a638756f-ca23-4c64-a3e5-6fceac350733",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:54.439068"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/prep/test_jsonl",
+   "name": "test_jsonl",
+   "meta": {},
+   "kind": "dataset",
+   "node_run_id": "5b5741cf-1094-412e-98d4-06094866f684",
+   "id": "fdd59cc7-3a2a-444c-b50c-9b0f8e43dd81",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:54.497457"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/prep/train_jsonl",
+   "name": "train_jsonl",
+   "meta": {},
+   "kind": "dataset",
+   "node_run_id": "5b5741cf-1094-412e-98d4-06094866f684",
+   "id": "459d546c-7816-4519-a391-03a03702a9ac",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:54.556278"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/prep/eval_jsonl",
+   "name": "eval_jsonl",
+   "meta": {},
+   "kind": "dataset",
+   "node_run_id": "5b5741cf-1094-412e-98d4-06094866f684",
+   "id": "d379d479-60b5-447c-babf-ce69fdc1a495",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:54.715736"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/prep/metrics_json",
+   "name": "metrics_json",
+   "meta": {
+    "stub": true,
+    "total": 20,
+    "train": 16,
+    "eval": 2,
+    "test": 2,
+    "skipped": 0,
+    "exact_dupes": 0,
+    "near_dupes": 0,
+    "quality_dropped": 0,
+    "avg_length_chars": 682.0,
+    "max_length_chars": 682,
+    "fields": null
+   },
+   "kind": "metrics",
+   "node_run_id": "5b5741cf-1094-412e-98d4-06094866f684",
+   "id": "3e216d08-f984-4486-8252-a565a06847f2",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:54.788920"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/prep/cost_json",
+   "name": "cost_json",
+   "meta": {
+    "usd": 0
+   },
+   "kind": "metrics",
+   "node_run_id": "5b5741cf-1094-412e-98d4-06094866f684",
+   "id": "05e7e78d-8cc7-4cb2-9f3a-fb8bb14fe212",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:54.807622"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/prep/logs",
+   "name": "logs",
+   "meta": {},
+   "kind": "log",
+   "node_run_id": "5b5741cf-1094-412e-98d4-06094866f684",
+   "id": "119849b0-9016-4c8e-8ee0-6e044f07fa12",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:54.829057"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/finetune/job",
+   "name": "job",
+   "meta": {
+    "job_id": "ftjob-stub-1b47f58f",
+    "model": "meta-llama/Llama-3.2-3B-Instruct",
+    "status": "succeeded",
+    "checkpoint_id": "ftckpt-stub-a2544168-2",
+    "checkpoint_step": 2,
+    "train_loss": 0.5,
+    "valid_loss": 0.5,
+    "trained_tokens": 0
+   },
+   "kind": "metrics",
+   "node_run_id": "e286e477-21c1-4524-a120-92c3288993b9",
+   "id": "6c8325dc-da5c-431c-a94a-f6358b22cbd5",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:55.599660"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/finetune/lora_adapter",
+   "name": "lora_adapter",
+   "meta": {
+    "format": "peft",
+    "base_model": "meta-llama/Llama-3.2-3B-Instruct"
+   },
+   "kind": "model",
+   "node_run_id": "e286e477-21c1-4524-a120-92c3288993b9",
+   "id": "f39d2ca1-77bb-42e2-bc79-d406c6ad63af",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:55.680635"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/finetune/metrics_json",
+   "name": "metrics_json",
+   "meta": {
+    "stub": true,
+    "job_id": "ftjob-stub-1b47f58f",
+    "model": "meta-llama/Llama-3.2-3B-Instruct",
+    "status": "succeeded",
+    "checkpoint_id": "ftckpt-stub-a2544168-2",
+    "checkpoint_step": 2,
+    "train_loss": 0.5,
+    "valid_loss": 0.5,
+    "trained_tokens": 0,
+    "loss_curve": [
+     {
+      "step": 1,
+      "train_loss": 1.0,
+      "valid_loss": 1.0
+     },
+     {
+      "step": 2,
+      "train_loss": 0.5,
+      "valid_loss": 0.5
+     }
+    ],
+    "wall_s": 0
+   },
+   "kind": "metrics",
+   "node_run_id": "e286e477-21c1-4524-a120-92c3288993b9",
+   "id": "6d0f561b-cc50-4256-ad8f-497e3f2ef44e",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:55.795013"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/finetune/cost_json",
+   "name": "cost_json",
+   "meta": {
+    "usd": 0
+   },
+   "kind": "metrics",
+   "node_run_id": "e286e477-21c1-4524-a120-92c3288993b9",
+   "id": "5b487741-487a-4e89-a0ee-b5dd7cb694d0",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:55.919102"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/finetune/logs",
+   "name": "logs",
+   "meta": {},
+   "kind": "log",
+   "node_run_id": "e286e477-21c1-4524-a120-92c3288993b9",
+   "id": "be1c9c73-84f3-44c2-8d67-ce61e41f4f33",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:55.971578"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/serve/model_ref",
+   "name": "model_ref",
+   "meta": {
+    "base_url": "http://stub.invalid/v1",
+    "model": "tuned",
+    "api_key_env": "ORCHAPOD_ENDPOINT_TOKEN",
+    "base_model": "meta-llama/Llama-3.2-3B-Instruct"
+   },
+   "kind": "model",
+   "node_run_id": "2e784580-0f52-40fb-b681-90d6b8a99d57",
+   "id": "a61f849e-cc67-4dc3-8958-f654663b4ce5",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:56.563013"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/serve/base_model_ref",
+   "name": "base_model_ref",
+   "meta": {
+    "base_url": "http://stub.invalid/v1",
+    "model": "meta-llama/Llama-3.2-3B-Instruct",
+    "api_key_env": "ORCHAPOD_ENDPOINT_TOKEN",
+    "base_model": "meta-llama/Llama-3.2-3B-Instruct"
+   },
+   "kind": "model",
+   "node_run_id": "2e784580-0f52-40fb-b681-90d6b8a99d57",
+   "id": "5a831f59-a241-4db2-ad6a-2948dfe0e293",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:56.671080"
+  },
+  {
+   "uri": "http://stub.invalid/v1",
+   "name": "endpoint_url",
+   "meta": {
+    "keep_alive_min": 30,
+    "registered_at": "2026-10-21T02:15:56.693647+00:00",
+    "expires_at": "2026-10-21T02:45:56.693647+00:00"
+   },
+   "kind": "endpoint",
+   "node_run_id": "2e784580-0f52-40fb-b681-90d6b8a99d57",
+   "id": "297b0571-7b7f-416f-8168-83fe8cc1e96b",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:56.693798"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/serve/metrics_json",
+   "name": "metrics_json",
+   "meta": {
+    "stub": true,
+    "endpoint_id": "stub-endpoint",
+    "base_model": "meta-llama/Llama-3.2-3B-Instruct",
+    "served_model_name": "tuned",
+    "keep_alive_min": 30
+   },
+   "kind": "metrics",
+   "node_run_id": "2e784580-0f52-40fb-b681-90d6b8a99d57",
+   "id": "c620a692-c1db-4d15-8170-9acac8371006",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:56.803843"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/serve/cost_json",
+   "name": "cost_json",
+   "meta": {
+    "usd": 0
+   },
+   "kind": "metrics",
+   "node_run_id": "2e784580-0f52-40fb-b681-90d6b8a99d57",
+   "id": "a48d2f8f-edcc-4d0b-9744-39cf00ceb8d5",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:56.873611"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/serve/logs",
+   "name": "logs",
+   "meta": {},
+   "kind": "log",
+   "node_run_id": "2e784580-0f52-40fb-b681-90d6b8a99d57",
+   "id": "6a39eb66-bfe1-487d-a8fc-2e7028ba70c6",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:57.012546"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/evaluate/eval_summary",
+   "name": "eval_summary",
+   "meta": {
+    "n": 2,
+    "judged": 2,
+    "wins": 0,
+    "ties": 2,
+    "losses": 0,
+    "errors": 0,
+    "win_rate": 0.5,
+    "consistency": 0.0,
+    "exact_match": null,
+    "base": {
+     "base_url": "http://stub.invalid/v1",
+     "model": "meta-llama/Llama-3.2-3B-Instruct",
+     "api_key_env": "ORCHAPOD_ENDPOINT_TOKEN",
+     "base_model": "meta-llama/Llama-3.2-3B-Instruct"
+    },
+    "tuned": {
+     "base_url": "http://stub.invalid/v1",
+     "model": "tuned",
+     "api_key_env": "ORCHAPOD_ENDPOINT_TOKEN",
+     "base_model": "meta-llama/Llama-3.2-3B-Instruct"
+    },
+    "judge_model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+    "decoding": {
+     "temperature": 0.0,
+     "max_tokens": 512
+    },
+    "stub": true
+   },
+   "kind": "metrics",
+   "node_run_id": "bb3cde97-03bb-4d3b-b949-275dfd8247da",
+   "id": "fcce8894-5400-4d97-9a3e-a78cf1379092",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:57.683871"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/evaluate/metrics_json",
+   "name": "metrics_json",
+   "meta": {
+    "stub": true,
+    "n": 2,
+    "judged": 2,
+    "wins": 0,
+    "ties": 2,
+    "losses": 0,
+    "errors": 0,
+    "win_rate": 0.5,
+    "consistency": 0.0,
+    "exact_match": null,
+    "base": {
+     "base_url": "http://stub.invalid/v1",
+     "model": "meta-llama/Llama-3.2-3B-Instruct",
+     "api_key_env": "ORCHAPOD_ENDPOINT_TOKEN",
+     "base_model": "meta-llama/Llama-3.2-3B-Instruct"
+    },
+    "tuned": {
+     "base_url": "http://stub.invalid/v1",
+     "model": "tuned",
+     "api_key_env": "ORCHAPOD_ENDPOINT_TOKEN",
+     "base_model": "meta-llama/Llama-3.2-3B-Instruct"
+    },
+    "judge_model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+    "decoding": {
+     "temperature": 0.0,
+     "max_tokens": 512
+    }
+   },
+   "kind": "metrics",
+   "node_run_id": "bb3cde97-03bb-4d3b-b949-275dfd8247da",
+   "id": "c38236f5-db03-4ee3-85fc-d0f03d4cf125",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:57.712099"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/evaluate/cost_json",
+   "name": "cost_json",
+   "meta": {
+    "usd": 0.0
+   },
+   "kind": "metrics",
+   "node_run_id": "bb3cde97-03bb-4d3b-b949-275dfd8247da",
+   "id": "05b402a0-6c6e-467e-80d4-1e1d8cb5fd64",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:57.763171"
+  },
+  {
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/evaluate/logs",
+   "name": "logs",
+   "meta": {},
+   "kind": "log",
+   "node_run_id": "bb3cde97-03bb-4d3b-b949-275dfd8247da",
+   "id": "026f1a89-6e57-4a7a-9b45-c21790e445e8",
+   "size_bytes": null,
+   "created_at": "2026-10-21T02:15:57.943489"
+  }
+ ],
+ "models": [
+  {
+   "id": "18038fe5-ce10-4811-9c21-6ebe6457c64c",
+   "user_id": "5b45f389-2ba5-46da-8b45-df7c9ddf3c18",
+   "description": null,
+   "format": "hf",
+   "size_bytes": null,
+   "artifact_id": "f39d2ca1-77bb-42e2-bc79-d406c6ad63af",
+   "run_id": "5b45f389-2ba5-46da-8b45-df7c9ddf3c18",
+   "name": "llama-3-2-3b-instruct-hf",
+   "base_model": "meta-llama/Llama-3.2-3B-Instruct",
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/finetune/lora_adapter",
+   "tags": [
+    "hf",
+    "meta-llama/Llama-3.2-3B-Instruct"
+   ],
+   "node_run_id": "e286e477-21c1-4524-a120-92c3288993b9",
+   "created_at": "2026-10-21T02:15:55.686063"
+  },
+  {
+   "id": "c9f1f06c-9b1c-40ef-a701-6eee586efa79",
+   "user_id": "5b45f389-2ba5-46da-8b45-df7c9ddf3c18",
+   "description": null,
+   "format": "hf",
+   "size_bytes": null,
+   "artifact_id": "a61f849e-cc67-4dc3-8958-f654663b4ce5",
+   "run_id": "5b45f389-2ba5-46da-8b45-df7c9ddf3c18",
+   "name": "llama-3-2-3b-instruct-hf",
+   "base_model": "meta-llama/Llama-3.2-3B-Instruct",
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/serve/model_ref",
+   "tags": [
+    "hf",
+    "meta-llama/Llama-3.2-3B-Instruct"
+   ],
+   "node_run_id": "2e784580-0f52-40fb-b681-90d6b8a99d57",
+   "created_at": "2026-10-21T02:15:56.566924"
+  },
+  {
+   "id": "79a91751-18ec-42fc-8182-264766da15c3",
+   "user_id": "5b45f389-2ba5-46da-8b45-df7c9ddf3c18",
+   "description": null,
+   "format": "hf",
+   "size_bytes": null,
+   "artifact_id": "5a831f59-a241-4db2-ad6a-2948dfe0e293",
+   "run_id": "5b45f389-2ba5-46da-8b45-df7c9ddf3c18",
+   "name": "llama-3-2-3b-instruct-hf",
+   "base_model": "meta-llama/Llama-3.2-3B-Instruct",
+   "uri": "r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/serve/base_model_ref",
+   "tags": [
+    "hf",
+    "meta-llama/Llama-3.2-3B-Instruct"
+   ],
+   "node_run_id": "2e784580-0f52-40fb-b681-90d6b8a99d57",
+   "created_at": "2026-10-21T02:15:56.675512"
+  }
+ ],
+ "agent_run": {
+  "plan": {
+   "name": "real-estate-compliance-llama-3b",
+   "nodes": [
+    {
+     "id": "research",
+     "type": "web-research",
+     "needs": [],
+     "inputs": {
+      "queries": [
+       "Fair Housing Act obligations of real estate agents and landlords",
+       "RESPA Section 8 kickbacks and referral fees in real estate",
+       "TILA-RESPA integrated disclosure (TRID) loan estimate and closing disclosure timing",
+       "US state real estate license requirements and continuing education",
+       "seller property condition disclosure requirements by state"
+      ],
+      "max_pages": 20
+     }
+    },
+    {
+     "id": "synth",
+     "type": "synth-distilabel",
+     "needs": [
+      "research"
+     ],
+     "inputs": {
+      "pipeline_template": "grounded",
+      "corpus": "${{ nodes.research.outputs.corpus }}",
+      "teacher_model": "nvidia/nemotron-3-super-120b-a12b",
+      "n_samples": 300,
+      "max_usd": 0.5,
+      "max_tokens": 800,
+      "instructions": "Questions a US real-estate agent, broker or loan officer asks about compliance; answers in at most three sentences, using only the passage."
+     }
+    },
+    {
+     "id": "prep",
+     "type": "data-prep",
+     "needs": [
+      "synth"
+     ],
+     "inputs": {
+      "dataset": "${{ nodes.synth.outputs.dataset }}",
+      "format": "chatml",
+      "train_split": 0.8,
+      "test_split": 0.1
+     }
+    },
+    {
+     "id": "finetune",
+     "type": "tf-finetune",
+     "needs": [
+      "prep"
+     ],
+     "inputs": {
+      "model": "meta-llama/Llama-3.2-3B-Instruct",
+      "train_data": "${{ nodes.prep.outputs.train_jsonl }}",
+      "eval_data": "${{ nodes.prep.outputs.eval_jsonl }}",
+      "n_epochs": 2
+     }
+    },
+    {
+     "id": "serve",
+     "type": "vllm-serve",
+     "needs": [
+      "finetune"
+     ],
+     "inputs": {
+      "model": "meta-llama/Llama-3.2-3B-Instruct",
+      "lora_adapter": "${{ nodes.finetune.outputs.lora_adapter }}",
+      "keep_alive_min": 30
+     }
+    },
+    {
+     "id": "evaluate",
+     "type": "judge-eval",
+     "needs": [
+      "prep",
+      "serve"
+     ],
+     "inputs": {
+      "test_data": "${{ nodes.prep.outputs.test_jsonl }}",
+      "base_model_ref": "${{ nodes.serve.outputs.base_model_ref }}",
+      "tuned_model_ref": "${{ nodes.serve.outputs.model_ref }}",
+      "judge_model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+      "max_samples": 30
+     }
+    }
+   ]
+  },
+  "report_md": "## real-estate-compliance-llama-3b: succeeded\n\n**Intent:** Fine-tune Llama 3B on US real-estate compliance: Fair Housing Act, RESPA, TILA/TRID, state licensing\n\n**Cost:** $0.0000 of $1.76 estimated.\n\n| Node | Type | Status | $ |\n| --- | --- | --- | --- |\n| research | web-research | succeeded | 0.0000 |\n| synth | synth-distilabel | succeeded | 0.0000 |\n| prep | data-prep | succeeded | 0.0000 |\n| finetune | tf-finetune | succeeded | 0.0000 |\n| serve | vllm-serve | succeeded | 0.0000 |\n| evaluate | judge-eval | succeeded | 0.0000 |\n\n**Results:**\n- [research/corpus](/artifacts/7d3fe373-741b-40dc-9775-a3c97d2689bc/download)\n- [synth/dataset](/artifacts/e1a494f1-60f1-4cee-8758-4543cccd65d2/download)\n- [prep/dataset](/artifacts/a638756f-ca23-4c64-a3e5-6fceac350733/download)\n- [prep/test_jsonl](/artifacts/fdd59cc7-3a2a-444c-b50c-9b0f8e43dd81/download)\n- [prep/train_jsonl](/artifacts/459d546c-7816-4519-a391-03a03702a9ac/download)\n- [prep/eval_jsonl](/artifacts/d379d479-60b5-447c-babf-ce69fdc1a495/download)\n- [finetune/lora_adapter](/artifacts/f39d2ca1-77bb-42e2-bc79-d406c6ad63af/download)\n- [serve/model_ref](/artifacts/a61f849e-cc67-4dc3-8958-f654663b4ce5/download)\n- [serve/base_model_ref](/artifacts/5a831f59-a241-4db2-ad6a-2948dfe0e293/download)",
+  "intent": "Fine-tune Llama 3B on US real-estate compliance: Fair Housing Act, RESPA, TILA/TRID, state licensing",
+  "estimate": {
+   "usd": 1.756,
+   "minutes": 56.5,
+   "by_node": {
+    "research": {
+     "usd": 0.112,
+     "minutes": 3
+    },
+    "synth": {
+     "usd": 0.09,
+     "minutes": 3.5
+    },
+    "prep": {
+     "usd": 0.0,
+     "minutes": 2
+    },
+    "finetune": {
+     "usd": 0.5,
+     "minutes": 30
+    },
+    "serve": {
+     "usd": 0.91,
+     "minutes": 8
+    },
+    "evaluate": {
+     "usd": 0.144,
+     "minutes": 10.0
+    }
+   }
+  },
+  "run_id": "5b45f389-2ba5-46da-8b45-df7c9ddf3c18",
+  "created_at": "2026-10-21T02:15:52.119046"
+ },
+ "objects": {
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/research/corpus": "{\"url\": \"https://example.com/stub/8ffb2370/0\", \"text\": \"Stub page 0 for request 8ffb2370. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\"}\n{\"url\": \"https://example.com/stub/8ffb2370/1\", \"text\": \"Stub page 1 for request 8ffb2370. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\"}\n{\"url\": \"https://example.com/stub/8ffb2370/2\", \"text\": \"Stub page 2 for request 8ffb2370. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\"}\n{\"url\": \"https://example.com/stub/8ffb2370/3\", \"text\": \"Stub page 3 for request 8ffb2370. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\"}\n{\"url\": \"https://example.com/stub/fe6240e6/0\", \"text\": \"Stub page 0 for request fe6240e6. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\"}\n{\"url\": \"https://example.com/stub/fe6240e6/1\", \"text\": \"Stub page 1 for request fe6240e6. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\"}\n{\"url\": \"https://example.com/stub/fe6240e6/2\", \"text\": \"Stub page 2 for request fe6240e6. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\"}\n{\"url\": \"https://example.com/stub/fe6240e6/3\", \"text\": \"Stub page 3 for request fe6240e6. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\"}\n{\"url\": \"https://example.com/stub/126739f7/0\", \"text\": \"Stub page 0 for request 126739f7. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\"}\n{\"url\": \"https://example.com/stub/126739f7/1\", \"text\": \"Stub page 1 for request 126739f7. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\"}\n{\"url\": \"https://example.com/stub/126739f7/2\", \"text\": \"Stub page 2 for request 126739f7. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\"}\n{\"url\": \"https://example.com/stub/126739f7/3\", \"text\": \"Stub page 3 for request 126739f7. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\"}\n{\"url\": \"https://example.com/stub/1ab8de55/0\", \"text\": \"Stub page 0 for request 1ab8de55. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\"}\n{\"url\": \"https://example.com/stub/1ab8de55/1\", \"text\": \"Stub page 1 for request 1ab8de55. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\"}\n{\"url\": \"https://example.com/stub/1ab8de55/2\", \"text\": \"Stub page 2 for request 1ab8de55. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\"}\n{\"url\": \"https://example.com/stub/1ab8de55/3\", \"text\": \"Stub page 3 for request 1ab8de55. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\"}\n{\"url\": \"https://example.com/stub/2fb63b4d/0\", \"text\": \"Stub page 0 for request 2fb63b4d. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\"}\n{\"url\": \"https://example.com/stub/2fb63b4d/1\", \"text\": \"Stub page 1 for request 2fb63b4d. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\"}\n{\"url\": \"https://example.com/stub/2fb63b4d/2\", \"text\": \"Stub page 2 for request 2fb63b4d. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\"}\n{\"url\": \"https://example.com/stub/2fb63b4d/3\", \"text\": \"Stub page 3 for request 2fb63b4d. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\"}\n",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/research/metrics_json": "{\"stub\": true, \"queries\": 5, \"urls\": 20, \"urls_failed\": 0, \"passages\": 20, \"duplicates_dropped\": 0, \"failed_calls\": 0}",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/research/cost_json": "{\"usd\": 0.0, \"items\": [{\"provider\": \"tavily\", \"model\": \"search\", \"calls\": 5, \"in_tokens\": 0, \"out_tokens\": 0, \"usd\": 0.0, \"credits\": 0}]}",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/research/logs": "{\"ts\": \"2026-10-21T02:15:52.426865+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=1/5\"}\n{\"ts\": \"2026-10-21T02:15:52.491204+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=2/5\"}\n{\"ts\": \"2026-10-21T02:15:52.499087+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=3/5\"}\n{\"ts\": \"2026-10-21T02:15:52.509333+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=4/5\"}\n{\"ts\": \"2026-10-21T02:15:52.514238+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=5/5\"}\n{\"ts\": \"2026-10-21T02:15:52.768668+00:00\", \"level\": \"INFO\", \"message\": \"web-research: 20 passages from 20 pages, $0.0000\"}\n",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/synth/dataset": "{\"messages\": [{\"role\": \"user\", \"content\": \"stub-64596c20\"}, {\"role\": \"assistant\", \"content\": \"stub-64596c20\"}], \"context\": \"Stub page 0 for request 8ffb2370. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/8ffb2370/0\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-682ff10b\"}, {\"role\": \"assistant\", \"content\": \"stub-682ff10b\"}], \"context\": \"Stub page 1 for request 8ffb2370. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/8ffb2370/1\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-51ae72b1\"}, {\"role\": \"assistant\", \"content\": \"stub-51ae72b1\"}], \"context\": \"Stub page 2 for request 8ffb2370. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/8ffb2370/2\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-bfc49ac5\"}, {\"role\": \"assistant\", \"content\": \"stub-bfc49ac5\"}], \"context\": \"Stub page 3 for request 8ffb2370. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/8ffb2370/3\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-ce592297\"}, {\"role\": \"assistant\", \"content\": \"stub-ce592297\"}], \"context\": \"Stub page 0 for request fe6240e6. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/fe6240e6/0\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-f010ef88\"}, {\"role\": \"assistant\", \"content\": \"stub-f010ef88\"}], \"context\": \"Stub page 1 for request fe6240e6. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/fe6240e6/1\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-c0829a8e\"}, {\"role\": \"assistant\", \"content\": \"stub-c0829a8e\"}], \"context\": \"Stub page 2 for request fe6240e6. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/fe6240e6/2\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-317ec3c7\"}, {\"role\": \"assistant\", \"content\": \"stub-317ec3c7\"}], \"context\": \"Stub page 3 for request fe6240e6. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/fe6240e6/3\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-620217f2\"}, {\"role\": \"assistant\", \"content\": \"stub-620217f2\"}], \"context\": \"Stub page 0 for request 126739f7. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/126739f7/0\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-49884a91\"}, {\"role\": \"assistant\", \"content\": \"stub-49884a91\"}], \"context\": \"Stub page 1 for request 126739f7. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/126739f7/1\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-68b4c3f5\"}, {\"role\": \"assistant\", \"content\": \"stub-68b4c3f5\"}], \"context\": \"Stub page 2 for request 126739f7. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/126739f7/2\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-1cfa6090\"}, {\"role\": \"assistant\", \"content\": \"stub-1cfa6090\"}], \"context\": \"Stub page 3 for request 126739f7. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/126739f7/3\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-6a8c5a47\"}, {\"role\": \"assistant\", \"content\": \"stub-6a8c5a47\"}], \"context\": \"Stub page 0 for request 1ab8de55. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/1ab8de55/0\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-34ed036e\"}, {\"role\": \"assistant\", \"content\": \"stub-34ed036e\"}], \"context\": \"Stub page 1 for request 1ab8de55. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/1ab8de55/1\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-8fea4017\"}, {\"role\": \"assistant\", \"content\": \"stub-8fea4017\"}], \"context\": \"Stub page 2 for request 1ab8de55. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/1ab8de55/2\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-5491223c\"}, {\"role\": \"assistant\", \"content\": \"stub-5491223c\"}], \"context\": \"Stub page 3 for request 1ab8de55. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/1ab8de55/3\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-c13f40c2\"}, {\"role\": \"assistant\", \"content\": \"stub-c13f40c2\"}], \"context\": \"Stub page 0 for request 2fb63b4d. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/2fb63b4d/0\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-78b011bc\"}, {\"role\": \"assistant\", \"content\": \"stub-78b011bc\"}], \"context\": \"Stub page 1 for request 2fb63b4d. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/2fb63b4d/1\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-aa825159\"}, {\"role\": \"assistant\", \"content\": \"stub-aa825159\"}], \"context\": \"Stub page 2 for request 2fb63b4d. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/2fb63b4d/2\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-ac296b6c\"}, {\"role\": \"assistant\", \"content\": \"stub-ac296b6c\"}], \"context\": \"Stub page 3 for request 2fb63b4d. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/2fb63b4d/3\"}\n",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/synth/metrics_json": "{\"stub\": true, \"template\": \"grounded\", \"teacher_model\": \"nvidia/nemotron-3-super-120b-a12b\", \"n_requested\": 300, \"n_rows\": 20, \"calls\": 20, \"failed_calls\": 0, \"invalid_rows\": 0, \"stopped\": \"exhausted\"}",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/synth/cost_json": "{\"usd\": 0.0, \"items\": [{\"provider\": \"token_factory\", \"model\": \"nvidia/nemotron-3-super-120b-a12b\", \"calls\": 20, \"in_tokens\": 0, \"out_tokens\": 0, \"usd\": 0.0}]}",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/synth/logs": "{\"ts\": \"2026-10-21T02:15:53.415333+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=1/300\"}\n{\"ts\": \"2026-10-21T02:15:53.430548+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=2/300\"}\n{\"ts\": \"2026-10-21T02:15:53.440837+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=3/300\"}\n{\"ts\": \"2026-10-21T02:15:53.448493+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=4/300\"}\n{\"ts\": \"2026-10-21T02:15:53.450831+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=5/300\"}\n{\"ts\": \"2026-10-21T02:15:53.452717+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=6/300\"}\n{\"ts\": \"2026-10-21T02:15:53.454217+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=7/300\"}\n{\"ts\": \"2026-10-21T02:15:53.456042+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=8/300\"}\n{\"ts\": \"2026-10-21T02:15:53.458571+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=9/300\"}\n{\"ts\": \"2026-10-21T02:15:53.462086+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=10/300\"}\n{\"ts\": \"2026-10-21T02:15:53.471524+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=11/300\"}\n{\"ts\": \"2026-10-21T02:15:53.480562+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=12/300\"}\n{\"ts\": \"2026-10-21T02:15:53.486735+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=13/300\"}\n{\"ts\": \"2026-10-21T02:15:53.488103+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=14/300\"}\n{\"ts\": \"2026-10-21T02:15:53.489523+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=15/300\"}\n{\"ts\": \"2026-10-21T02:15:53.493380+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=16/300\"}\n{\"ts\": \"2026-10-21T02:15:53.498127+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=17/300\"}\n{\"ts\": \"2026-10-21T02:15:53.501091+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=18/300\"}\n{\"ts\": \"2026-10-21T02:15:53.503516+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=19/300\"}\n{\"ts\": \"2026-10-21T02:15:53.505377+00:00\", \"level\": \"PROGRESS\", \"message\": \"step=20/300\"}\n{\"ts\": \"2026-10-21T02:15:53.628790+00:00\", \"level\": \"INFO\", \"message\": \"synth-distilabel: 20 grounded rows from 20 calls, $0.0000, stopped: exhausted\"}\n",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/prep/dataset": "{\"messages\": [{\"role\": \"user\", \"content\": \"stub-64596c20\"}, {\"role\": \"assistant\", \"content\": \"stub-64596c20\"}], \"context\": \"Stub page 0 for request 8ffb2370. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/8ffb2370/0\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-682ff10b\"}, {\"role\": \"assistant\", \"content\": \"stub-682ff10b\"}], \"context\": \"Stub page 1 for request 8ffb2370. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/8ffb2370/1\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-51ae72b1\"}, {\"role\": \"assistant\", \"content\": \"stub-51ae72b1\"}], \"context\": \"Stub page 2 for request 8ffb2370. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/8ffb2370/2\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-bfc49ac5\"}, {\"role\": \"assistant\", \"content\": \"stub-bfc49ac5\"}], \"context\": \"Stub page 3 for request 8ffb2370. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/8ffb2370/3\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-ce592297\"}, {\"role\": \"assistant\", \"content\": \"stub-ce592297\"}], \"context\": \"Stub page 0 for request fe6240e6. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/fe6240e6/0\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-f010ef88\"}, {\"role\": \"assistant\", \"content\": \"stub-f010ef88\"}], \"context\": \"Stub page 1 for request fe6240e6. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/fe6240e6/1\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-c0829a8e\"}, {\"role\": \"assistant\", \"content\": \"stub-c0829a8e\"}], \"context\": \"Stub page 2 for request fe6240e6. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/fe6240e6/2\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-317ec3c7\"}, {\"role\": \"assistant\", \"content\": \"stub-317ec3c7\"}], \"context\": \"Stub page 3 for request fe6240e6. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/fe6240e6/3\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-620217f2\"}, {\"role\": \"assistant\", \"content\": \"stub-620217f2\"}], \"context\": \"Stub page 0 for request 126739f7. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/126739f7/0\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-49884a91\"}, {\"role\": \"assistant\", \"content\": \"stub-49884a91\"}], \"context\": \"Stub page 1 for request 126739f7. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/126739f7/1\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-68b4c3f5\"}, {\"role\": \"assistant\", \"content\": \"stub-68b4c3f5\"}], \"context\": \"Stub page 2 for request 126739f7. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/126739f7/2\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-1cfa6090\"}, {\"role\": \"assistant\", \"content\": \"stub-1cfa6090\"}], \"context\": \"Stub page 3 for request 126739f7. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/126739f7/3\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-6a8c5a47\"}, {\"role\": \"assistant\", \"content\": \"stub-6a8c5a47\"}], \"context\": \"Stub page 0 for request 1ab8de55. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/1ab8de55/0\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-34ed036e\"}, {\"role\": \"assistant\", \"content\": \"stub-34ed036e\"}], \"context\": \"Stub page 1 for request 1ab8de55. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/1ab8de55/1\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-8fea4017\"}, {\"role\": \"assistant\", \"content\": \"stub-8fea4017\"}], \"context\": \"Stub page 2 for request 1ab8de55. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/1ab8de55/2\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-5491223c\"}, {\"role\": \"assistant\", \"content\": \"stub-5491223c\"}], \"context\": \"Stub page 3 for request 1ab8de55. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/1ab8de55/3\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-c13f40c2\"}, {\"role\": \"assistant\", \"content\": \"stub-c13f40c2\"}], \"context\": \"Stub page 0 for request 2fb63b4d. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/2fb63b4d/0\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-78b011bc\"}, {\"role\": \"assistant\", \"content\": \"stub-78b011bc\"}], \"context\": \"Stub page 1 for request 2fb63b4d. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/2fb63b4d/1\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-aa825159\"}, {\"role\": \"assistant\", \"content\": \"stub-aa825159\"}], \"context\": \"Stub page 2 for request 2fb63b4d. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/2fb63b4d/2\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-ac296b6c\"}, {\"role\": \"assistant\", \"content\": \"stub-ac296b6c\"}], \"context\": \"Stub page 3 for request 2fb63b4d. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/2fb63b4d/3\"}\n",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/prep/test_jsonl": "{\"messages\": [{\"role\": \"user\", \"content\": \"stub-aa825159\"}, {\"role\": \"assistant\", \"content\": \"stub-aa825159\"}], \"context\": \"Stub page 2 for request 2fb63b4d. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/2fb63b4d/2\"}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-c0829a8e\"}, {\"role\": \"assistant\", \"content\": \"stub-c0829a8e\"}], \"context\": \"Stub page 2 for request fe6240e6. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/fe6240e6/2\"}\n",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/prep/train_jsonl": "{\"messages\": [{\"role\": \"user\", \"content\": \"stub-ac296b6c\"}, {\"role\": \"assistant\", \"content\": \"stub-ac296b6c\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-682ff10b\"}, {\"role\": \"assistant\", \"content\": \"stub-682ff10b\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-6a8c5a47\"}, {\"role\": \"assistant\", \"content\": \"stub-6a8c5a47\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-49884a91\"}, {\"role\": \"assistant\", \"content\": \"stub-49884a91\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-317ec3c7\"}, {\"role\": \"assistant\", \"content\": \"stub-317ec3c7\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-34ed036e\"}, {\"role\": \"assistant\", \"content\": \"stub-34ed036e\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-68b4c3f5\"}, {\"role\": \"assistant\", \"content\": \"stub-68b4c3f5\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-c13f40c2\"}, {\"role\": \"assistant\", \"content\": \"stub-c13f40c2\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-bfc49ac5\"}, {\"role\": \"assistant\", \"content\": \"stub-bfc49ac5\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-51ae72b1\"}, {\"role\": \"assistant\", \"content\": \"stub-51ae72b1\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-620217f2\"}, {\"role\": \"assistant\", \"content\": \"stub-620217f2\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-1cfa6090\"}, {\"role\": \"assistant\", \"content\": \"stub-1cfa6090\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-5491223c\"}, {\"role\": \"assistant\", \"content\": \"stub-5491223c\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-78b011bc\"}, {\"role\": \"assistant\", \"content\": \"stub-78b011bc\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-64596c20\"}, {\"role\": \"assistant\", \"content\": \"stub-64596c20\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-8fea4017\"}, {\"role\": \"assistant\", \"content\": \"stub-8fea4017\"}]}\n",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/prep/eval_jsonl": "{\"messages\": [{\"role\": \"user\", \"content\": \"stub-f010ef88\"}, {\"role\": \"assistant\", \"content\": \"stub-f010ef88\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"stub-ce592297\"}, {\"role\": \"assistant\", \"content\": \"stub-ce592297\"}]}\n",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/prep/metrics_json": "{\"stub\": true, \"total\": 20, \"train\": 16, \"eval\": 2, \"test\": 2, \"skipped\": 0, \"exact_dupes\": 0, \"near_dupes\": 0, \"quality_dropped\": 0, \"avg_length_chars\": 682.0, \"max_length_chars\": 682, \"fields\": null}",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/prep/cost_json": "{\"usd\": 0, \"items\": []}",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/prep/logs": "{\"ts\": \"2026-10-21T02:15:54.297044+00:00\", \"level\": \"INFO\", \"message\": \"20 rows loaded, 20 kept\"}\n{\"ts\": \"2026-10-21T02:15:54.791508+00:00\", \"level\": \"INFO\", \"message\": \"data-prep complete: 16 train / 2 eval / 2 test\"}\n",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/finetune/job": "{\"job_id\": \"ftjob-stub-1b47f58f\", \"model\": \"meta-llama/Llama-3.2-3B-Instruct\", \"status\": \"succeeded\", \"checkpoint_id\": \"ftckpt-stub-a2544168-2\", \"checkpoint_step\": 2, \"train_loss\": 0.5, \"valid_loss\": 0.5, \"trained_tokens\": 0}",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/finetune/metrics_json": "{\"stub\": true, \"job_id\": \"ftjob-stub-1b47f58f\", \"model\": \"meta-llama/Llama-3.2-3B-Instruct\", \"status\": \"succeeded\", \"checkpoint_id\": \"ftckpt-stub-a2544168-2\", \"checkpoint_step\": 2, \"train_loss\": 0.5, \"valid_loss\": 0.5, \"trained_tokens\": 0, \"loss_curve\": [{\"step\": 1, \"train_loss\": 1.0, \"valid_loss\": 1.0}, {\"step\": 2, \"train_loss\": 0.5, \"valid_loss\": 0.5}], \"wall_s\": 0}",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/finetune/cost_json": "{\"usd\": 0, \"items\": []}",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/finetune/logs": "{\"ts\": \"2026-10-21T02:15:55.474237+00:00\", \"level\": \"INFO\", \"message\": \"Token Factory job ftjob-stub-1b47f58f: meta-llama/Llama-3.2-3B-Instruct, hyperparameters {'lora': True, 'n_epochs': 2}, validation file file-stub-9004ad41\"}\n{\"ts\": \"2026-10-21T02:15:55.824111+00:00\", \"level\": \"INFO\", \"message\": \"tf-finetune complete: checkpoint ftckpt-stub-a2544168-2 (step 2) of ftjob-stub-1b47f58f\"}\n",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/serve/model_ref": "{\"base_url\": \"http://stub.invalid/v1\", \"model\": \"tuned\", \"api_key_env\": \"ORCHAPOD_ENDPOINT_TOKEN\", \"base_model\": \"meta-llama/Llama-3.2-3B-Instruct\"}",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/serve/base_model_ref": "{\"base_url\": \"http://stub.invalid/v1\", \"model\": \"meta-llama/Llama-3.2-3B-Instruct\", \"api_key_env\": \"ORCHAPOD_ENDPOINT_TOKEN\", \"base_model\": \"meta-llama/Llama-3.2-3B-Instruct\"}",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/serve/metrics_json": "{\"stub\": true, \"endpoint_id\": \"stub-endpoint\", \"base_model\": \"meta-llama/Llama-3.2-3B-Instruct\", \"served_model_name\": \"tuned\", \"keep_alive_min\": 30}",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/serve/cost_json": "{\"usd\": 0, \"items\": []}",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/serve/logs": "{\"ts\": \"2026-10-21T02:15:56.396240+00:00\", \"level\": \"INFO\", \"message\": \"STUB stand-in for vllm-serve: meta-llama/Llama-3.2-3B-Instruct + lora_adapter r2://orchapod-artifacts/runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/finetune/lora_adapter on one endpoint, http://stub.invalid/v1\"}\n{\"ts\": \"2026-10-21T02:15:56.819827+00:00\", \"level\": \"INFO\", \"message\": \"endpoint registered; it expires in 30 min\"}\n",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/evaluate/eval_summary": "{\"n\": 2, \"judged\": 2, \"wins\": 0, \"ties\": 2, \"losses\": 0, \"errors\": 0, \"win_rate\": 0.5, \"consistency\": 0.0, \"exact_match\": null, \"base\": {\"base_url\": \"http://stub.invalid/v1\", \"model\": \"meta-llama/Llama-3.2-3B-Instruct\", \"api_key_env\": \"ORCHAPOD_ENDPOINT_TOKEN\", \"base_model\": \"meta-llama/Llama-3.2-3B-Instruct\"}, \"tuned\": {\"base_url\": \"http://stub.invalid/v1\", \"model\": \"tuned\", \"api_key_env\": \"ORCHAPOD_ENDPOINT_TOKEN\", \"base_model\": \"meta-llama/Llama-3.2-3B-Instruct\"}, \"judge_model\": \"nvidia/Nemotron-3-Ultra-550b-a55b\", \"decoding\": {\"temperature\": 0.0, \"max_tokens\": 512}, \"stub\": true, \"samples\": [{\"i\": 0, \"question\": \"stub-aa825159\", \"reference\": \"stub-aa825159\", \"context\": \"Stub page 2 for request 2fb63b4d. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/2fb63b4d/2\", \"base\": \"stub-4fa7a307\", \"tuned\": \"stub-e95ad276\", \"base_correct\": null, \"tuned_correct\": null, \"verdict\": \"tie\", \"judgments\": [{\"order\": \"tuned_first\", \"winner\": \"tuned\", \"reasoning\": \"stub-aa6972ce\"}, {\"order\": \"base_first\", \"winner\": \"base\", \"reasoning\": \"stub-001e68e4\"}], \"error\": null}, {\"i\": 1, \"question\": \"stub-c0829a8e\", \"reference\": \"stub-c0829a8e\", \"context\": \"Stub page 2 for request fe6240e6. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes. This deterministic stub page stands in for a real web page, so STUB=1 runs keep their shapes.\", \"source_url\": \"https://example.com/stub/fe6240e6/2\", \"base\": \"stub-f145bd3b\", \"tuned\": \"stub-fa467ca6\", \"base_correct\": null, \"tuned_correct\": null, \"verdict\": \"tie\", \"judgments\": [{\"order\": \"tuned_first\", \"winner\": \"tuned\", \"reasoning\": \"stub-d8ffa478\"}, {\"order\": \"base_first\", \"winner\": \"base\", \"reasoning\": \"stub-ff7e00ad\"}], \"error\": null}]}",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/evaluate/metrics_json": "{\"stub\": true, \"n\": 2, \"judged\": 2, \"wins\": 0, \"ties\": 2, \"losses\": 0, \"errors\": 0, \"win_rate\": 0.5, \"consistency\": 0.0, \"exact_match\": null, \"base\": {\"base_url\": \"http://stub.invalid/v1\", \"model\": \"meta-llama/Llama-3.2-3B-Instruct\", \"api_key_env\": \"ORCHAPOD_ENDPOINT_TOKEN\", \"base_model\": \"meta-llama/Llama-3.2-3B-Instruct\"}, \"tuned\": {\"base_url\": \"http://stub.invalid/v1\", \"model\": \"tuned\", \"api_key_env\": \"ORCHAPOD_ENDPOINT_TOKEN\", \"base_model\": \"meta-llama/Llama-3.2-3B-Instruct\"}, \"judge_model\": \"nvidia/Nemotron-3-Ultra-550b-a55b\", \"decoding\": {\"temperature\": 0.0, \"max_tokens\": 512}}",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/evaluate/cost_json": "{\"usd\": 0.0, \"items\": [{\"provider\": \"token_factory\", \"model\": \"nvidia/Nemotron-3-Ultra-550b-a55b\", \"calls\": 4, \"in_tokens\": 0, \"out_tokens\": 0, \"usd\": 0.0}]}",
+  "runs/5b45f389-2ba5-46da-8b45-df7c9ddf3c18/evaluate/logs": "{\"ts\": \"2026-10-21T02:15:57.636878+00:00\", \"level\": \"INFO\", \"message\": \"STUB stand-in for judge-eval: 2 test rows, base meta-llama/Llama-3.2-3B-Instruct vs tuned tuned, judge nvidia/Nemotron-3-Ultra-550b-a55b\"}\n{\"ts\": \"2026-10-21T02:15:57.715739+00:00\", \"level\": \"INFO\", \"message\": \"judge-eval: 0 wins, 2 ties, 0 losses over 2 judged rows; win rate 0.5, consistency 0.0\"}\n"
+ }
+}

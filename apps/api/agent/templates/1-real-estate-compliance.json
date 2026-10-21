@@ -31,5 +31,13 @@
         "tuned_model_ref": "${{ nodes.serve.outputs.model_ref }}",
         "judge_model": "nvidia/Nemotron-3-Ultra-550b-a55b", "max_samples": 30}}
     ]
+  },
+  "reduced_inputs": {
+    "research": {"queries": ["Fair Housing Act obligations of real estate agents and landlords",
+                             "RESPA Section 8 kickbacks and referral fees in real estate"], "max_pages": 4},
+    "synth": {"n_samples": 40, "max_usd": 0.05},
+    "finetune": {"n_epochs": 1},
+    "serve": {"keep_alive_min": 10},
+    "evaluate": {"max_samples": 5}
   }
 }

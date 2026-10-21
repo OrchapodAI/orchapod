@@ -89,9 +89,17 @@ def _track(run_id: uuid.UUID, future: asyncio.Future) -> asyncio.Future:
         pending.discard(f)
         if not pending:
             _inflight.pop(run_id, None)
+            budget.release(run_id)  # the last container is gone: so is what it could spend
 
     future.add_done_callback(done)
     return future
+
+
+def _release(run_id: uuid.UUID) -> None:
+    """A node's grant ends with its container: a teardown that a cancel left in flight (the SIGTERM grace, a container
+    still coming up) keeps it until _track sees the teardown finish."""
+    if not _inflight.get(run_id):
+        budget.release(run_id)
 
 
 async def _run_in_own_session(run_id: uuid.UUID, scale: float) -> None:
@@ -139,7 +147,7 @@ async def run_workflow(run_id: uuid.UUID, db: AsyncSession, broadcast: Broadcast
                 await broadcast(run_id, {"type": "node_status", "node_id": node.id, "status": "running"})
                 outputs = await _execute_node(node_run, node, run, rows, db, broadcast, max_cost)
             finally:
-                budget.release(run_id)
+                _release(run_id)
             node_run.status, node_run.finished_at, node_run.error = NodeStatus.SUCCEEDED, utcnow(), None
             await db.commit()
             await broadcast(run_id, {"type": "node_status", "node_id": node.id, "status": "succeeded", "outputs": outputs})

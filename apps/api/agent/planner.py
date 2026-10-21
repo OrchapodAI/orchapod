@@ -9,6 +9,7 @@ plan is the closest canonical template (templates/*.json) and the report is the 
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import math
@@ -69,8 +70,17 @@ class Plan(BaseModel):
 
 
 def templates() -> list[dict]:
-    """The three canonical intents: {slug, title, intent, rationale, plan}."""
+    """The three canonical intents: {slug, title, intent, rationale, plan, reduced_inputs}."""
     return [json.loads(p.read_text()) for p in sorted(TEMPLATES.glob("*.json"))]
+
+
+def reduced(t: dict) -> dict:
+    """"Run it yourself": the template's plan at reduced scale ({node id: inputs} from its `reduced_inputs` win over the
+    plan's), sized for the anonymous caps, and its estimate. One-click Run posts this plan to /agent/run."""
+    plan = copy.deepcopy(t["plan"])
+    for n in plan["nodes"]:
+        n["inputs"].update(t.get("reduced_inputs", {}).get(n["id"], {}))
+    return {"plan": plan, "estimate": estimate(plan)[0]}
 
 
 def visible() -> dict[str, dict]:
@@ -206,13 +216,17 @@ def _input_problems(key: str, value: Any, n: PlanNode, nodes: dict[str, PlanNode
     return []
 
 
+def tf_base() -> str:
+    """$NEBIUS_BASE_URL (default Token Factory) as the pairing rule compares base URLs: stripped, no trailing slash."""
+    return (os.environ.get("NEBIUS_BASE_URL") or TF_BASE).strip().rstrip("/")
+
+
 def _model_ref_problems(ref: dict) -> list[str]:
     """Inline ModelRefs pair NEBIUS_API_KEY only with Token Factory; endpoint refs come only from a vllm-serve
     model_ref output (contracts "ModelRef"), so a plan never sends our keys to a URL it chose."""
-    tf_base = (os.environ.get("NEBIUS_BASE_URL") or TF_BASE).strip().rstrip("/")
-    if ref.get("api_key_env") == "NEBIUS_API_KEY" and str(ref.get("base_url") or "").strip().rstrip("/") == tf_base:
+    if ref.get("api_key_env") == "NEBIUS_API_KEY" and str(ref.get("base_url") or "").strip().rstrip("/") == tf_base():
         return []
-    return [f"refused ModelRef: an inline ref may only pair NEBIUS_API_KEY with {tf_base}; "
+    return [f"refused ModelRef: an inline ref may only pair NEBIUS_API_KEY with {tf_base()}; "
             "endpoint refs come from a vllm-serve model_ref output"]
 
 
@@ -365,7 +379,7 @@ def template_report(agent_run: AgentRun, s: dict) -> str:
         lines += [f"**Error:** {s['error']} (Retry node resumes from the failed node.)", ""]
     lines += ["| Node | Type | Status | $ |", "| --- | --- | --- | --- |"]
     lines += [f"| {n['node_id']} | {n['type']} | {n['status']} | {n['usd']:.4f} |" for n in s["nodes"]]
-    files = [a for a in s["artifacts"] if a.get("download_url") and a["kind"] != "metrics"]
+    files = [a for a in s["artifacts"] if a.get("download_url") and a["kind"] not in ("metrics", "log")]
     if files:
         lines += ["", "**Results:**"] + [f"- [{a['node_id']}/{a['name']}]({a['download_url']})" for a in files]
     return "\n".join(lines)

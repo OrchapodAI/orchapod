@@ -30,7 +30,7 @@ async def test_register_artifact_creates_record_and_updates_outputs(client, db, 
 
     assert resp.status_code == 201
 
-    result = await db.exec(select(Artifact).where(Artifact.node_run_id == node_run.id))
+    result = await db.scalars(select(Artifact).where(Artifact.node_run_id == node_run.id))
     artifact = result.first()
     assert artifact is not None
     assert artifact.name == "gguf_file"
@@ -99,7 +99,7 @@ async def test_register_ttl_creates_endpoint_artifact(client, db, seeded_node_ru
         "endpoint_url":   "https://pod-abc-8000.proxy.runpod.net/v1",
     })
 
-    result = await db.exec(
+    result = await db.scalars(
         select(Artifact).where(
             Artifact.node_run_id == node_run.id,
             Artifact.kind        == ArtifactKind.ENDPOINT,

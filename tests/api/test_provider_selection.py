@@ -41,7 +41,7 @@ async def test_default_resources_never_provision_on_vastai_without_nebius(db, mo
 
     await ex.run_workflow(run.id, db, AsyncMock(), 1.0)  # the caller's budget scale is required
 
-    node = (await db.exec(select(NodeRun).where(NodeRun.run_id == run.id))).one()
+    node = (await db.scalars(select(NodeRun).where(NodeRun.run_id == run.id))).one()
     await db.refresh(node)
     assert vast == []
     assert node.error == "no gpu provider: none of ['nebius'] is configured with 1xH100 capacity (nebius needs NEBIUS_PROJECT_ID)"

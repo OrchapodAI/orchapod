@@ -86,9 +86,16 @@ def write_output(
     Returns the URI: r2://${ORCHAPOD_R2_BUCKET}/runs/{run_id}/{node_id}/{name}
 
     The control plane records it in NodeRun.outputs, so `${{ nodes.<id>.outputs.<name> }}` resolves to it.
+    The name `logs` is reserved: the SDK writes it at exit.
     """
     if not _NAME.fullmatch(name):
         raise ValueError(f"output name {name!r} must match ^[a-z][a-z0-9_]*$")
+    if name == "logs":
+        raise ValueError("output name 'logs' is reserved: the SDK writes the node's log lines under it at exit")
+    return _write(name, local_path, kind, metadata)
+
+
+def _write(name: str, local_path: Path | str, kind: ArtifactKind, metadata: dict | None = None) -> str:
     r2_key = f"runs/{os.environ['ORCHAPOD_RUN_ID']}/{os.environ['ORCHAPOD_NODE_ID']}/{name}"
     r2_uri = f"r2://{_bucket()}/{r2_key}"
 
@@ -147,7 +154,7 @@ def _arm() -> None:
     if _armed:
         return
     _armed = True
-    atexit.register(_write_cost)                # runs after normal exit, uncaught exceptions and SystemExit
+    atexit.register(_at_exit)                   # runs after normal exit, uncaught exceptions and SystemExit
     signal.signal(signal.SIGTERM, _sigterm)     # cancel/timeout: docker stop sends SIGTERM, kills after 30 s
     sys.excepthook = _excepthook
 
@@ -161,7 +168,8 @@ def _excepthook(exc_type, exc, tb) -> None:
     sys.__excepthook__(exc_type, exc, tb)
 
 
-def _write_cost() -> None:
+def _at_exit() -> None:
+    """cost_json first (money), then `logs`: the last lines the node logged (log.lines), as JSONL {ts, level, message}."""
     summary = cost.summary()
     path = local_path("cost_json")
     path.write_text(json.dumps(summary))
@@ -169,6 +177,12 @@ def _write_cost() -> None:
         write_output("cost_json", path, "metrics", {"usd": summary["usd"]})
     except Exception as e:
         log.error(f"cost_json not registered: {e}")
+    path = local_path("logs")
+    path.write_text("".join(json.dumps(line) + "\n" for line in list(log.lines)))  # a copy: another thread may still log
+    try:
+        _write("logs", path, "log")
+    except Exception as e:
+        log.warn(f"logs not registered: {e}")  # not ERROR: the node's last ERROR line is its error
 
 
 # ---------------------------------------------------------------------------

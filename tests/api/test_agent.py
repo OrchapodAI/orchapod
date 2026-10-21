@@ -12,9 +12,8 @@ import httpx
 import pytest
 import yaml
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import select
-from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.agent import planner
 from api.executor import run_workflow as ex
@@ -93,6 +92,30 @@ async def test_templates_are_the_three_canonical_intents(client):
         assert set(t["estimate"]["by_node"]) == {n["id"] for n in t["plan"]["nodes"]}
     assert 0 < templates[1]["estimate"]["usd"] <= 0.3  # intent #2 fits the anonymous run cap ($3 x 0.1)
     assert templates[0]["estimate"]["usd"] < 3
+
+
+async def test_run_it_yourself_clones_each_template_at_reduced_scale(client, monkeypatch):
+    templates = (await client.get("/agent/templates")).json()
+
+    for t in templates:
+        small = t["reduced"]
+        assert set(small) == {"plan", "estimate"} and small["plan"]["name"] == t["plan"]["name"]
+        for full, cut in zip(t["plan"]["nodes"], small["plan"]["nodes"], strict=True):  # the same pipeline ...
+            assert {**full, "inputs": {}} == {**cut, "inputs": {}}
+            assert cut["inputs"] == {**full["inputs"], **t["reduced_inputs"].get(full["id"], {})}  # ... smaller inputs
+        assert set(t["reduced_inputs"]) <= {n["id"] for n in t["plan"]["nodes"]}
+        assert 0 < small["estimate"]["usd"] < t["estimate"]["usd"]
+    assert [round(t["reduced"]["estimate"]["usd"], 2) for t in templates] == [0.88, 0.03, 0.02]
+    # fits: the reduced plan's estimate within the caller's run cap ($3 x ORCHAPOD_ANON_SCALE 0.1 when anonymous)
+    assert [t["fits"] for t in templates] == [False, True, True]  # real-estate is admin-only at the default scale
+    monkeypatch.setenv("ORCHAPOD_ADMIN_TOKEN", "s3cret")
+    admin = (await client.get("/agent/templates", headers={"X-Orchapod-Admin": "s3cret"})).json()
+    assert [t["fits"] for t in admin] == [True, True, True]
+
+    launched = []  # intent #2 at reduced scale runs for an anonymous caller ($3 x 0.1 run cap)
+    monkeypatch.setattr(ex, "launch", lambda run_id, scale: launched.append(scale))
+    r = await client.post("/agent/run", json={"intent": templates[1]["intent"], "plan": templates[1]["reduced"]["plan"]})
+    assert (r.status_code, launched) == (201, [0.1])
 
 
 @pytest.mark.skipif("structured" not in json.dumps(SynthDistilabelInputs.model_json_schema()["properties"]["pipeline_template"]),
@@ -370,6 +393,7 @@ async def agent_run(db, status):
     db.add_all([NodeRun(run_id=run.id, node_id="synth", node_type="synth-distilabel", status=NodeStatus.SUCCEEDED), prep])
     await db.flush()
     db.add(Artifact(node_run_id=prep.id, name="dataset", kind=ArtifactKind.DATASET, uri="r2://b/runs/x/prep/dataset"))
+    db.add(Artifact(node_run_id=prep.id, name="logs", kind=ArtifactKind.LOG, uri="r2://b/runs/x/prep/logs"))
     db.add(AgentRun(run_id=run.id, intent="Q&A data", plan=GOOD, estimate={"usd": 0.03, "minutes": 4.5, "by_node": {}}))
     await db.commit()
     return run
@@ -409,6 +433,7 @@ async def test_report_falls_back_to_the_template(client, db, monkeypatch, tf):
     done = await agent_run(db, RunStatus.SUCCEEDED)
     md = (await client.get(f"/agent/runs/{done.id}/report")).json()["markdown"]
     assert "[prep/dataset](/artifacts/" in md and len(tf.requests) == 2  # STUB calls nothing
+    assert "prep/logs" not in md  # results, not the node's log file
 
 
 async def test_a_report_written_while_the_run_is_retried_is_dropped(client, db, monkeypatch):

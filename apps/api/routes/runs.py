@@ -36,6 +36,7 @@ from api.executor import run_workflow as executor
 from api.models.db import AgentRun, Run, NodeRun, RunStatus, NodeStatus, Workflow, Artifact, ArtifactKind, utcnow
 from api.services import budget
 from api.services.events import event_bus
+from api.services.redact import redact
 
 router = APIRouter()
 
@@ -221,7 +222,8 @@ async def run_summary(run_id: uuid.UUID, db: Session):
         raise HTTPException(status_code=404, detail="Run not found")
     nodes = list(await db.scalars(select(NodeRun).where(NodeRun.run_id == run_id)))
     order = executor.node_order(await db.get(Workflow, run.workflow_id) if run.workflow_id else None, run)
-    nodes.sort(key=lambda n: order.index(n.node_id) if n.node_id in order else len(order))
+    # a workflow that no longer compiles (a retired or not yet merged node type) lists its nodes as they ran
+    nodes.sort(key=lambda n: (order.index(n.node_id) if n.node_id in order else len(order), n.started_at or datetime.max))
     node_ids = {n.id: n.node_id for n in nodes}
     artifacts = (await db.scalars(select(Artifact).where(
         Artifact.node_run_id.in_(node_ids)).order_by(Artifact.created_at))).all()
@@ -239,7 +241,7 @@ async def run_summary(run_id: uuid.UUID, db: Session):
                    "error": n.error, "started_at": n.started_at, "finished_at": n.finished_at} for n in nodes],
         "artifacts": [{"id": a.id, "node_id": node_ids[a.node_run_id], "name": a.name, "kind": a.kind, "uri": a.uri,
                        "download_url": f"/artifacts/{a.id}/download" if a.uri.startswith("r2://") else None,
-                       "meta": a.meta or {}} for a in artifacts],
+                       "meta": redact(a.meta or {})} for a in artifacts],
     }
 
 
@@ -335,6 +337,6 @@ def _artifact_out(a: Artifact) -> ArtifactOut:
         kind=a.kind,
         uri=a.uri,
         size_bytes=a.size_bytes,
-        meta=a.meta or {},
+        meta=redact(a.meta or {}),
         created_at=a.created_at,
     )

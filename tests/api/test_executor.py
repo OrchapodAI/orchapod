@@ -10,12 +10,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import select
-from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.executor import run_workflow as ex
 from api.models.db import Artifact, ArtifactKind, NodeRun, NodeStatus, Run, RunStatus, Workflow
+from api.services import budget
 from packages.providers.base import Pod
 
 CHAIN = """
@@ -302,11 +302,12 @@ async def test_cancel_during_provision_terminates_the_pod_once_it_exists(db, pro
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, 5)
+    assert run.id in budget._granted  # the container may still come up and spend: its grant stays
     provider.provision_gate.set()  # the container comes up after the cancel
     await asyncio.wait_for(provider.terminating.wait(), 5)
     await drain()
 
-    assert provider.terminated == ["a"]
+    assert provider.terminated == ["a"] and run.id not in budget._granted
     rows = await nodes(db, run)
     assert (rows["a"].status, rows["a"].error) == (NodeStatus.FAILED, "cancelled")
 
@@ -324,10 +325,11 @@ async def test_a_second_cancel_cannot_interrupt_teardown(db, provider):
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, 5)
     assert ex.busy(run.id)                                   # the executor is gone, the teardown is not
+    assert run.id in budget._granted                         # and the node may still spend in its grace
     provider.terminate_gate.set()
     await drain()
 
-    assert provider.terminated == ["a"] and not ex.busy(run.id)
+    assert provider.terminated == ["a"] and not ex.busy(run.id) and run.id not in budget._granted
     rows = await nodes(db, run)
     assert (rows["a"].status, rows["a"].error) == (NodeStatus.FAILED, "cancelled")
 

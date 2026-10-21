@@ -132,7 +132,7 @@ async def test_model_auto_registered_on_artifact_upload(client, db, seeded_node_
 
     assert resp.status_code == 201
 
-    result = await db.exec(select(Model).where(Model.run_id == run.id))
+    result = await db.scalars(select(Model).where(Model.run_id == run.id))
     model = result.first()
     assert model is not None
     assert model.format.value == "gguf"
@@ -153,5 +153,5 @@ async def test_non_model_artifact_does_not_create_model_record(client, db, seede
         "artifact": {"name": "stats", "uri": "r2://x/stats.json", "kind": "metrics"},
     })
 
-    result = await db.exec(select(Model).where(Model.run_id == run.id))
+    result = await db.scalars(select(Model).where(Model.run_id == run.id))
     assert result.first() is None

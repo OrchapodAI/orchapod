@@ -12,8 +12,7 @@ import pytest
 
 from api.executor import run_workflow as ex
 from api.models.db import NodeRun, NodeStatus, RunStatus, Spend, utcnow
-from sqlalchemy.ext.asyncio import async_sessionmaker
-from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.services import budget
 from tests.api.test_executor import FakeProvider, drain, launched, nodes, provider, seed  # noqa: F401 (fixtures)
 
@@ -127,10 +126,11 @@ async def test_every_node_boundary_checks_budget_and_kill_switch(db, provider, m
     assert provider.provisioned == []
 
 
-async def test_concurrent_runs_never_grant_more_than_the_day_cap(db, provider, monkeypatch):
-    monkeypatch.setenv("ORCHAPOD_MAX_DAY_USD", "1")
-    provider.script = {"a": {"exit": None}}  # every run's first node keeps running
-    runs = [await seed(db) for _ in range(5)]
+async def concurrent_first_nodes(db, provider, n):
+    """n runs at once, each first node kept running: returns their runs and executor tasks once every run holds
+    its node's grant or has stopped at the boundary."""
+    provider.script = {"a": {"exit": None}}
+    runs = [await seed(db) for _ in range(n)]
     sessions = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
 
     async def execute(run):
@@ -138,16 +138,38 @@ async def test_concurrent_runs_never_grant_more_than_the_day_cap(db, provider, m
             await ex.run_workflow(run.id, s, AsyncMock(), 1.0)
 
     tasks = [asyncio.create_task(execute(r)) for r in runs]
-    for _ in range(500):  # until each run holds its node's grant or stopped at the boundary
+    for _ in range(500):
         if len(provider.granted) + sum(t.done() for t in tasks) == len(runs):
             break
         await asyncio.sleep(0.01)
+    return runs, tasks
 
-    assert sum(provider.granted) <= 1.0 and provider.granted  # one day cap, however many nodes run at once
-    errors = [(await nodes(db, r))["a"].error for r in runs]
-    assert errors.count("budget: day cap $1 reached") == len(runs) - len(provider.granted)
+
+async def stop(tasks):
     for t in tasks:
         t.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
     await drain()
-    assert budget._granted == {}  # each node's grant goes with it
+    assert budget._granted == {}  # each node's grant goes with its container
+
+
+async def test_concurrent_runs_never_grant_more_than_the_day_cap(db, provider, monkeypatch):
+    monkeypatch.setenv("ORCHAPOD_MAX_DAY_USD", "1")
+    runs, tasks = await concurrent_first_nodes(db, provider, 5)
+
+    assert sum(provider.granted) <= 1.0 and provider.granted  # one day cap, however many nodes run at once
+    errors = [(await nodes(db, r))["a"].error for r in runs]
+    assert errors.count("budget: day cap $1 reached") == len(runs) - len(provider.granted)
+    await stop(tasks)
+
+
+async def test_grants_of_several_runs_add_up_to_the_day_cap(db, provider, monkeypatch):
+    monkeypatch.setenv("ORCHAPOD_MAX_RUN_USD", "1")
+    monkeypatch.setenv("ORCHAPOD_MAX_DAY_USD", "2.5")
+    runs, tasks = await concurrent_first_nodes(db, provider, 4)
+
+    # $1 each while the day has room, then the $0.50 the others' grants leave, then nothing
+    assert sorted(provider.granted) == [0.5, 1.0, 1.0]
+    errors = [(await nodes(db, r))["a"].error for r in runs]
+    assert errors.count("budget: day cap $2.5 reached") == 1
+    await stop(tasks)

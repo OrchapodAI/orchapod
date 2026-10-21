@@ -46,15 +46,16 @@ def cli(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def polls(monkeypatch):
-    """A fake clock for the provider: its asyncio.sleep calls are recorded and advance nebius.monotonic, never slept."""
+def polls(monkeypatch, sleeps):
+    """A fake clock for the provider: its asyncio.sleep calls are recorded, never slept, and advance nebius.monotonic
+    together with the client's time.sleep pauses (conftest's `sleeps`, e.g. find()'s)."""
     slept = []
 
     async def sleep(seconds):
         slept.append(seconds)
 
     monkeypatch.setattr(asyncio, "sleep", sleep)
-    monkeypatch.setattr(nebius, "monotonic", lambda: sum(slept))
+    monkeypatch.setattr(nebius, "monotonic", lambda: sum(slept) + sum(sleeps))
     return slept
 
 
@@ -308,19 +309,38 @@ async def test_provision_refuses_a_control_plane_or_bucket_the_job_cannot_reach(
     assert seen == []
 
 
-async def test_provision_adopts_its_job_once_find_sees_it_after_a_lost_reply(sleeps):
-    sent = []
+@pytest.mark.parametrize("cap", [None, "", "abc", "nan", "inf", "-1", "0"])
+async def test_provision_refuses_a_budget_that_is_not_a_finite_number_above_0(replay, cap):
+    env = {k: v for k, v in JOB_ENV.items() if k != "ORCHAPOD_MAX_COST_USD"}
+    if cap is not None:
+        env["ORCHAPOD_MAX_COST_USD"] = cap
+    http, seen = replay()
+    with pytest.raises(ProvisionError, match="^bad_request: ORCHAPOD_MAX_COST_USD must be a finite number above 0$"):
+        await NebiusProvider(http=http).provision(GPUSpec(gpu_type="H100"), "img", env)
+    assert seen == []  # a bad cap used to raise after the paid POST and orphan the job
+
+
+async def test_a_lost_create_is_logged_by_name_adopted_once_find_sees_it_and_metered_from_before_the_create(
+        polls, sleeps, caplog):
+    sent, logged_at_post = [], []
 
     def nebius_api(request: httpx.Request) -> httpx.Response:
         sent.append(request)
         if request.method == "POST":  # DEADLINE_EXCEEDED: "may occur even if the request completed successfully"
+            logged_at_post.append(caplog.text)
             return httpx.Response(504, json={"code": 4, "message": "deadline exceeded"})
-        mine = [item("aijob-e00mine", "PROVISIONING", name=body(sent[0])["metadata"]["name"])] if len(sent) > 2 else []
-        return httpx.Response(200, json={"items": [item("aijob-e00other", "RUNNING", name="orchapod-other"), *mine]})
+        if request.url.path == "/ai/v1/jobs":  # find(): seen on the second look, 15 s later
+            mine = [item("aijob-e00mine", "PROVISIONING", name=body(sent[0])["metadata"]["name"])] if len(sent) > 2 else []
+            return httpx.Response(200, json={"items": [item("aijob-e00other", "RUNNING", name="orchapod-other"), *mine]})
+        return httpx.Response(200, json=item("aijob-e00mine", "RUNNING"))
 
     provider = NebiusProvider(http=httpx.Client(transport=httpx.MockTransport(nebius_api)))
-    pod = await provider.provision(GPUSpec(gpu_type="L40S"), "img", JOB_ENV)
-    assert pod.pod_id == "aijob-e00mine" and [r.method for r in sent] == ["POST", "GET", "GET"] and sleeps == [0, 15]
+    env = {**JOB_ENV, "ORCHAPOD_MAX_COST_USD": "0.0500"}  # $4.50 an hour: the cap is reached 40 s after the create
+    pod = await provider.provision(GPUSpec(gpu_type="H100"), "img", env)
+    assert pod.pod_id == "aijob-e00mine" and sleeps == [0, 15]
+    assert body(sent[0])["metadata"]["name"] in logged_at_post[0]  # named in the log before the create went out
+    assert await provider.wait(pod) == 1 and polls == [15, 15]  # polls at 15, 30 and 45 s: find's 15 s count
+    assert [r.method for r in sent] == ["POST", "GET", "GET", "GET", "GET", "GET"]
 
 
 async def test_provision_names_the_job_when_a_lost_create_never_shows_up(replay, sleeps):
@@ -352,8 +372,20 @@ async def test_wait_polls_every_15_s_through_api_blips_and_keeps_the_failure_rea
     assert await provider.wait(done) == 0 and done.error is None
     assert polls == [15, 15, 15]
     assert await provider.wait(failed) == 1
-    assert failed.error == "FAILED ContainerFailed: exit code 1, see <url>"  # backend shows it instead of "exit 1"
+    assert failed.error == "FAILED ContainerFailed: exit code 1, see <hidden>"  # backend shows it instead of "exit 1"
     assert "aijob-e00job2 FAILED: ContainerFailed exit code 1" in caplog.text
+
+
+async def test_the_whole_pod_error_hides_urls_hosts_and_bearer_tokens_and_stops_at_300_characters(replay, polls):
+    http, _ = replay(
+        httpx.Response(200, json=item("aijob-e00job1", "ERROR", code="StartFailed https://registry.example/v2/pull",
+                                      message="pull from 10.1.2.3 or cache.example:5000 with Bearer eyJabc refused")),
+        httpx.Response(200, json=item("aijob-e00job2", "FAILED", code="x" * 5000, message="long")))
+    provider = NebiusProvider(http=http)
+    hidden, long = Pod(provider="nebius", pod_id="aijob-e00job1"), Pod(provider="nebius", pod_id="aijob-e00job2")
+    assert await provider.wait(hidden) == 1 and await provider.wait(long) == 1
+    assert hidden.error == "ERROR StartFailed <hidden> pull from <hidden> or <hidden> with <hidden> refused"  # the URL took ":"
+    assert long.error == "FAILED " + "x" * 293 and len(long.error) == 300
 
 
 async def test_wait_stops_once_the_jobs_spend_reaches_the_nodes_budget(replay, polls):

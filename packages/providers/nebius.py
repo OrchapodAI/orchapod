@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import os
 import re
 import shutil
@@ -36,6 +37,8 @@ GIB = 2 ** 30
 PLATFORMS = {"H100": ("gpu-h100-sxm", "1gpu-16vcpu-200gb"), "L40S": ("gpu-l40s-a", "1gpu-8vcpu-32gb")}
 STUB_URL = "http://stub.invalid"
 TOKEN = re.compile(r"[A-Za-z0-9._~+/=-]+")  # what may go into the Authorization header: no space, no newline
+# hidden in Pod.error, which anonymous viewers read: scheme URLs, Bearer tokens, host:port and IP forms
+HIDDEN = re.compile(r"\b\w+://\S+|(?i:bearer)\s+\S+|\b[\w.-]+:\d{1,5}\b|\b\d{1,3}(?:\.\d{1,3}){3}\b")
 log = logging.getLogger("orchapod.nebius")
 
 
@@ -220,9 +223,18 @@ class NebiusProvider:
         for key in ("ORCHAPOD_CONTROL_URL", "ORCHAPOD_R2_ENDPOINT"):  # the job reaches both from Nebius: a scheme check
             if not (env.get(key) or "").startswith("https://"):
                 raise ProvisionError(f"{key} must be an https URL for a Nebius job to reach")
+        try:
+            cap = float(env.get("ORCHAPOD_MAX_COST_USD", ""))
+        except (TypeError, ValueError):
+            cap = 0.0
+        if not 0 < cap < math.inf:  # nan fails too; the executor always writes a finite cap
+            raise ProvisionError("bad_request: ORCHAPOD_MAX_COST_USD must be a finite number above 0")
         name = re.sub(r"[^a-z0-9-]+", "-", f"orchapod-{env.get('ORCHAPOD_RUN_ID', '')[:8]}-{int(time.time())}-"
                                            f"{env.get('ORCHAPOD_NODE_ID', 'node')}".lower())[:63].strip("-")
         env = {k: v for k, v in env.items() if k != "NEBIUS_IAM_TOKEN"}
+        log.warning("nebius job %s: creating %s on %s/%s; if the API stops before it is recorded, cancel it in the "
+                    "console", name, image, platform, preset)
+        started = monotonic()  # the spend clock: time lost in a slow create or in find() counts
         try:
             job_id = await asyncio.to_thread(self.client.jobs.create, name, image, env=env, platform=platform,
                                              preset=preset)
@@ -233,8 +245,7 @@ class NebiusProvider:
             if job is None:
                 raise ProvisionError(f"{e}; job {name} may still exist, cancel it in the console") from e
             job_id = job["id"]
-        cap = float(env.get("ORCHAPOD_MAX_COST_USD") or "inf")
-        self._budget[job_id] = (monotonic() + cap / price * 3600,
+        self._budget[job_id] = (started + cap / price * 3600,
                                 f"budget: node cap ${cap:.2f} reached ({platform} at ${price:.2f}/h)")
         return Pod(provider=self.name, pod_id=job_id)
 
@@ -255,8 +266,9 @@ class NebiusProvider:
                     return 0
                 if job["state"] in ("FAILED", "CANCELLED", "ERROR"):
                     log.error("nebius job %s %s: %s %s", pod.pod_id, job["state"], job["code"], job["message"])
-                    why = re.sub(r"\w+://\S+", "<url>", job["message"] or "")[:300]  # anonymous viewers read it
-                    pod.error = f"{job['state']} {job['code'] or ''}".strip() + (f": {why}" if why else "")
+                    why = " ".join(x for x in (job["state"], job["code"]) if x)
+                    why += f": {job['message']}" if job["message"] else ""
+                    pod.error = HIDDEN.sub("<hidden>", why[:1000])[:300]  # [:1000] bounds the regex's worst case
                     return 1
             if monotonic() >= stop_at:
                 pod.error = over_budget

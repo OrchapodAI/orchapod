@@ -129,6 +129,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # unsloth-train is a ~20 GB image (CUDA 12.8, torch 2.10, amd64) and distill-sft starts from the 22 GB NGC pytorch image: more
+      # than a standard runner has free. Clear its preinstalled toolchains first, for those two only (pinned to the v1.3.1 commit).
+      - name: Free disk space
+        if: contains(fromJSON('["unsloth-train", "distill-sft"]'), matrix.node)
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:

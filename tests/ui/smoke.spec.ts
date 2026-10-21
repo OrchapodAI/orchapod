@@ -5,9 +5,6 @@ const API = process.env.E2E_API_URL ?? "";
 // a second API at the public demo's scale, ORCHAPOD_ANON_SCALE=0.1 (scripts/e2e_ui.py PUBLIC_CAPS): $3 x 0.1 per run
 const PUBLIC_API = process.env.E2E_PUBLIC_API_URL ?? "";
 const PUBLIC_RUN_CAP = 3 * 0.1;
-const STRICT = process.env.E2E_STRICT === "1";
-// canonical intent -> why it cannot run yet, from the planner's own errors (scripts/e2e_agent.py PENDING)
-const PENDING: Record<string, string[]> = JSON.parse(process.env.E2E_PENDING || "{}");
 // canonical intent -> the slug of its template (scripts/e2e_agent.py INTENTS): later templates may fine-tune too
 const SLUGS: Record<string, string> = JSON.parse(process.env.E2E_SLUGS || "{}");
 
@@ -19,14 +16,6 @@ type Template = {
 
 const usd = (n: number) => `$${n.toFixed(2)}`; // the page's own formats
 const mins = (n: number) => `~${Math.round(n)} min`;
-
-/** A step whose piece is not merged yet: a loud SKIP that is never a pass. --strict (E2E_STRICT=1) fails it instead. SKIP-SITE(ml-w4) */
-function pending(why: string | string[]): never {
-  const message = `SKIP (this is NOT a pass): ${([] as string[]).concat(why).join("; ")}`;
-  console.log(`\n${message}`);
-  test.skip(!STRICT, message);
-  throw new Error(message);
-}
 
 async function template(n: 1 | 2): Promise<Template> {
   const r = await fetch(`${API}/agent/templates`);
@@ -93,8 +82,8 @@ test("/agent: intent #2 is planned, run and reported", async ({ page }, testInfo
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
-// The template gallery, the dataset card, the eval view and the compare playground (frontend-w3, merged: a missing piece is a
-// regression and fails), and the golden path, which SKIPs only for what is not merged yet (vllm-serve, ml-w4).
+// The template gallery, the dataset card, the eval view and the compare playground (frontend-w3) and the golden path (ml-w4's
+// vllm-serve): all merged, so a missing piece is a regression and fails.
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** One click on a template card of the gallery (under the chat box on /agent; its button is named "Run template: <title>"). */
@@ -152,8 +141,8 @@ test("templates: at ORCHAPOD_ANON_SCALE=0.1 a template above the per-run cap can
   expect(problems).toEqual([]);
 });
 
-// What the run page shows for a judge-eval result (docs/contracts.md "judge-eval", "ModelRef", "/compare"): used by the golden path
-// on real STUB data, and by the next test on a run served from a fixture, which needs neither judge-eval nor POST /compare.
+// What the run page shows for a judge-eval result (docs/contracts.md "judge-eval", "ModelRef", "/compare"), on the golden path's real
+// STUB data.
 async function checkEvalView(page: Page): Promise<void> {
   await tab(page, "eval").click({ timeout: 180_000 }); // the tab appears when judge-eval is done
   await expect(page.getByText("Win rate, tuned vs base")).toBeVisible(); // not exact: the label has a STUB pill beside it
@@ -172,59 +161,9 @@ async function checkPlayground(page: Page): Promise<void> {
   await expect(page.getByText(/^done/)).toHaveCount(2, { timeout: 60_000 }); // both sides streamed to the end
 }
 
-const RUN = "00000000-0000-4000-8000-000000000001";
-const ref = (model: string) => ({ base_url: "https://api.tokenfactory.nebius.com/v1", model, api_key_env: "NEBIUS_API_KEY", base_model: null });
-const STATS = {
-  n: 2, judged: 2, wins: 1, ties: 1, losses: 0, errors: 0, win_rate: 0.75, consistency: 0.5, exact_match: null,
-  base: ref("meta-llama/Llama-3.2-3B-Instruct"), tuned: ref("orchapod-3b-lora"), judge_model: "nvidia/Nemotron-3-Ultra-550b-a55b",
-  decoding: { temperature: 0, max_tokens: 512 }, stub: true,
-};
-const verdict = (i: number, v: "win" | "tie") => ({
-  i, question: `Question ${i}?`, reference: "Reference.", context: null, source_url: null, base: "Base answer", tuned: "Tuned answer",
-  base_correct: null, tuned_correct: null, verdict: v, error: null,
-  judgments: [{ order: "tuned_first", winner: "tuned", reasoning: "Tuned sticks to the passage." },
-              { order: "base_first", winner: v === "win" ? "tuned" : "tie", reasoning: "Same on the second look." }],
-});
-
-// ponytail: delete this test with the vllm-serve SKIP layer (the marker in scripts/e2e_agent.py): once the golden path below runs for
-// real, it covers the eval view and the playground on real data; until then this fixture is all that exercises them.
-test("run page: eval view and compare playground on a run served from a fixture", async ({ page }) => {
-  const problems = watch(page);
-  const art = (id: string, node_id: string, name: string, meta: object = {}) =>
-    ({ id, node_id, name, kind: "metrics", uri: `r2://b/runs/${RUN}/${node_id}/${name}`, download_url: `/artifacts/${id}/download`, meta });
-  const summary = {
-    run_id: RUN, status: "succeeded", cost_usd: 0, error: null,
-    nodes: [{ node_id: "evaluate", type: "judge-eval", status: "succeeded", usd: 0, error: null, started_at: null, finished_at: null }],
-    artifacts: [art("ev", "evaluate", "eval_summary"), art("mj", "evaluate", "metrics_json", STATS)],
-  };
-  const run = { id: RUN, workflow_id: RUN, user_id: RUN, status: "succeeded", inputs: {}, cost_usd: 0, started_at: null, finished_at: null,
-                gpu_provider: "local-docker", created_at: "2026-01-01T00:00:00" };
-  const sse = [{ i: 0, delta: "side A " }, { i: 0, delta: "streams" }, { i: 1, delta: "side B streams" }, { i: 0, done: true, usd: null },
-               { i: 1, done: true, usd: null }].map((e) => `data: ${JSON.stringify(e)}\n\n`).join("");
-  const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "*" };
-  await page.route(`${API}/**`, (route) => {
-    const { pathname } = new URL(route.request().url());
-    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
-    if (pathname === `/runs/${RUN}`) return route.fulfill({ json: run, headers: cors });
-    if (pathname === `/runs/${RUN}/summary`) return route.fulfill({ json: summary, headers: cors });
-    if (pathname === "/artifacts/ev/download") return route.fulfill({ json: { ...STATS, samples: [verdict(0, "win"), verdict(1, "tie")] }, headers: cors });
-    if (pathname === "/compare") return route.fulfill({ headers: { ...cors, "content-type": "text/event-stream" }, body: sse });
-    return route.fulfill({ status: 404, body: "not in the fixture", headers: cors }); // reported by watch()
-  });
-
-  await page.goto(`/runs/${RUN}`);
-  await checkEvalView(page);
-  await expect(page.getByText("75%").first()).toBeVisible(); // win rate = (1 win + 0.5 x 1 tie) / 2
-  await checkPlayground(page);
-  await expect(page.getByText("side A streams", { exact: true })).toBeVisible(); // the deltas of one side join
-  await expect(page.getByText("side B streams", { exact: true })).toBeVisible();
-  expect(problems).toEqual([]);
-});
-
 test("golden path: template, run, eval view, compare playground", async ({ page }) => {
   const problems = watch(page);
   const t = await template(1);
-  if (PENDING["1"]) pending(PENDING["1"]);
   await runFromGallery(page, t);
 
   await untilDone(page, tab(page, "eval"), 180_000); // a failed node shows at once: do not wait out the eval tab

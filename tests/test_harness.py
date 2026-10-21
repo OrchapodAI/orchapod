@@ -51,6 +51,17 @@ def test_ci_builds_the_prod_images_on_nebiushackathon_and_pushes_neither():
     assert args and set(args) <= {a.split("=", 1)[0] for a in builds["apps/web/Dockerfile"]["build-args"].split()}
 
 
+def test_ci_frees_disk_before_building_the_20gb_images():
+    """unsloth-train (~20 GB, CUDA, amd64) does not fit a standard runner's disk: a free-disk-space step, pinned to a commit and
+    run for that node only, comes before the build. The matrix itself stays whole (test_ci_builds_every_container)."""
+    steps = CI["jobs"]["containers"]["steps"]
+    free = next((i for i, s in enumerate(steps) if s.get("uses", "").startswith("jlumbroso/free-disk-space@")), None)
+    build = next(i for i, s in enumerate(steps) if s.get("uses", "").startswith("docker/build-push-action"))
+    assert free is not None and free < build, [s.get("uses") for s in steps]
+    assert re.fullmatch(r"jlumbroso/free-disk-space@[0-9a-f]{40}", steps[free]["uses"]), "pin the action to a commit, not a tag"
+    assert "unsloth-train" in steps[free].get("if", ""), steps[free]  # an `if` on the node: the small images skip the clean-up
+
+
 def test_ci_web_job_runs_the_web_tests():
     test = next((s for s in CI["jobs"]["web"]["steps"] if s.get("run") == "pnpm test"), None)
     assert test and test["working-directory"] == "apps/web", CI["jobs"]["web"]["steps"]
@@ -75,11 +86,10 @@ def test_make_check_skips_the_stub_e2e_unless_asked():
 
 
 @pytest.mark.skipif(not shutil.which("make"), reason="make is not installed")
-def test_make_check_e2e_1_runs_both_stub_e2es_and_a_skip_does_not_fail_it():
+def test_make_check_e2e_1_runs_both_stub_e2es():
     dry_run = make_check_dry_run("1")
     assert all(step in dry_run for step in GATE), dry_run
     assert "scripts/e2e_demo.py --stub &&" in dry_run and "scripts/e2e_agent.py --stub" in dry_run
-    assert "--strict" not in dry_run  # SKIP-SITE(ml-w4): until vllm-serve merges, its SKIP must not fail the gate
     assert "SKIP stub e2e" not in dry_run
 
 

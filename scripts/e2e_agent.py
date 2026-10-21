@@ -1,6 +1,6 @@
 """Stub e2e of the three canonical intents through the Orchapod Agent, through the API only: $0.
 
-    python scripts/e2e_agent.py --stub                       # all three; `make check E2E=1` runs it (a SKIP does not fail it)
+    python scripts/e2e_agent.py --stub                       # all three; `make check E2E=1` runs it
     python scripts/e2e_agent.py --stub --intent 2            # one canonical intent (1, 2 or 3), or any text: the STUB planner
                                                              # answers with the closest canonical plan
     python scripts/e2e_agent.py --intent "..." --max-cost 3  # real (`make agent-e2e INTENT=...`): refuses without --max-cost
@@ -13,16 +13,13 @@ minutes with every node's contract artifacts and a cost_json, cost $0, the repor
 keep_f16 registers the f16 baseline. It reuses e2e_demo.py: its stack (own API, STUB=1, throwaway DB, no paid key), image
 builds and run checks; the images it builds are the shared orchapod/<node>:dev, so it is opt-in like e2e_demo.py.
 
-Intent #1 needs vllm-serve to contract (ml-w4; PENDING below). While a plan's errors are exactly that named gap the intent is
-SKIPped, loudly: exit 0, and --strict makes it 3. Any other plan error is a FAIL, and so is a gap whose piece has merged.
-`make check E2E=1` does not pass --strict until ml-w4 merges; ml-w4's acceptance is `--stub --strict` -> 3 PASS.
+Any plan error is a FAIL: a canonical plan that names a node or an input that does not exist is a regression, never a skip.
 
 The real run is not written: it needs the keys (spike 3). Without --max-cost it refuses, whatever else it is asked.
 """
 
 import argparse
 import json
-import re
 import sys
 
 import e2e_demo as demo
@@ -43,24 +40,6 @@ INTENTS = {
 }
 SLUGS = {number: slug for number, (slug, _, _) in INTENTS.items()}
 
-VLLM = ("ml-w4: vllm-serve is not to contract yet (lora_adapter input, model_ref and base_model_ref outputs, runtime api; "
-        "contracts \"vllm-serve\")")
-# ponytail: THE vllm-serve SKIP LAYER, one deletion. When ml-w4 merges, `python scripts/e2e_agent.py --stub --strict` must print
-# 3 PASS; then delete every site tagged SKIP-SITE(ml-w4) (tests/e2e/test_e2e_agent.py checks that this list is complete):
-#   scripts/e2e_agent.py    PENDING, VLLM, skip_reasons, the SKIP branch of run_one, the --strict flag
-#   scripts/e2e_ui.py       ui_pending's SKIP half (the plan-error check stays) and the E2E_PENDING it sends
-#   tests/ui/smoke.spec.ts  PENDING, pending() and its call in the golden path test; the fixture test goes too: that test then
-#                           covers the eval view and the playground on real data
-#   Makefile                UI_ARGS (ui-smoke --strict)
-#   tests/test_harness.py   the assertion that `check E2E=1` runs the agent e2e without --strict
-#   tests/e2e/test_e2e_agent.py, tests/e2e/test_e2e_ui.py   the SKIP tests
-#   docs/NODE_CONTRACT.md   the SKIP sentence of step 7
-# PENDING is (node type or None, regex over the plan error "<node_id>: <problem>", the missing piece). Entries for merged pieces
-# (ml-w3: judge-eval, quantize keep_f16) are already gone: a plan that still lacks them is a failure.
-PENDING = (  # SKIP-SITE(ml-w4)
-    ("vllm-serve", r"unknown input 'lora_adapter'|no GPU provider", VLLM),
-    (None, r"\(vllm-serve\) has no output '(base_)?model_ref'", VLLM),
-)
 EVAL_KEYS = ("n", "judged", "wins", "ties", "losses", "errors", "win_rate", "consistency", "exact_match", "base", "tuned",
              "judge_model", "decoding", "stub", "samples")  # contracts "judge-eval": eval_summary
 
@@ -84,21 +63,6 @@ def node_types(plan: dict) -> list[str]:
         done.add(ready["id"])
         order.append(ready["type"])
     return order
-
-
-def skip_reasons(errors: list[str], plan: dict) -> list[str] | None:  # SKIP-SITE(ml-w4)
-    """The missing pieces when every plan error is a PENDING one (the intent SKIPs), else None (no error, or one that is
-    something else: that is a FAIL, never a SKIP)."""
-    types = {n["id"]: n["type"] for n in plan.get("nodes", [])}
-    reasons = []
-    for error in errors:
-        node_id, _, problem = error.partition(": ")
-        why = next((why for kind, pattern, why in PENDING
-                    if kind in (None, types.get(node_id)) and re.search(pattern, problem)), None)
-        if why is None:
-            return None
-        reasons.append(why)
-    return list(dict.fromkeys(reasons)) or None
 
 
 def check_eval_summary(s, exact_match: bool) -> list[str]:
@@ -168,7 +132,7 @@ def show(verb: str, label: str, lines: list[str], note: str = "") -> None:
 
 
 def run_one(c: httpx.Client, label: str, intent: str, template: dict | None, number: str | None = None) -> str:
-    """One intent: PASS, SKIP (named gaps only) or FAIL. `number` is the canonical intent, None for free text."""
+    """One intent: PASS or FAIL. `number` is the canonical intent, None for free text."""
     demo.say(f"--- {label}: {intent!r}")
     reply = demo.call(c, "POST", "/agent/plan", json={"intent": intent})
     plan, estimate, errors = reply["plan"], reply["estimate"], reply["errors"]
@@ -179,9 +143,6 @@ def run_one(c: httpx.Client, label: str, intent: str, template: dict | None, num
         problems.append(f"the plan's estimate {estimate['usd']} differs from the template's {template['estimate']['usd']}")
     if number and not INTENTS[number][1](types := node_types(plan)):
         problems.append(f"the plan of canonical intent #{number} {INTENTS[number][2]} (docs/agent_knowledge.md), but this one runs {types}")
-    if not problems and (reasons := skip_reasons(errors, plan)):  # SKIP-SITE(ml-w4)
-        show("SKIP", label, reasons, " (this is NOT a pass: it did not run; --strict turns it into a failure)")
-        return "SKIP"
     problems += errors
     if estimate["usd"] > CAP_USD:
         problems.append(f"the estimate ${estimate['usd']} is over the ${CAP_USD:g} run cap")
@@ -209,7 +170,7 @@ def run_one(c: httpx.Client, label: str, intent: str, template: dict | None, num
     return "PASS"
 
 
-def run_all(c: httpx.Client, which: str | None, strict: bool) -> int:
+def run_all(c: httpx.Client, which: str | None) -> int:
     templates = demo.get_templates(c)
     todo = []  # (label, intent text, its canonical template and number, or None for free text)
     for number in [which] if which in INTENTS else [] if which else list(INTENTS):
@@ -226,12 +187,9 @@ def run_all(c: httpx.Client, which: str | None, strict: bool) -> int:
         except RuntimeError as e:  # an HTTP error from the API fails this intent, not the others
             show("FAIL", label, [str(e)])
             results[label] = "FAIL"
-    count = {r: list(results.values()).count(r) for r in ("PASS", "SKIP", "FAIL")}
-    demo.say(f"{count['PASS']} PASS, {count['SKIP']} SKIP (not passes), {count['FAIL']} FAIL: "
-             + ", ".join(f"{label} {r}" for label, r in results.items()))
-    if count["FAIL"]:
-        return 1
-    return 3 if count["SKIP"] and strict else 0  # SKIP-SITE(ml-w4)
+    count = {r: list(results.values()).count(r) for r in ("PASS", "FAIL")}
+    demo.say(f"{count['PASS']} PASS, {count['FAIL']} FAIL: " + ", ".join(f"{label} {r}" for label, r in results.items()))
+    return 1 if count["FAIL"] else 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -239,13 +197,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--stub", action="store_true", help="STUB=1: $0, no keys, no network beyond the local stack")
     ap.add_argument("--intent", help="1, 2 or 3 (a canonical intent), or any text; stub default: all three; a real run needs one")
     ap.add_argument("--max-cost", type=float, help="USD cap of a real run; a real run is refused without it")
-    ap.add_argument("--strict", action="store_true", help="a SKIP (vllm-serve not merged yet) exits 3 instead of 0")  # SKIP-SITE(ml-w4)
     args = ap.parse_args(argv)
     if not args.stub:
         if args.max_cost is None or args.max_cost <= 0:
             ap.error("refusing to run without --max-cost: a real run spends money, so it needs a USD cap above 0")
         ap.error("only --stub exists so far; the real run is written once the keys exist (spike 3)")
-    return demo.with_stack(lambda c: run_all(c, args.intent, args.strict), FULL_CAPS)
+    return demo.with_stack(lambda c: run_all(c, args.intent), FULL_CAPS)
 
 
 if __name__ == "__main__":

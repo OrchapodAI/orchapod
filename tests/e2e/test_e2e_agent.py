@@ -2,8 +2,6 @@
 
 import copy
 import json
-import subprocess
-from pathlib import Path
 
 import e2e_agent as agent
 import e2e_demo as demo
@@ -13,7 +11,6 @@ import pytest
 from api.agent import planner
 from tests.e2e.test_e2e_demo import good_summary, templates_on_disk
 
-ROOT = Path(__file__).resolve().parents[2]
 SHIPPED = templates_on_disk()
 TEMPLATES = [{**t, "estimate": planner.estimate(t["plan"])[0]} for t in SHIPPED]  # what GET /agent/templates serves
 I1, I2, I3 = (agent.canonical(TEMPLATES, n) for n in "123")
@@ -21,7 +18,7 @@ I1, I2, I3 = (agent.canonical(TEMPLATES, n) for n in "123")
 FOURTH = {**I1, "slug": "nebius-docs-specialist", "title": "Llama 8B tuned as a Nebius docs specialist",
           "intent": "Distill a Nebius docs specialist: fine-tune Llama 3.1 8B on the Nebius docs"}
 
-# What the planner says about template #1 with ml-w3 merged and vllm-serve not yet to contract (ml-w4); template #3 has no errors.
+# What the planner said about template #1 before ml-w4's vllm-serve merged: a missing piece, which now fails the e2e.
 ERRORS_1 = ["serve: unknown input 'lora_adapter'",
             "serve: no GPU provider in provider_pref ['nebius'] is configured (nebius needs NEBIUS_PROJECT_ID)",
             "evaluate: base_model_ref: serve (vllm-serve) has no output 'base_model_ref'",
@@ -51,7 +48,7 @@ def fake_api(errors_by_intent=None, plan_for=None, status=200, templates=TEMPLAT
             body = {"plan": (plan_for or {}).get(intent, t["plan"]), "rationale": "", "estimate": t["estimate"], "warnings": [],
                     "errors": errors_by_intent.get(intent, [])}
             return httpx.Response(status, json=body)
-        raise AssertionError(f"unexpected {request.method} {request.url.path}: a SKIP or a plan FAIL must stop before any run")
+        raise AssertionError(f"unexpected {request.method} {request.url.path}: a plan FAIL must stop before any run")
 
     return httpx.Client(base_url="http://api", transport=httpx.MockTransport(handler))
 
@@ -71,9 +68,9 @@ def test_each_canonical_intent_has_its_own_template_and_extra_templates_are_allo
 
 
 def test_the_default_run_covers_the_three_canonical_intents_and_no_other_template(capsys):
-    errors = {I1["intent"]: ERRORS_1, I2["intent"]: ["synth: boom"], I3["intent"]: ["gsm8k: boom"]}  # none reaches a run
+    errors = {I1["intent"]: ["research: boom"], I2["intent"]: ["synth: boom"], I3["intent"]: ["gsm8k: boom"]}  # none reaches a run
     api = fake_api(errors, templates=[*TEMPLATES, FOURTH])  # a fourth intent would reach preflight(), which fails the test
-    assert agent.run_all(api, None, strict=False) == 1
+    assert agent.run_all(api, None) == 1
     out = capsys.readouterr().out
     assert out.count("--- intent #") == 3 and "nebius" not in out.lower()
 
@@ -107,10 +104,9 @@ def test_a_template_edit_that_drops_or_misplaces_a_step_fails_the_e2e(number, ca
     template = agent.canonical(TEMPLATES, number)
     templates = [{**t, "plan": broken_plans()[number]} if t is template else t for t in TEMPLATES]
     assert not agent.INTENTS[number][1](agent.node_types(broken_plans()[number]))
-    errors = {template["intent"]: ERRORS_1 if number == "1" else []}  # named gaps beside a wrong shape are still a failure
-    assert agent.run_all(fake_api(errors, templates=templates), number, strict=False) == 1
+    assert agent.run_all(fake_api(templates=templates), number) == 1
     out = capsys.readouterr().out
-    assert f"e2e FAIL intent #{number}" in out and agent.INTENTS[number][2] in out and "e2e SKIP" not in out
+    assert f"e2e FAIL intent #{number}" in out and agent.INTENTS[number][2] in out
 
 
 def test_node_types_follow_needs_not_the_listing_order():
@@ -119,80 +115,21 @@ def test_node_types_follow_needs_not_the_listing_order():
     assert agent.node_types({"nodes": [{"id": "x", "type": "t", "needs": ["y"]}, {"id": "y", "type": "t", "needs": ["x"]}]}) == []
 
 
-# --- SKIP: only the named gaps -------------------------------------------------------------------------------------------
+# --- a missing piece fails ----------------------------------------------------------------------------------------------------
 
-# SKIP-SITE(ml-w4): the tests of the SKIP, to delete with it (the marker in scripts/e2e_agent.py)
-def test_skip_reasons_name_the_missing_piece_once():
-    assert agent.skip_reasons(ERRORS_1, I1["plan"]) == [agent.VLLM]  # four vllm-serve errors, one reason
-    assert "ml-w4" in agent.VLLM
-
-
-def test_anything_else_is_not_a_skip():
-    assert agent.skip_reasons([], I1["plan"]) is None  # nothing wrong: it runs
-    assert agent.skip_reasons(ERRORS_1 + ["synth: unknown input 'bogus'"], I1["plan"]) is None  # one stray error spoils it
-    assert agent.skip_reasons(["plan: the estimate $9.00 is more than the $3.00 left"], I1["plan"]) is None
-    # "no GPU provider" excuses vllm-serve only; for another node it is a real problem
-    assert agent.skip_reasons(["research: no GPU provider in provider_pref ['nebius'] is configured"], I1["plan"]) is None
-    assert agent.skip_reasons(["nope: unknown input 'lora_adapter'"], I1["plan"]) is None  # not even a node of the plan
-    # ml-w3 and backend-w3 are merged: a plan that lacks judge-eval or quantize's keep_f16 is a regression, not a gap
-    assert agent.skip_reasons(["evaluate: unknown node type 'judge-eval'"], I3["plan"]) is None
-    assert agent.skip_reasons(["quantize: unknown input 'keep_f16'"], I3["plan"]) is None
-    assert agent.skip_reasons(["evaluate: base_model_ref: quantize (quantize) has no output 'gguf_f16'"], I3["plan"]) is None
-
-
-def test_every_planner_error_about_vllm_serve_on_a_shipped_template_is_a_named_gap_or_gone():  # SKIP-SITE(ml-w4)
-    """If the planner's wording drifts, the SKIP stops matching and the e2e fails loudly, so catch it here first. Only the
-    vllm-serve errors: the rest of a tree that lacks ml-w3 (judge-eval) is not a named gap, and must not become one."""
-    for t in SHIPPED:
-        errors, _, _ = planner.review(t["plan"])
-        serve = {n["id"] for n in t["plan"]["nodes"] if n["type"] == "vllm-serve"}
-        gaps = [e for e in errors if e.partition(": ")[0] in serve or "(vllm-serve)" in e]
-        assert not gaps or agent.skip_reasons(gaps, t["plan"]), (t["slug"], gaps)
-
-
-SKIP_SITES = {"scripts/e2e_agent.py", "scripts/e2e_ui.py", "tests/ui/smoke.spec.ts", "Makefile", "tests/test_harness.py",
-              "tests/e2e/test_e2e_agent.py", "tests/e2e/test_e2e_ui.py", "docs/NODE_CONTRACT.md"}
-
-
-@pytest.mark.skipif(not (ROOT / ".git").exists(), reason="needs a git checkout")  # briefs under hackathon/ may quote the tag
-def test_the_skip_marker_lists_every_skip_site():  # SKIP-SITE(ml-w4)
-    """One deletion when ml-w4 merges: the marker in scripts/e2e_agent.py names every file that carries the tag, and no more."""
-    tag = "SKIP-SITE" + "(ml-w4)"
-    tagged = set(subprocess.run(["git", "grep", "-l", "-F", tag, "--", ".", ":!hackathon"], cwd=ROOT, capture_output=True, text=True).stdout.split())
-    assert tagged == SKIP_SITES, f"tagged but unlisted: {sorted(tagged - SKIP_SITES)}; listed but untagged: {sorted(SKIP_SITES - tagged)}"
-    marker = (ROOT / "scripts/e2e_agent.py").read_text()
-    assert all(site in marker for site in SKIP_SITES - {"scripts/e2e_agent.py"}), "the marker names each site's path"
-
-
-# --- exit codes: a SKIP is not a pass --------------------------------------------------------------------------------------
-
-def test_a_skip_exits_0_and_strict_makes_it_3(capsys):  # SKIP-SITE(ml-w4)
-    api = fake_api({I1["intent"]: ERRORS_1})
-    assert agent.run_all(api, "1", strict=False) == 0
+@pytest.mark.parametrize("number, template, errors", [
+    ("1", I1, ERRORS_1),  # vllm-serve was a named gap until ml-w4 merged
+    ("3", I3, ["evaluate: unknown node type 'judge-eval'"]),
+])
+def test_a_missing_piece_fails_the_e2e_and_names_it(number, template, errors, capsys):
+    assert agent.run_all(fake_api({template["intent"]: errors}), number) == 1
     out = capsys.readouterr().out
-    assert "e2e SKIP intent #1 (this is NOT a pass" in out and "1 SKIP (not passes)" in out
-    assert agent.VLLM in out, "the missing piece is named"
-    assert agent.run_all(api, "1", strict=True) == 3
-    assert "--strict turns it into a failure" in out
+    assert f"e2e FAIL intent #{number}" in out and all(e in out for e in errors) and "SKIP" not in out
 
 
-def test_an_unexpected_plan_error_fails_and_a_skip_never_hides_it(capsys):
-    errors = ERRORS_1 + ["synth: unknown input 'bogus'"]
-    assert agent.run_all(fake_api({I1["intent"]: errors}), "1", strict=False) == 1
-    out = capsys.readouterr().out
-    assert "e2e FAIL intent #1" in out and "bogus" in out and "SKIP" not in out.replace("0 SKIP", "")
-
-
-def test_a_merged_piece_that_goes_missing_fails_instead_of_skipping(capsys):
-    api = fake_api({I3["intent"]: ["evaluate: unknown node type 'judge-eval'"]})
-    assert agent.run_all(api, "3", strict=False) == 1
-    assert "e2e FAIL intent #3" in capsys.readouterr().out
-
-
-@pytest.mark.parametrize("errors", [[], ERRORS_1])  # ERRORS_1 are named gaps of the plan it answered with: still no SKIP
-def test_a_planner_that_answers_with_another_plan_fails_even_when_its_errors_are_named_gaps(errors, capsys):
-    api = fake_api({I3["intent"]: errors}, plan_for={I3["intent"]: I1["plan"]})
-    assert agent.run_all(api, "3", strict=False) == 1
+def test_a_planner_that_answers_with_another_plan_fails(capsys):
+    api = fake_api(plan_for={I3["intent"]: I1["plan"]})
+    assert agent.run_all(api, "3") == 1
     out = capsys.readouterr().out
     assert "e2e FAIL intent #3" in out and "canonical plan" in out
 
@@ -202,18 +139,18 @@ def test_an_estimate_over_the_run_cap_fails(capsys):
     handler = lambda r: httpx.Response(  # noqa: E731
         200, json=[over] if r.url.path == "/agent/templates" else {"plan": over["plan"], "estimate": over["estimate"], "errors": []})
     api = httpx.Client(base_url="http://api", transport=httpx.MockTransport(handler))
-    assert agent.run_all(api, "2", strict=False) == 1
+    assert agent.run_all(api, "2") == 1
     assert "over the $3 run cap" in capsys.readouterr().out
 
 
 def test_an_api_error_fails_that_intent_not_the_script(capsys):
-    assert agent.run_all(fake_api(status=500), "1", strict=False) == 1
+    assert agent.run_all(fake_api(status=500), "1") == 1
     assert "POST /agent/plan -> HTTP 500" in capsys.readouterr().out
 
 
-def test_a_missing_canonical_template_is_a_failure_not_a_skip(capsys):
+def test_a_missing_canonical_template_fails(capsys):
     api = httpx.Client(base_url="http://api", transport=httpx.MockTransport(lambda r: httpx.Response(200, json=[I2])))
-    assert agent.run_all(api, "3", strict=False) == 1
+    assert agent.run_all(api, "3") == 1
     assert "none is canonical intent #3" in capsys.readouterr().out
 
 

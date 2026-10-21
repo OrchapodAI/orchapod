@@ -156,7 +156,7 @@ def main():
     eps, eid, sent, registered, created = None, None, False, False, time.monotonic()
     try:
         if stub:
-            eid, url = f"stub-{name}", STUB_URL
+            eid, url = f"stub-{name}"[:63].rstrip("-"), STUB_URL  # an endpoint id is at most 63 chars (the API checks)
         else:
             eps = endpoints()
             clear(eps, name)

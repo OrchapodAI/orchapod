@@ -20,8 +20,11 @@ export function EvalView({ stats, samplesUrl }: { stats: Omit<EvalSummary, "samp
     api.artifacts.content<EvalSummary>(samplesUrl)
       .then((s) => { if (live) setSamples(s.samples ?? []); })
       .catch((err) => {
+        // The API's 307 is a cross-origin redirect, so the bucket sees Origin: null and must allow GET from any origin.
         if (live) setError(err instanceof TypeError
-          ? "The browser could not fetch eval_summary from object storage (network or CORS)." : explainError(err));
+          ? "The browser could not fetch eval_summary from object storage: the network failed, or the bucket's CORS rule "
+            + "does not allow GET from any origin (*), which it needs because the API's redirect arrives with Origin: null."
+          : explainError(err));
       });
     return () => { live = false; };
   }, [samplesUrl]);
@@ -35,7 +38,10 @@ export function EvalView({ stats, samplesUrl }: { stats: Omit<EvalSummary, "samp
       <div className="card" style={{ padding: 16 }}>
         <div className="row" style={{ gap: 28, alignItems: "flex-start", flexWrap: "wrap" }}>
           <div>
-            <div className="muted" style={{ fontSize: 12 }}>Win rate, tuned vs base</div>
+            <div className="muted row" style={{ fontSize: 12, gap: 6 }}>
+              Win rate, tuned vs base
+              {stats.stub && <span className="pill warn" title="This run ran with STUB=1: placeholder answers and verdicts">STUB</span>}
+            </div>
             <div className="tnum" style={{ fontSize: 40, fontWeight: 600, lineHeight: 1.1 }}>{pct(stats.win_rate)}</div>
             <div className="muted tnum" style={{ fontSize: 12 }}>(wins + ½ ties) ÷ {decided} verdicts</div>
           </div>
@@ -66,7 +72,7 @@ export function EvalView({ stats, samplesUrl }: { stats: Omit<EvalSummary, "samp
         <div className="muted mono" style={{ fontSize: 11.5, marginTop: 10, lineHeight: 1.7, wordBreak: "break-all" }}>
           base {stats.base?.model} · tuned {stats.tuned?.model}<br />
           judge {stats.judge_model} · temperature {stats.decoding?.temperature} · max {stats.decoding?.max_tokens} tokens ·
-          {" "}{stats.judged} of {stats.n} rows judged{stats.stub ? " · STUB" : ""}
+          {" "}{stats.judged} of {stats.n} rows judged
         </div>
       </div>
 

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { yamlValue, buildYamlFromGraph, planYaml } from "../../apps/web/lib/workflowYaml.ts";
 import { api, apiDate, explainError } from "../../apps/web/lib/api.ts";
-import { applyRunEvent, canRetry } from "../../apps/web/lib/runEvents.ts";
+import { applyCompareEvent, applyRunEvent, canRetry } from "../../apps/web/lib/runEvents.ts";
 import { defaultInputs, NODE_FORMS } from "../../apps/web/lib/nodeForms.ts";
 import { datasetOf, evalOf, modelRefsOf } from "../../apps/web/lib/results.ts";
 
@@ -81,6 +81,11 @@ test("explainError turns each agent failure into a readable sentence", () => {
   assert.match(explainError(http(502, "/agent/plan", { detail: "token_factory server 503" })), /Token Factory/);
   assert.match(explainError(http(503, "/agent/plan", { detail: "kill switch" })), /kill switch/);
   assert.equal(explainError(http(500, "/agent/plan", "Internal Server Error")), "500 on /agent/plan: Internal Server Error");
+  // Outside the agent a 502/503 is not about Nemotron planning: the server's detail says what failed
+  assert.equal(explainError(http(502, "/compare", { detail: "refs[1] (tuned) failed; the API log has the cause" })),
+    "502 on /compare: refs[1] (tuned) failed; the API log has the cause");
+  assert.equal(explainError(http(503, "/compare", { detail: "the kill switch is on (ORCHAPOD_KILL_SWITCH)" })),
+    "503 on /compare: the kill switch is on (ORCHAPOD_KILL_SWITCH)");
 });
 
 test("the run page reads GET /runs/{id}/summary and retries with POST /runs/{id}/nodes/{node_id}/retry", async () => {
@@ -240,4 +245,17 @@ test("no token reaches the browser: nothing reads meta.api_key, sends an Authori
       .flatMap((f) => readFileSync(new URL(`../../apps/web/${dir}/${f}`, import.meta.url), "utf8")
         .match(/\.api_key\b|["']Authorization["']|inference\/extend/g)?.map((m) => `${dir}/${f}: ${m}`) ?? []));
   assert.deepEqual(found, []);
+});
+
+test("a compare side appends deltas, closes on done and keeps a failed stream's error; other events change nothing", () => {
+  const open = [{ text: "", done: false, usd: null }, { text: "", done: false, usd: null }];
+  let sides = applyCompareEvent(open, { i: 0, delta: "Hel" });
+  sides = applyCompareEvent(sides, { i: 0, delta: "lo" });
+  sides = applyCompareEvent(sides, { i: 1 } as never); // no delta: nothing to append (never "undefined")
+  sides = applyCompareEvent(sides, { i: 0, done: true, usd: 0.0001 });
+  sides = applyCompareEvent(sides, { i: 1, done: true, usd: null, error: "the model call failed mid-stream" });
+  assert.deepEqual(sides, [
+    { text: "Hello", done: true, usd: 0.0001, error: undefined },
+    { text: "", done: true, usd: null, error: "the model call failed mid-stream" },
+  ]);
 });

@@ -127,6 +127,7 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
   const evalResult = evalOf(summary);
   const dataset = datasetOf(summary);
   const refs = modelRefsOf(summary);
+  const stub = artifacts.some((a) => a.name === "metrics_json" && a.meta?.stub === true); // the SDK marks STUB=1 runs
   const tabs: Tab[] = ["logs", "chart", "artifacts", ...(evalResult ? ["eval" as const] : []),
     ...(dataset ? ["dataset" as const] : []), ...(refs.length >= 2 ? ["compare" as const] : [])];
 
@@ -245,7 +246,7 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
               <div style={{ height: "100%", overflow: "auto" }}>
                 {tab === "eval" && evalResult && <EvalView {...evalResult} />}
                 {tab === "dataset" && dataset && <DatasetCard {...dataset} />}
-                {tab === "compare" && refs.length >= 2 && <ComparePlayground refs={refs} />}
+                {tab === "compare" && refs.length >= 2 && <ComparePlayground refs={refs} stub={stub} />}
               </div>
             )}
 

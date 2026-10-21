@@ -1,4 +1,4 @@
-import type { Run, RunStatus, RunSummary, WsEvent } from "./types";
+import type { CompareEvent, Run, RunStatus, RunSummary, WsEvent } from "./types";
 
 /** What the run page shows: the run (header, cost meter) and its summary (nodes, artifacts). */
 export interface RunViewState {
@@ -18,3 +18,13 @@ export function applyRunEvent(s: RunViewState, e: WsEvent): RunViewState {
 
 /** The API retries a node only in a stopped run (409 otherwise). */
 export const canRetry = (status: RunStatus) => status === "failed" || status === "cancelled";
+
+/** One side of the compare playground. */
+export interface CompareSide { text: string; done: boolean; usd: number | null; error?: string }
+
+/** One POST /compare event on its side: a delta appends, done closes it (with a failed stream's error); anything else is ignored. */
+export function applyCompareEvent(sides: CompareSide[], e: CompareEvent): CompareSide[] {
+  return sides.map((s, i) => i !== e.i ? s
+    : "done" in e ? { ...s, done: true, usd: e.usd, error: e.error }
+    : typeof e.delta === "string" ? { ...s, text: s.text + e.delta } : s);
+}

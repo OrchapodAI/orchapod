@@ -38,8 +38,10 @@ export function explainError(err: unknown): string {
     : typeof raw === "string" ? raw : JSON.stringify(raw);
   if (status === 404 && detail === "Not Found") return `The API at ${BASE} has no ${path} route yet (404).`;
   if (status === 402) return `Over budget: ${detail}`;
-  if (status === 502) return `Nemotron on Token Factory did not answer after retries (502): ${detail}`;
-  if (status === 503) return `The agent is switched off: the kill switch is on or NEBIUS_API_KEY is missing (503: ${detail})`;
+  // On the agent's routes a 502/503 is the planner or reporter; elsewhere (e.g. /compare) the detail says what failed.
+  const agent = path?.startsWith("/agent");
+  if (agent && status === 502) return `Nemotron on Token Factory did not answer after retries (502): ${detail}`;
+  if (agent && status === 503) return `The agent is switched off: the kill switch is on or NEBIUS_API_KEY is missing (503: ${detail})`;
   return status === 422 ? detail : `${status} on ${path}: ${detail}`;
 }
 

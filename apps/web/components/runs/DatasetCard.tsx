@@ -8,13 +8,16 @@ const show = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(v));
 /** data-prep's cleaned dataset: the download link (GET /artifacts/{id}/download) and a stats card from its metrics `fields`. */
 export function DatasetCard({ downloadUrl, metrics: m }: { downloadUrl: string | null; metrics: Partial<DataPrepMetrics> }) {
   const dropped = ([["exact duplicates", m.exact_dupes], ["near duplicates", m.near_dupes], ["low quality", m.quality_dropped],
-    ["unreadable", m.skipped]] as const).filter(([, n]) => n).map(([what, n]) => `${n} ${what}`).join(", ");
+    ["invalid", m.skipped]] as const).filter(([, n]) => n).map(([what, n]) => `${n} ${what}`).join(", ");
 
   return (
     <div className="col" style={{ gap: 16 }}>
       <div className="card row" style={{ padding: 16, gap: 16, flexWrap: "wrap" }}>
         <div>
-          <div className="muted" style={{ fontSize: 12 }}>Dataset</div>
+          <div className="muted row" style={{ fontSize: 12, gap: 6 }}>
+            Dataset
+            {m.stub && <span className="pill warn" title="This run ran with STUB=1: placeholder rows">STUB</span>}
+          </div>
           <div className="tnum" style={{ fontSize: 28, fontWeight: 600 }}>{m.total ?? "–"} rows</div>
           {m.total != null && (
             <div className="muted tnum" style={{ fontSize: 12.5 }}>

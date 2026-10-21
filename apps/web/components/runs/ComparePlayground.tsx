@@ -3,15 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import { api, apiDate, explainError } from "@/lib/api";
 import type { RunModelRef } from "@/lib/results";
+import { applyCompareEvent, type CompareSide } from "@/lib/runEvents";
 import { Callout } from "@/components/Callout";
 
-type Side = { text: string; done: boolean; usd: number | null };
-
 /** One prompt to two of the run's models, streamed side by side through POST /compare; the server holds every key. */
-export function ComparePlayground({ refs }: { refs: RunModelRef[] }) {
+export function ComparePlayground({ refs, stub }: { refs: RunModelRef[]; stub: boolean }) {
   const [pick, setPick] = useState([0, 1]);
   const [prompt, setPrompt] = useState("");
-  const [sides, setSides] = useState<Side[]>([]);
+  const [sides, setSides] = useState<CompareSide[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const abort = useRef<AbortController | null>(null);
@@ -29,12 +28,11 @@ export function ComparePlayground({ refs }: { refs: RunModelRef[] }) {
     });
     try {
       await api.compare({ messages: [{ role: "user", content: prompt.trim() }], refs: [a, b], max_tokens: 512 },
-        (ev) => setSides((ss) => ss.map((s, i) => i !== ev.i ? s
-          : "done" in ev ? { ...s, done: true, usd: ev.usd } : { ...s, text: s.text + ev.delta })),
-        ctrl.signal);
+        (ev) => setSides((ss) => applyCompareEvent(ss, ev)), ctrl.signal);
     } catch (err) {
       if (!ctrl.signal.aborted) setError(explainError(err));
     } finally {
+      ctrl.abort(); // a malformed frame ends the read early: close the stream too
       setBusy(false);
     }
   }
@@ -58,6 +56,7 @@ export function ComparePlayground({ refs }: { refs: RunModelRef[] }) {
           placeholder="One prompt; both models answer it with the same settings." aria-label="Prompt"
           style={{ height: "auto", padding: "8px 10px", resize: "vertical", fontFamily: "var(--font-ui)" }} />
         <div className="row">
+          {stub && <span className="pill warn" title="This run ran with STUB=1: placeholder outputs, no model calls">STUB</span>}
           <span className="muted" style={{ fontSize: 12 }}>Up to 512 tokens each. Keys stay on the server.</span>
           <div className="spacer" />
           {busy
@@ -78,7 +77,8 @@ export function ComparePlayground({ refs }: { refs: RunModelRef[] }) {
               </div>
               <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 13, lineHeight: 1.6, minHeight: 60 }}>{s.text}</div>
               <div className="muted tnum" style={{ fontSize: 12 }}>
-                {s.done ? (s.usd == null ? "done" : `done · $${s.usd.toFixed(4)}`) : busy ? "streaming…" : "stopped before done"}
+                {s.error ? <span style={{ color: "var(--rose-ink)" }}>{s.error}</span>
+                  : s.done ? (s.usd == null ? "done" : `done · $${s.usd.toFixed(4)}`) : busy ? "streaming…" : "stopped before done"}
               </div>
             </div>
           ))}

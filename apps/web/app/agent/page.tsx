@@ -85,11 +85,13 @@ export default function AgentPage() {
     }
   }
 
-  // One-click Run: the template is the plan card, already planned.
+  // One-click Run: the template is the plan card, already planned (at reduced scale when the API offers it).
+  // The intent box is left alone, so a typed draft survives.
   function runTemplate(t: AgentTemplate) {
-    const plan: AgentPlan = { plan: t.plan, rationale: t.rationale, estimate: t.estimate, warnings: [], errors: [] };
-    setIntent(t.intent); setAsked(t.intent); setReply(plan); setRunId(null);
-    handleRun(t.intent, plan);
+    const { plan, estimate } = t.reduced ?? t;
+    const reply: AgentPlan = { plan, rationale: t.rationale, estimate, warnings: [], errors: [] };
+    setAsked(t.intent); setReply(reply); setRunId(null);
+    handleRun(t.intent, reply);
   }
 
   return (
@@ -139,11 +141,9 @@ export default function AgentPage() {
                   <span className="dim" style={{ fontSize: 12.5, flex: 1 }}>{t.intent}</span>
                   <div className="row" style={{ marginTop: 4 }}>
                     <span className="mono tnum muted" style={{ fontSize: 12 }} title="Estimated cost and wall time">
-                      {usd(t.estimate?.usd)} · {mins(t.estimate?.minutes)}
+                      {usd((t.reduced ?? t).estimate?.usd)} · {mins((t.reduced ?? t).estimate?.minutes)}
                     </span>
                     <div className="spacer" />
-                    <button type="button" className="btn btn-sm btn-ghost" onClick={() => setIntent(t.intent)}
-                      aria-label={`Use the intent of ${t.title}`}>Use intent</button>
                     <button type="button" className="btn btn-sm btn-primary" onClick={() => runTemplate(t)} disabled={busy !== ""}
                       aria-label={`Run template: ${t.title}`}>▶ Run</button>
                   </div>

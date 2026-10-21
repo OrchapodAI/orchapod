@@ -263,13 +263,14 @@ export interface DataPrepMetrics {
   exact_dupes: number;
   near_dupes: number;
   quality_dropped: number;
+  stub?: boolean;
   fields?: Record<string, { distinct: number; nulls: number; top: [unknown, number][]; min?: unknown; max?: unknown }>;
 }
 
-/** POST /compare streams these per side i: deltas, then one done. */
+/** POST /compare streams these per side i: deltas, then one done (with `error` when the stream failed mid-answer). */
 export type CompareEvent =
   | { i: 0 | 1; delta: string }
-  | { i: 0 | 1; done: true; usd: number | null };
+  | { i: 0 | 1; done: true; usd: number | null; error?: string };
 
 // ── Agent (docs/contracts.md "Agent API") ────────────────────────────────────
 
@@ -307,6 +308,8 @@ export interface AgentTemplate {
   rationale: string;
   plan: Plan;
   estimate: Estimate;
+  /** "Run it yourself": the same plan at reduced scale, sized for the anonymous caps; one-click Run posts it. */
+  reduced?: { plan: Plan; estimate: Estimate };
 }
 
 export interface AgentRunOut {

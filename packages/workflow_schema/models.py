@@ -24,6 +24,7 @@ class NodeType(str, Enum):
     HF_IMPORT            = "hf-import"
     FILE_UPLOAD          = "file-upload"
     S3_IMPORT            = "s3-import"
+    WEB_RESEARCH         = "web-research"
     # Data processing
     DATA_PREP            = "data-prep"
     AUTO_LABEL_CLEANLAB  = "auto-label-cleanlab"
@@ -372,4 +373,33 @@ NODE_REGISTRY: dict[NodeType, dict] = {
         "runtime": "gpu",
         "long_running": True,  # pod stays alive after container exits
     },
+}
+
+
+# ---------------------------------------------------------------------------
+# web-research (owner: data-engineering; contracts "Data nodes → web-research")
+# ---------------------------------------------------------------------------
+
+class WebResearchInputs(BaseModel):
+    """Tavily search and extract → a corpus of passages with source URLs."""
+    queries: list[str] = Field(default=[], description="Each runs a Tavily advanced search with raw page content, "
+                                                       "⌈max_pages / len(queries)⌉ results (Tavily caps 20)")
+    seed_urls: list[str] = Field(default=[], description="Read with Tavily extract, before the searches")
+    max_pages: int = Field(default=20, ge=1, le=100, description="Caps the pages read, and with them the credits")
+
+    @model_validator(mode="after")
+    def _a_source(self):
+        if not self.queries and not self.seed_urls:
+            raise ValueError("give at least one of queries and seed_urls")
+        return self
+
+class WebResearchOutputs(BaseModel):
+    corpus: str  # JSONL {"url", "text"}: passages of 200–2,000 chars, URLs normalised and deduped
+
+NODE_REGISTRY[NodeType.WEB_RESEARCH] = {
+    "description": "Research the web with Tavily (advanced search per query, extract for seed URLs, at most max_pages "
+                   "pages) → corpus: passages of 200–2,000 chars with their source URL, deduped.",
+    "inputs_schema": WebResearchInputs,
+    "outputs_schema": WebResearchOutputs,
+    "runtime": "cpu",
 }

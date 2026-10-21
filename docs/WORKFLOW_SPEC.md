@@ -33,6 +33,9 @@ nodes:
 ### `data-prep`
 Load (`r2://` JSONL unless `.csv`; `hf://<id>` or `<org>/<name>` with `hf_config`/`hf_split`), convert (`chatml` | `alpaca` | `sharegpt` | `qa` | `structured`), drop rows that break Token Factory's chat rules, exact + near dedupe, split with seed 42 stratified by `source_url` (`train_split`, `test_split`) → `dataset`, `train_jsonl`, `eval_jsonl`, `test_jsonl` plus metrics. CPU-only; `STUB=1` needs no network.
 
+### `web-research`
+Tavily through packages.providers: `seed_urls` (extract) first, then one advanced search with raw content per entry of `queries` (⌈`max_pages` ÷ queries⌉ results, Tavily's cap 20), until `max_pages` (1–100) pages are read → `corpus`: one `{"url", "text"}` per passage of 200–2,000 chars, paragraphs packed up to 2,000 and shorter leftovers dropped, URLs without fragment or trailing slash, exact-duplicate passages dropped. Credits metered via cost; `STUB=1` needs no network.
+
 ### `unsloth-train`
 LoRA SFT via Unsloth. 2-5x faster, ~80% less VRAM than vanilla HF.
 

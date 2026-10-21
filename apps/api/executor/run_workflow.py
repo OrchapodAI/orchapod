@@ -131,6 +131,8 @@ async def run_workflow(run_id: uuid.UUID, db: AsyncSession, broadcast: Broadcast
                 continue
             if budget.kill_switch():
                 raise NodeFailed("kill switch")
+            if scale < 1 and budget.gpu_nodes([node.type]):  # behind the routes' gpu_guard: the public never rents one
+                raise NodeFailed(f"admin only: {node.type} runs on a rented GPU")
             max_cost, which, cap = await budget.reserve(db, run, scale)  # granted to this node until it ends
             if max_cost <= 0:
                 raise NodeFailed(f"budget: {which} cap ${cap:g} reached")

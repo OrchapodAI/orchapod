@@ -272,3 +272,34 @@ async def test_anonymous_callers_never_start_a_gpu_node(client, db, monkeypatch)
     monkeypatch.setenv("ORCHAPOD_ANON_SCALE", "0.9")  # a $2.70 run cap: unsloth-train's typical $1.88 fits it ...
     assert [t["fits"] for t in (await client.get("/agent/templates")).json()] == [False, True]  # ... but rents a GPU
     assert [t["fits"] for t in (await client.get("/agent/templates", headers=ADMIN)).json()] == [True, True]
+
+
+def test_an_api_node_that_rents_a_gpu_counts_as_a_gpu_node(monkeypatch):
+    """ml-w4's vllm-serve runs as `api` (LocalDocker), but the endpoint it creates bills GPU hours: registry rents_gpu."""
+    from fastapi import HTTPException
+    from packages.workflow_schema.models import NODE_REGISTRY, NodeType
+    monkeypatch.setitem(NODE_REGISTRY[NodeType.VLLM_SERVE], "runtime", "api")
+    monkeypatch.setitem(NODE_REGISTRY[NodeType.VLLM_SERVE], "rents_gpu", True)
+    assert budget.gpu_nodes(["vllm-serve", "data-prep", "tf-finetune", "unsloth-train"]) == ["unsloth-train", "vllm-serve"]
+    with pytest.raises(HTTPException) as refused:
+        budget.gpu_guard(["data-prep", "vllm-serve"], 0.1)
+    assert refused.value.status_code == 403 and "vllm-serve" in refused.value.detail
+
+
+async def test_the_executor_never_starts_a_gpu_node_of_an_anonymous_run(db, provider, monkeypatch):
+    """Defense in depth behind the routes' gpu_guard: a run launched below scale 1 fails at its gpu node, before any
+    grant or provider."""
+    picked = []
+
+    async def gpu(resources):
+        picked.append(resources)
+        raise RuntimeError("NEBIUS_PROJECT_ID not set")
+
+    monkeypatch.setattr("api.services.provider_selector.pick_provider", gpu)
+    anon, admin = await seed(db, GPU_FIRST), await seed(db, GPU_FIRST)
+
+    await ex.run_workflow(anon.id, db, AsyncMock(), 0.1)
+    assert (await nodes(db, anon))["train"].error == "admin only: unsloth-train runs on a rented GPU"
+    assert (picked, provider.provisioned, budget._granted) == ([], [], {})
+    await ex.run_workflow(admin.id, db, AsyncMock(), 1.0)
+    assert (await nodes(db, admin))["train"].error == "no gpu provider: NEBIUS_PROJECT_ID not set"  # the admin's gets there

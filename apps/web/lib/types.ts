@@ -48,7 +48,9 @@ export type NodeStatus = "pending" | "running" | "succeeded" | "failed";
 
 export interface Run {
   id: string;
-  workflow_id: string;
+  workflow_id: string | null;
+  /** null once the workflow is gone; /runs names and filters runs by it (the golden-run link). */
+  workflow_name: string | null;
   user_id: string;
   status: RunStatus;
   inputs: Record<string, unknown>;

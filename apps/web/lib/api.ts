@@ -81,7 +81,7 @@ function keepCancelToken<T extends { cancel_token?: string }>(runId: string, { c
 export function capNote(t: AgentTemplate): { text: string; href: string } | null {
   if (t.fits !== false) return null;
   return { text: `about ${usd((t.reduced ?? t).estimate?.usd)} — above the public demo's per-run cap`,
-           href: `/runs?q=${encodeURIComponent(t.plan.name)}` }; // the golden run is that plan's workflow (make demo seeds it)
+           href: `/runs?q=${encodeURIComponent(t.plan.name)}` }; // /runs matches RunOut.workflow_name: the golden run's workflow is that plan (make demo seeds it)
 }
 
 /** The demo-mode banner on /agent: the estimate comes before Run, and public runs are capped. */

@@ -2,6 +2,8 @@
 
 Status: **DONE** · branch `hack/qa-w3` · base 10168de (verified: `git merge-base --is-ancestor 1c0b746 HEAD`) · 17 commits, tip `c301b8f` · cost **$0** (STUB only, no key anywhere, no paid call) · not pushed · no subagents · worktree clean. Resumed after the restart; nothing committed was redone.
 
+**Superseded in part by "Fix round 1" (last section, 5 more commits, tip `b0c21ec`, 22 in all):** `make check E2E=1` is no longer strict (a SKIP prints loudly and does not fail it), so wherever this report says it fails until ml-w4 merges, read that section; ml-w4's acceptance is `python scripts/e2e_agent.py --stub --strict` → 3 PASS.
+
 Commits, oldest first: `ee6227b` carry-overs, SKIP scaffolding deleted · `1902e58` e2e_agent.py · `3b37969` two weak assertions · `4d179f6` ui-smoke · `4adc9be` fail fast · `81d1b09` eval_summary guard, UI timeouts · `928ce8c` `88187df` agent test follows frontend-w3 · `2d39b33` `23c0534` process-group tests, ml-w4 named · `31438eb` dataset card vs file · `33a2d3e` missing UI piece = failure · `4df1b2a` `dbad191` two locator races · `06adc5f` only vllm-serve can SKIP · `0038b3d` golden path fails fast · `c301b8f` canonical intents by slug (extra templates allowed).
 
 Not proven (read these):
@@ -103,7 +105,7 @@ SKIP policy: only intent #1's pending list (the driver derives it from the plann
 - A loaded machine (load average 20–170) made the same UI test take 7 s to 100 s: timeouts are generous (test 5 min, global 9 min, expect 30 s, action 60 s).
 
 ## DECISIONs for the Orchestrator to record
-- DECISION: `make check E2E=1` = `e2e_demo.py --stub` then `e2e_agent.py --stub --strict`; the only SKIP left is vllm-serve (ml-w4), and the code that SKIPs is deleted when it merges. Until then E2E=1 fails (agent e2e exit 3).
+- DECISION (superseded by Fix round 1: no `--strict` in the Makefile until ml-w4 merges): `make check E2E=1` = `e2e_demo.py --stub` then `e2e_agent.py --stub --strict`; the only SKIP left is vllm-serve (ml-w4), and the code that SKIPs is deleted when it merges.
 - DECISION: the canonical intents are the three templates with the slugs in `e2e_agent.INTENTS`; extra templates are allowed and are not run by default.
 - DECISION: the Playwright smoke is `make ui-smoke` (separate from `check E2E=1`), Playwright pinned in `tests/ui`; a missing UI piece, judge-eval or `/compare` fails, a missing vllm-serve SKIPs; `UI_ARGS=--strict` fails SKIPs.
 - DECISION: `make agent-e2e` refuses without `--max-cost`; the real run waits for keys (spike 3).
@@ -117,3 +119,26 @@ SKIP policy: only intent #1's pending list (the driver derives it from the plann
 
 ## Files
 New: `scripts/e2e_agent.py`, `scripts/e2e_ui.py`, `tests/e2e/test_e2e_agent.py`, `tests/e2e/test_e2e_ui.py`, `tests/ui/{package.json,pnpm-lock.yaml,playwright.config.ts,smoke.spec.ts,.gitignore}`. Changed: `scripts/e2e_demo.py`, `tests/e2e/test_e2e_demo.py`, `tests/test_harness.py`, `Makefile`, `pytest.ini`, `docs/NODE_CONTRACT.md` (step 7).
+
+## Fix round 1
+Verified at the start: `c301b8f` already fixes `tests/e2e/test_e2e_agent.py:45`. The assertion that the three canonical slugs equal the slugs of all shipped templates is gone; `test_each_canonical_intent_has_its_own_template_and_extra_templates_are_allowed` asserts canonical ⊆ shipped, three distinct templates, and that a fourth template that also fine-tunes steals nothing in either list order (it passed with data-w4's real fourth template: `661 passed` on the scratch merge).
+
+**Ruling on Important 2 (done).** `make check E2E=1` runs `e2e_demo.py --stub && e2e_agent.py --stub`; the `--strict` flag stays in the script and a SKIP still prints `e2e SKIP … (this is NOT a pass …)`. Updated: the Makefile comment, `tests/test_harness.py` (`…_and_a_skip_does_not_fail_it`, which fails if `--strict` comes back), `docs/NODE_CONTRACT.md` step 7, and the marker (below). ml-w4's acceptance: `python scripts/e2e_agent.py --stub --strict` → 3 PASS, then the SKIP layer goes.
+
+| Item | What changed | Proof |
+|---|---|---|
+| M1 | `smoke.spec.ts`: the plan card's `2 nodes`, `$0.15 · ~7 min` and the report's `$0.00 spent of $0.15 estimated` come from the template object (`usd()`, `mins()` are the page's formats). The card is `getByLabel("Plan", {exact: true})`: **one attribute in `apps/web/app/agent/page.tsx`, `aria-label="Plan"` on the plan card** (merges cleanly onto head 50485a7). Tabs are found in the row of "logs" and the playground's submit in the form of its prompt (`/^compare$/i`), so `compare`/`Compare` no longer differ by case alone. No glyph in any name (`/Run$/`). | no-build scratch runs on head + my tip: the committed fixture test (tabs, submit) passes; a scratch spec with a mocked plan passes the card, the numbers and the Run button; a scratch spec finds the `artifacts 2` tab by its regex |
+| M2 | one `untilDone(page, done)` serves the agent test, the gallery test and the golden path (`done.or(failed)`, then no failure text); `template()` checks `r.ok` | typecheck; the failure path in a scratch spec (it throws within the given timeout) |
+| M3 | `listen_on_free_port` starts at 8003, never the dev API on 8002 | `test_the_stub_api_never_takes_8002_the_dev_api` (red with 8002) |
+| M4 | an autouse fixture in `test_e2e_agent.py` makes `preflight()` and `build_images()` call `pytest.fail` | a fourth intent in the default run now fails at once, naming `preflight()` |
+| M5 | `NODE_CONTRACT.md` step 7 says a canonical plan naming a missing node fails and only vllm-serve SKIPs. **One marker** in `scripts/e2e_agent.py` lists every vllm-serve SKIP site (`e2e_agent.py`, `e2e_ui.py`, `smoke.spec.ts`, the Makefile's UI_ARGS, `test_harness.py`, `test_e2e_agent.py`, `test_e2e_ui.py`, the doc line) and each site carries the tag `SKIP-SITE(ml-w4)` | `test_the_skip_marker_lists_every_skip_site`: `git grep` of the tag must equal the listed files (red when a tag is dropped) |
+| M6 | the Makefile's ui-smoke comment, the `e2e_ui.py` docstring and the doc line say it builds and retags the shared `orchapod/<node>:dev` images, orchestrator-only like `check E2E=1` | text |
+| M7 | `stop_group` ends with `killpg(SIGKILL)`, ignoring `ProcessLookupError`, then reaps the leader | `test_stop_group_kills_what_outlives_the_leader_and_ignores_sigterm` (red without the SIGKILL) |
+| M8 | `INTENTS` holds, per intent, the slug, a rule and its words: #1 ends in `judge-eval`, #2 has no `tf-finetune`, #3 runs `quantize` before `judge-eval`; `run_one` asserts them on the plan, so they hold in every STUB run and also for an intent that SKIPs (`node_types()` = execution order from `needs`) | `test_every_canonical_plan_has_the_shape…`; three broken plans fail the e2e, also beside named gaps (red when the rule is off) |
+| ponytail | `summarize()`, the JSON reporter, `report.json` and `E2E_OUT` are deleted (Playwright's list reporter prints the counts): about 15 lines deleted, net −6 in `e2e_ui.py` and the config after the longer `stop_group`; `test_e2e_agent.py` imports `templates_on_disk()` from `test_e2e_demo.py`; the fixture test carries a `ponytail:` marker (delete it when the golden path runs) | tests |
+
+**Verified:** `tests/e2e` + `tests/test_harness.py`: 82 passed; `make check`: exit 0, `568 passed, 126 warnings`, web `tests 12 / pass 12`. **Not run, as asked:** `make check E2E=1` and `make ui-smoke`, so no `:dev` tag was built or retagged this round, and no container started. The no-build scratch runs (API and `next dev` only, on a scratch clone of head 50485a7 + my tip, removed afterwards) cover the Playwright edits except the paths that need a real run: test A after the Run click, the gallery test's wait and the golden path are **unverified live** this round (their logic is unchanged apart from `untilDone`). Mutations caught: `--strict` back in the Makefile, the rules off, a dropped tag, a fourth intent reaching Docker, `stop_group` without SIGKILL, the default port back to 8002.
+
+**Hygiene, acknowledged:** I started Docker Desktop myself earlier, before the ruling that only Hari does; I will log such a need instead of acting. `make up` only while the daemon runs.
+
+Lines for others (outside my paths): `CLAUDE.md:24`, `hackathon/ORCHESTRATOR.md:206` and `README.md:114`/`:146` should say that `make check E2E=1` runs the two stub e2es, that a SKIP prints loudly and does not fail it until ml-w4 merges, and that `make ui-smoke` is orchestrator-only.

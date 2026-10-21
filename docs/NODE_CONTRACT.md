@@ -66,6 +66,10 @@ if __name__ == "__main__":
     main()
 ```
 
+## Calling Token Factory and Tavily
+
+Only through `packages.providers`: `TokenFactory(on_usage=cost.add).chat(messages, model, json_schema=schema)` and `Tavily(on_usage=cost.add).extract(urls)`. The clients own retries, the $ of every call (`orchapod.prices.PRICES`; an unpriced model is refused before anything is sent), the rule that `NEBIUS_API_KEY` only goes to `NEBIUS_BASE_URL`, and `STUB=1` (deterministic fakes, no network). Every failure is a `ProviderError`; log `str(e)` as the node's last ERROR line.
+
 ## Adding a new node
 
 1. Create `containers/{node-name}/Dockerfile`; the build context is the repo root, so it does `COPY packages/sdk-py/orchapod /app/orchapod` and `COPY containers/{node-name}/run.py /app/run.py` (enforced by `tests/containers/test_dockerfiles.py`)
@@ -73,6 +77,8 @@ if __name__ == "__main__":
 3. Add input/output schemas to `packages/workflow_schema/models.py`
 4. Register in `NODE_REGISTRY` in the same file
 5. Build and push: `bash scripts/build-and-push-containers.sh`
+
+Local runs use `orchapod/<node>:dev` when that image exists (`docker build -t orchapod/<node>:dev -f containers/<node>/Dockerfile .`), else `${ORCHAPOD_IMAGE_PREFIX:-ghcr.io/bangadpurva}/<node>:latest`, which docker pulls. Cancel stops a container with SIGTERM and a 30 s grace before SIGKILL.
 
 That's it. The executor, canvas, and agent pick it up automatically.
 

@@ -7,8 +7,14 @@ Target: 3-day task per new provider (Hyperstack, Lambda, Salad, etc.)
 """
 
 from __future__ import annotations
+import hashlib
+import os
+import random
+import time
 from dataclasses import dataclass
 from typing import AsyncIterator, Protocol, runtime_checkable
+
+import httpx
 
 
 @dataclass
@@ -93,3 +99,68 @@ class ProvisionError(Exception):
 class NoCapacity(Exception):
     """Raised when no provider has available GPUs matching the spec."""
     pass
+
+
+# --- HTTP API clients (tokenfactory.py, tavily.py): one error, one retry policy, one STUB switch ---
+
+class ProviderError(Exception):
+    """kind ∈ rate_limit | quota | auth | bad_request | bad_output | unsupported | server.
+    str() = "<provider> <kind> <status>: <message>", which the node logs as its last ERROR line."""
+
+    def __init__(self, provider: str, kind: str, status: int | None, message: str):
+        super().__init__(f"{provider} {kind} {status}: {message}")
+        self.provider, self.kind, self.status, self.message = provider, kind, status, message
+
+
+def http_client(stub_handler) -> httpx.Client:
+    """STUB=1: answered in-process by `stub_handler` (no network). Otherwise connect 10 s, read 120 s."""
+    if os.environ.get("STUB") == "1":
+        return httpx.Client(transport=httpx.MockTransport(stub_handler))
+    return httpx.Client(timeout=httpx.Timeout(120.0, connect=10.0))
+
+
+def stub_hash(request: httpx.Request) -> str:
+    """First 8 hex of sha256 of the request (multipart's random boundary removed, so uploads hash stably)."""
+    boundary = request.headers.get("content-type", "").partition("boundary=")[2].encode()
+    body = request.content.replace(boundary, b"") if boundary else request.content
+    return hashlib.sha256(request.method.encode() + request.url.raw_path + body).hexdigest()[:8]
+
+
+def _kind(status: int) -> str:
+    if status == 429:
+        return "rate_limit"
+    if status in (401, 403):
+        return "auth"
+    if status in (402, 432, 433):  # 432/433: Tavily plan and pay-as-you-go limits
+        return "quota"
+    return "server" if status >= 500 else "bad_request"
+
+
+def request(http: httpx.Client, provider: str, method: str, url: str, *, create: bool = False,
+            stream: bool = False, **kwargs) -> httpx.Response:
+    """Send with up to 3 retries on 429 (Retry-After, capped at 60 s), 500/502/503/504, timeouts and connection
+    errors, backing off 1, 2, 4 s plus up to 1 s of jitter. A create retries only on 429 and connect errors, so a
+    lost response never starts a second paid job. stream=True returns the open response (the caller closes it)."""
+    for attempt in range(4):
+        wait = None
+        try:
+            resp = http.send(http.build_request(method, url, **kwargs), stream=stream)
+            if resp.is_success:
+                return resp
+            resp.read()
+        except httpx.TransportError as e:
+            err = ProviderError(provider, "server", None, repr(e))
+            if create and not isinstance(e, (httpx.ConnectError, httpx.ConnectTimeout)):  # it may have landed
+                raise err from e
+        else:
+            err = ProviderError(provider, _kind(resp.status_code), resp.status_code, resp.text[:500])
+            if resp.status_code == 429:
+                try:
+                    wait = min(max(float(resp.headers.get("retry-after", "")), 0.0), 60.0)
+                except ValueError:
+                    pass
+            elif create or resp.status_code not in (500, 502, 503, 504):
+                raise err
+        if attempt == 3:
+            raise err
+        time.sleep(wait if wait is not None else 2 ** attempt + random.random())

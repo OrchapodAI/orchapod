@@ -72,7 +72,10 @@ def test_downloads_verifies_and_writes_hf_model_with_metrics(node, hub, tmp_path
     assert hub.download.call_args.kwargs == {"revision": "main", "local_dir": path, "ignore_patterns": d.DEFAULT_IGNORE}
     hub.info.assert_called_once_with(MODEL, revision="main", files_metadata=True)
     assert not (path / ".cache").exists()  # download bookkeeping is not uploaded
-    assert metrics == {"files": 2, "bytes": 2 + len(WEIGHTS), "sha256_verified": True}  # the ignored flax file is not missing
+    source = (path / d.SOURCE).read_bytes()  # the Hub id beside the files: quantize names its GGUFs with it
+    assert json.loads(source) == {"model_id": MODEL, "revision": "main"}
+    assert metrics == {"files": 3, "bytes": 2 + len(WEIGHTS) + len(source), "sha256_verified": True}
+    d.log.info.assert_any_call("SHA-256 verified for 1 LFS files")  # the ignored flax file is neither missing nor counted
 
 
 def test_revision_and_json_ignore_patterns_reach_the_hub(node, hub):
@@ -110,6 +113,7 @@ def test_stub_writes_a_fixed_directory_without_the_hub(node, hub, monkeypatch):
     outs, metrics = node()
     path = outs["hf_model"][0]
     assert json.loads((path / "config.json").read_text()) == {"stub": True, "model_id": MODEL, "revision": "main"}
-    assert metrics["files"] == 1 and metrics["sha256_verified"] is False
+    assert json.loads((path / d.SOURCE).read_text())["model_id"] == MODEL
+    assert metrics["files"] == 2 and metrics["sha256_verified"] is False
     hub.download.assert_not_called()
     hub.info.assert_not_called()

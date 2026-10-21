@@ -46,7 +46,7 @@ LoRA SFT via Unsloth. 2-5x faster, ~80% less VRAM than vanilla HF.
 Off-policy knowledge distillation: teacher inference → student SFT.
 
 ### `hf-download`
-`model_id`, `revision` (main), `ignore_patterns` → `hf_model` (directory) with every downloaded LFS file checked against the Hub's SHA-256 (`sha256_verified` in metrics). CPU-only; a gated model needs `HF_TOKEN` in the env and its licence accepted. `STUB=1` writes a one-file directory offline.
+`model_id`, `revision` (main), `ignore_patterns` → `hf_model` (directory) with every downloaded LFS file checked against the Hub's SHA-256 (`sha256_verified` in metrics) and `orchapod_source.json` (`{model_id, revision}`, so quantize's `base_model` is the Hub id, not the r2 URI). CPU-only; a gated model needs `HF_TOKEN` in the env and its licence accepted. `STUB=1` writes a one-file directory offline.
 
 ### `quantize`
 GGUF on CPU with llama.cpp: `model` (a Hugging Face id or hf-download's `hf_model`) → f16 GGUF → `precision` (q4_k_m, q5_k_m, q8_0) → `gguf_file`; `keep_f16: true` also writes `gguf_f16`, the baseline judge-eval compares against. `method: awq` needs a GPU job and exits 1. `STUB=1` writes 4-byte GGUF files.

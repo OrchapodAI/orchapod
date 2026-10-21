@@ -17,6 +17,7 @@ from orchapod import io, log
 
 WORKSPACE_DIR = Path(os.environ.get("WORKSPACE_DIR", "/workspace"))
 DEFAULT_IGNORE = ["*.msgpack", "flax_model*", "tf_model*", "rust_model.ot", "*.ot", "*.h5"]  # not for PyTorch/llama.cpp
+SOURCE = "orchapod_source.json"  # {model_id, revision} beside the files: a consumer handed the r2 dir knows the Hub id
 
 
 def fail(reason: str):
@@ -43,12 +44,13 @@ def verify(local_dir: Path, model_id: str, revision: str, ignore: list[str]) -> 
         log.warn(f"no Hub metadata for {model_id}@{revision}, SHA-256 check skipped: {e}")
         return False
     lfs = {s.rfilename: s.lfs.sha256 for s in info.siblings or [] if getattr(s, "lfs", None)}
-    for name in filter_repo_objects(sorted(lfs), ignore_patterns=ignore):  # ignored files were never downloaded
+    checked = list(filter_repo_objects(sorted(lfs), ignore_patterns=ignore))  # ignored files were never downloaded
+    for name in checked:
         if not (local_dir / name).is_file():
             fail(f"sha256 check: {name} is on the Hub but was not downloaded")
         if sha256(local_dir / name) != lfs[name]:
             fail(f"sha256 mismatch: {name} differs from the Hub's {model_id}@{revision}")
-    log.info(f"SHA-256 verified for {len(lfs)} LFS files")
+    log.info(f"SHA-256 verified for {len(checked)} LFS files")
     return True
 
 
@@ -75,6 +77,7 @@ def main():
             fail(f"{model_id} is not on huggingface.co (a private model needs HF_TOKEN)")
         shutil.rmtree(dest / ".cache", ignore_errors=True)  # download bookkeeping, not model files
         verified = verify(dest, model_id, revision, ignore)
+    (dest / SOURCE).write_text(json.dumps({"model_id": model_id, "revision": revision}))
 
     files = [f for f in dest.rglob("*") if f.is_file()]
     io.write_output("hf_model", dest, kind="model", metadata={"format": "hf", "model_id": model_id, "revision": revision})

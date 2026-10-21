@@ -1,5 +1,6 @@
 """Unit tests for containers/quantize/run.py (docs/contracts.md "ML nodes → quantize")."""
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -62,6 +63,17 @@ def test_gguf_converts_to_f16_then_quantizes_and_keeps_f16(node, mock_orchapod_i
     assert outs["gguf_f16"][1:] == ("model", {"format": "gguf", "precision": "f16", "base_model": HF_MODEL,
                                               "size_bytes": 300})
     assert metrics == {"method": "gguf", "precision": "q4_k_m", "size_bytes": 100, "f16_size_bytes": 300, "wall_s": 0}
+
+
+def test_an_hf_model_from_hf_download_is_named_by_its_hub_id(node, mock_orchapod_io):
+    def download(uri, dest):
+        Path(dest).mkdir(parents=True)
+        (Path(dest) / "orchapod_source.json").write_text(json.dumps({"model_id": "Qwen/Qwen2.5-Math-1.5B-Instruct"}))
+        return Path(dest)
+
+    mock_orchapod_io.download_directory.side_effect = download
+    outs, _ = node(keep_f16=True)
+    assert {outs[n][2]["base_model"] for n in ("gguf_file", "gguf_f16")} == {"Qwen/Qwen2.5-Math-1.5B-Instruct"}
 
 
 def test_without_keep_f16_only_the_quantized_file_is_written(node):

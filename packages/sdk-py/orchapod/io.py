@@ -147,7 +147,7 @@ def _arm() -> None:
     if _armed:
         return
     _armed = True
-    atexit.register(_write_cost)                # runs after normal exit, uncaught exceptions and SystemExit
+    atexit.register(_at_exit)                   # runs after normal exit, uncaught exceptions and SystemExit
     signal.signal(signal.SIGTERM, _sigterm)     # cancel/timeout: docker stop sends SIGTERM, kills after 30 s
     sys.excepthook = _excepthook
 
@@ -161,7 +161,8 @@ def _excepthook(exc_type, exc, tb) -> None:
     sys.__excepthook__(exc_type, exc, tb)
 
 
-def _write_cost() -> None:
+def _at_exit() -> None:
+    """cost_json first (money), then `logs`: every line the node logged, as JSONL {ts, level, message}."""
     summary = cost.summary()
     path = local_path("cost_json")
     path.write_text(json.dumps(summary))
@@ -169,6 +170,12 @@ def _write_cost() -> None:
         write_output("cost_json", path, "metrics", {"usd": summary["usd"]})
     except Exception as e:
         log.error(f"cost_json not registered: {e}")
+    path = local_path("logs")
+    path.write_text("".join(json.dumps(line) + "\n" for line in log.lines))
+    try:
+        write_output("logs", path, "log")
+    except Exception as e:
+        log.warn(f"logs not registered: {e}")  # not ERROR: the node's last ERROR line is its error
 
 
 # ---------------------------------------------------------------------------

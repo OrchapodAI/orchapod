@@ -169,6 +169,7 @@ _NODE = textwrap.dedent("""
     io._get_r2_client = S3
     log.post = lambda path, payload, timeout=3: open(cap / "posts.jsonl", "a").write(json.dumps([path, payload]) + "\\n")
     io.read_inputs()
+    log.info("started")
     cost.add("token_factory", "m", 10, 20, usd=0.25)
     try:
         if sys.argv[1] == "raise":
@@ -197,3 +198,9 @@ def test_cost_json_written_at_every_exit(tmp_path, mode, code):
     assert (tmp_path / "finally").exists()  # SIGTERM unwinds the node's finally (remote cleanup)
     errors = [p[1]["message"] for p in posts if p[0] == "/internal/log" and p[1]["level"] == "ERROR"]
     assert errors == (["RuntimeError: boom"] if mode == "raise" else [])
+    # the node's log lines outlive the live stream: a finished run (and the golden-run fixture) keeps them
+    assert ["/internal/artifact", {"artifact": {"name": "logs", "uri": "r2://b/runs/run1/prep/logs",
+                                                "kind": "log", "metadata": {}}}] in posts
+    lines = [json.loads(line) for line in (tmp_path / "logs").read_text().splitlines()]
+    assert [(x["level"], x["message"]) for x in lines] == [("INFO", "started")] + [("ERROR", m) for m in errors]
+    assert all(x["ts"] for x in lines)

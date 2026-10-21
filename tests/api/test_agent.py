@@ -369,6 +369,7 @@ async def agent_run(db, status):
     db.add_all([NodeRun(run_id=run.id, node_id="synth", node_type="synth-distilabel", status=NodeStatus.SUCCEEDED), prep])
     await db.flush()
     db.add(Artifact(node_run_id=prep.id, name="dataset", kind=ArtifactKind.DATASET, uri="r2://b/runs/x/prep/dataset"))
+    db.add(Artifact(node_run_id=prep.id, name="logs", kind=ArtifactKind.LOG, uri="r2://b/runs/x/prep/logs"))
     db.add(AgentRun(run_id=run.id, intent="Q&A data", plan=GOOD, estimate={"usd": 0.03, "minutes": 4.5, "by_node": {}}))
     await db.commit()
     return run
@@ -408,6 +409,7 @@ async def test_report_falls_back_to_the_template(client, db, monkeypatch, tf):
     done = await agent_run(db, RunStatus.SUCCEEDED)
     md = (await client.get(f"/agent/runs/{done.id}/report")).json()["markdown"]
     assert "[prep/dataset](/artifacts/" in md and len(tf.requests) == 2  # STUB calls nothing
+    assert "prep/logs" not in md  # results, not the node's log file
 
 
 async def test_a_report_written_while_the_run_is_retried_is_dropped(client, db, monkeypatch):

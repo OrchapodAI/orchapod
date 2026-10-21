@@ -365,7 +365,7 @@ def template_report(agent_run: AgentRun, s: dict) -> str:
         lines += [f"**Error:** {s['error']} (Retry node resumes from the failed node.)", ""]
     lines += ["| Node | Type | Status | $ |", "| --- | --- | --- | --- |"]
     lines += [f"| {n['node_id']} | {n['type']} | {n['status']} | {n['usd']:.4f} |" for n in s["nodes"]]
-    files = [a for a in s["artifacts"] if a.get("download_url") and a["kind"] != "metrics"]
+    files = [a for a in s["artifacts"] if a.get("download_url") and a["kind"] not in ("metrics", "log")]
     if files:
         lines += ["", "**Results:**"] + [f"- [{a['node_id']}/{a['name']}]({a['download_url']})" for a in files]
     return "\n".join(lines)

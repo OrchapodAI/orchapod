@@ -30,9 +30,14 @@ def post(path: str, payload: dict, timeout: float = 3) -> None:
         pass
 
 
+# Every line this node logged; io writes them as the `logs` artifact at exit, so a finished run keeps its logs.
+lines: list[dict] = []
+
+
 def _emit(level: str, message: str, path: str = "/internal/log", payload: dict | None = None) -> None:
     ts = datetime.now(timezone.utc).isoformat()
     print(f"[{ts}] [{level}] {message}", flush=True)
+    lines.append({"ts": ts, "level": level, "message": message})
     try:
         post(path, payload or {"ts": ts, "level": level, "message": message})
     except Exception:

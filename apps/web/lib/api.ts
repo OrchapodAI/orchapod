@@ -112,6 +112,10 @@ export const api = {
     update(id: string, body: { name?: string; yaml?: string }): Promise<Workflow> {
       return req(`/workflows/${id}`, { method: "PUT", body: JSON.stringify(body) });
     },
+    /** The canvas's "Save a copy": a workflow with runs is read-only to visitors (update → 409). */
+    copy(name: string, yaml: string): Promise<Workflow> {
+      return req("/workflows", { method: "POST", body: JSON.stringify({ name: `${name} (copy)`, yaml }) });
+    },
     delete(id: string): Promise<void> {
       return req(`/workflows/${id}`, { method: "DELETE" });
     },

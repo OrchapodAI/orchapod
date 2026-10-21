@@ -134,6 +134,21 @@ test("a run's cancel token stays in this tab's sessionStorage by run id and leav
   });
 });
 
+test("canvas Save on a workflow with runs gets the API's 409 (read-only to visitors); Save a copy posts the edited YAML as \"<name> (copy)\"", async () => {
+  const calls: unknown[][] = [];
+  globalThis.fetch = async (url: string, init?: RequestInit) => {
+    calls.push([init?.method, url, JSON.parse(String(init?.body))]);
+    return init?.method === "PUT"
+      ? new Response('{"detail":"this workflow has runs, so it is read-only on the public app; save a copy as a new workflow"}', { status: 409 })
+      : new Response('{"id":"w2","name":"golden (copy)"}', { status: 201 });
+  };
+  const yaml = "name: golden\nnodes:\n  - id: prep\n    type: data-prep";
+  await assert.rejects(api.workflows.update("w1", { yaml }), (e: { status: number }) => e.status === 409);
+  assert.equal((await api.workflows.copy("golden", yaml)).id, "w2");
+  assert.deepEqual(calls, [["PUT", "http://localhost:8001/workflows/w1", { yaml }],
+                           ["POST", "http://localhost:8001/workflows", { name: "golden (copy)", yaml }]]);
+});
+
 test("the run page reads GET /runs/{id}/summary and retries with POST /runs/{id}/nodes/{node_id}/retry", async () => {
   const calls: string[] = [];
   globalThis.fetch = async (url: string, init?: RequestInit) => {

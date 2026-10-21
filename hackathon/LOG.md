@@ -213,3 +213,4 @@ worktrees:
   - make check green: 702 passed + web 27.
   - Parked (P2, D6+): anonymous POST /runs/{id}/cancel can cancel others' runs (write bucket only); executor-level gpu refusal for scale < 1 (defense in depth); recursive strip done; R22 misses HFToken/APIToken/access_key_id.
   - Follow-ups for others: canvas 'save a copy' on 409 (frontend); RunOut.workflow_name for the golden-run link (backend+frontend); hf_token schema fields (owners).
+- 2026-10-21T14:12Z INTEGRATION `make check E2E=1` on af6a579 (backend-w4 hardening merged): exit 0. 702 passed. Demo #2 PASS (run 2ca64c62, 16 s, $0). Agent #2 PASS (0065df2a, 16 s), #3 PASS (95d3aa08, 4 s), #1 SKIP until ml-w4. The hardened API (rate limits, gpu guard, 409, YAML checks) does not break the e2e harness.

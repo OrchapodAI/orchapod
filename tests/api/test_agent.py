@@ -154,6 +154,17 @@ async def test_stub_plans_with_the_closest_template_and_calls_nothing(client, mo
     assert r.json()["plan"] == templates[3]["plan"]
 
 
+@pytest.mark.parametrize("intent, slug", [  # function words ("an", "in", "the", "which", "is") once outvoted the content
+    ("Distill an expert in the Nebius documentation", "nebius-docs-specialist"),
+    ("Distill an expert in Nebius", "nebius-docs-specialist"),
+    ("A model which is an expert in US real-estate compliance", "real-estate-compliance"),
+])
+async def test_stub_matching_ignores_stopwords(client, monkeypatch, intent, slug):
+    monkeypatch.setenv("STUB", "1")
+    r = await client.post("/agent/plan", json={"intent": intent})
+    assert f"'{slug}'" in r.json()["rationale"]
+
+
 async def test_plan_refuses_bad_intents_the_kill_switch_and_a_missing_key(client, monkeypatch):
     assert (await client.post("/agent/plan", json={"intent": "  "})).status_code == 422
     assert (await client.post("/agent/plan", json={"intent": "x" * 2001})).status_code == 422

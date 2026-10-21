@@ -304,8 +304,13 @@ def _answer_schema() -> dict:
             "properties": {"rationale": {"type": "string"}, "plan": plan}}
 
 
+# Function words never pick a STUB template ("an expert in" is not maths); "us" stays, it is the US.
+STOPWORDS = set("a an and are as at be by can for from i in into is it its me my of on or our please that the this "
+                "to we which with you your".split())
+
+
 def _words(text: str) -> set[str]:
-    return set(re.findall(r"[a-z0-9]+", text.lower()))
+    return set(re.findall(r"[a-z0-9]+", text.lower())) - STOPWORDS
 
 
 async def make_plan(intent: str, db: AsyncSession, scale: float) -> dict:

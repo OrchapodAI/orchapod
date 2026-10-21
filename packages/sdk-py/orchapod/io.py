@@ -178,7 +178,7 @@ def _at_exit() -> None:
     except Exception as e:
         log.error(f"cost_json not registered: {e}")
     path = local_path("logs")
-    path.write_text("".join(json.dumps(line) + "\n" for line in log.lines))
+    path.write_text("".join(json.dumps(line) + "\n" for line in list(log.lines)))  # a copy: another thread may still log
     try:
         _write("logs", path, "log")
     except Exception as e:

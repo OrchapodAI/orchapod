@@ -40,8 +40,9 @@ Scale = Annotated[float, Depends(budget.scale)]  # 1 for X-Orchapod-Admin, else 
 # the request was refused after the other answer had started. ponytail: the client bills after the last chunk, so an
 # answer that breaks mid-stream records $0 of what Token Factory charged for it.
 _streams: set[asyncio.Task] = set()
-# Each compare holds two worker threads until both answers end; past this many, 503, so the planner and reporter
-# (asyncio.to_thread too) always find a thread.
+# Each compare holds two worker threads until both answers end; past this many, 503. The default pool has
+# min(32, cpus + 4) threads, so the planner and reporter (asyncio.to_thread too) find a free one on 5+ CPUs;
+# on smaller hosts they wait behind running answers (bounded by max_tokens, no deadlock).
 _slots = asyncio.Semaphore(int(os.environ.get("ORCHAPOD_MAX_COMPARES") or 4))
 
 
@@ -87,7 +88,11 @@ async def compare(body: CompareRequest, db: Session, scale: Scale):
     answers = [TokenFactory(on_usage=budget.meter(spent[i])).stream_chat(
         messages, ref.model, base_url=ref.base_url, api_key=key, base_model=ref.base_model, max_tokens=body.max_tokens)
         for i, (ref, key) in enumerate(zip(body.refs, keys))]
-    firsts = await asyncio.gather(*(asyncio.to_thread(next, a, None) for a in answers), return_exceptions=True)
+    try:
+        firsts = await asyncio.gather(*(asyncio.to_thread(next, a, None) for a in answers), return_exceptions=True)
+    except BaseException:  # cancelled (shutdown) before _both owns the slot: give it back
+        _slots.release()
+        raise
     failed = next(((i, e) for i, e in enumerate(firsts) if isinstance(e, BaseException)), None)
 
     queue: asyncio.Queue = asyncio.Queue()

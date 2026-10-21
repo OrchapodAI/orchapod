@@ -173,3 +173,76 @@
   - `make demo` needs MinIO (`make up`).
 - **devrel.** `make demo` exists now (README:145 and :184 still say its script is being written); the hosted golden run is still TODO(D8).
 - **Orchestrator, after merge.** Rebuild the node images (`orchapod/<node>:dev`), because the SDK is copied into them and now writes `logs`. `make check E2E=1` does this.
+
+## Fix round 1 (orchestrator review)
+**Commits:** 4a4dff2 (the Critical, minors 2, 4 and 7, and the base-URL helper from 9), d64ff02 (3), 673401a (5), bfeead6 (6), c2f06a9 (8, and the flag from 9). The tree is clean at c2f06a9.
+
+### Critical: a refused /compare now records its started answer's spend
+- **What was wrong.** When one ref failed before its first token, the answer that had started was closed unread. The client bills after the last chunk, so that spend never reached the ledger.
+- **The fix.** Both answers always run to their end in one background task (`_both`, kept in `_streams`). On a refusal they drain into a queue nobody reads, so their spend is recorded. This also covers an answer that ended inside its first read, already billed.
+- **The test** (tests/api/test_compare.py, `test_refusals_are_http_errors_before_any_200`) now covers 3 refusal kinds × 2 shapes of the started answer. After the error it awaits `_streams` and expects the started side's $0.06 in the ledger. Before the fix, 6 of 6 failed.
+- **Cost bound.** The prompt is capped at 16,000 characters in all (a validator; 422 above it). With `max_tokens` ≤ 2,048, one compare's worst case is cents. The per-message cap was dropped, because the total cap covers it.
+
+### Minors
+- **2. Mid-stream breaks.** The ponytail note at `_streams` now says a stream that breaks mid-way records $0, because the client bills after the last chunk. The test breaks the way the real client does: one delta, then a ProviderError before the usage chunk. The ledger holds only the healthy side.
+- **3. `fits`.** `GET /agent/templates` adds `fits`: the reduced estimate is within the caller's run cap (`budget.run_cap(scale)`, which is ORCHAPOD_MAX_RUN_USD × scale).
+  - Anonymous: `[False, True, True]` (real-estate is admin-only, per the ruling). Admin: `[True, True, True]`.
+- **4. Concurrency limit.**
+  - A module-level `asyncio.Semaphore(ORCHAPOD_MAX_COMPARES or 4)`.
+  - When it is full, the route returns 503 "too many compares in flight" before the 200. It never waits, so the semaphore never binds to an event loop.
+  - The slot is taken after the cheap refusals (402/503/422) and released when both answers end, including the drain after a refusal.
+- **5. Redaction.**
+  - `token` now matches only as the last word, so `token_factory`, `token_count` and `usd_by_provider.token_factory` survive ingest.
+  - A key ending in `_env` stays only when its value looks like an env var's name (`^[A-Z][A-Z0-9_]*$`). `hf_token_env: "sk-…"` and `api_key_env: "sk-live-1"` are redacted; `api_key_env: "ORCHAPOD_ENDPOINT_TOKEN"` stays.
+- **6. SDK logs.**
+  - `log.lines` is a `deque(maxlen=5000)`, so the logs artifact holds the last 5,000 lines.
+  - `write_output("logs", …)` raises ValueError, because the name is reserved. The SDK writes it through a private `_write`.
+  - docs/NODE_CONTRACT.md says both.
+- **7. SSE headers.** The response sends `Cache-Control: no-cache` and `X-Accel-Buffering: no`.
+- **8. gitleaks.** The seed script's docstring has a TODO(D8): run `gitleaks detect --no-git --source scripts/golden-run.json` before committing an export. The export copies object text verbatim; artifact meta is redacted, file contents are not.
+- **9. Ponytail.** `--fixture` is gone; the script reads and writes `scripts/golden-run.json`. `planner.tf_base()` is the one Token Factory base URL that the validator and /compare both compare against.
+
+### Proof
+- **`make check` on c2f06a9:** exit 0.
+  - `All checks passed!`
+  - `539 passed, 2 warnings`
+  - web 12/12
+  - `SKIP stub e2e`
+- **Mutation checks:** 10 of 10 caught, each change made on the file and then restored. No `git stash` was used.
+  - The refusal closes the started answer.
+  - No in-flight limit. This first hung the test, so the 503 request now sits inside `asyncio.wait_for(…, 5)` and fails fast.
+  - The slot is never released.
+  - No prompt cap.
+  - No SSE headers.
+  - `fits` ignores the scale.
+  - `token` matches anywhere.
+  - Any `_env` value is exempt.
+  - `logs` is not reserved.
+  - The log buffer is unbounded.
+- **Live re-check** (STUB uvicorn on :8017, ORCHAPOD_MAX_COMPARES=1):
+  - Two compares in a row both answered `HTTP/1.1 200`, with `cache-control: no-cache` and `x-accel-buffering: no` and both answers' deltas and done events. The second proves the first gave its slot back.
+  - 16,001 characters were refused with HTTP 422.
+  - Anonymous `fits` was `[('real-estate-compliance', False), ('movie-engagement', True), ('maths-quantize', True)]`.
+  - uvicorn log: 0 errors.
+- **gitleaks** over the 5 fix-round commits: no leaks found.
+
+### This round supersedes in the sections above
+- **Section 1, "Known ceilings":** the first bullet (a started answer closed unread) is fixed. The second (worker threads) is now bounded by ORCHAPOD_MAX_COMPARES.
+- **The redaction rule:** token is matched only as the last word, and the `_env` exemption depends on the value.
+- **Logs:** the artifact holds the last 5,000 lines.
+- **DECISION 1 is ruled:** ORCHAPOD_ANON_SCALE stays 0.1 and real-estate is admin-only, shown by `fits: false`. Hari decides on raising it inside the hosting decision.
+
+### Contract lines to add (orchestrator)
+- **/compare:**
+  - The messages hold at most 16,000 characters in all (422).
+  - At most `ORCHAPOD_MAX_COMPARES` (default 4) compares are in flight; above that, 503 before the 200.
+  - The SSE response carries `Cache-Control: no-cache` and `X-Accel-Buffering: no`.
+  - A refused compare still records the spend of an answer that had started.
+- **Config:** add `ORCHAPOD_MAX_COMPARES` (4).
+- **Agent API:** `GET /agent/templates` items add `fits` (reduced estimate ≤ ORCHAPOD_MAX_RUN_USD × the caller's scale).
+- **Node SDK:** `logs` holds the last 5,000 lines, and the name is reserved (`write_output` refuses it).
+- **R10:** the redaction rule as above.
+
+### Remaining ceilings
+- **A mid-stream break records $0** (ponytail note). The fix belongs in the client: bill what was streamed when no usage chunk arrives.
+- **The drain after a refusal is paid for.** An answer drained after a refusal generates up to `max_tokens` (billed and recorded) rather than being abandoned. That is the price of recording it, bounded by the prompt cap and `max_tokens`.

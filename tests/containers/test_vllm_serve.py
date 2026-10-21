@@ -80,7 +80,7 @@ def ttl_posts():
 
 def test_registry_row_is_an_api_node_with_model_refs():
     meta = NODE_REGISTRY[NodeType.VLLM_SERVE]
-    assert (meta["runtime"], meta.get("long_running")) == ("api", None)
+    assert (meta["runtime"], meta.get("long_running"), meta["rents_gpu"]) == ("api", None, True)
     assert set(VLLMServeInputs.model_fields) == {"model", "lora_adapter", "max_model_len", "keep_alive_min",
                                                  "served_model_name", "gpu_memory_utilization", "dtype", "platform",
                                                  "preset"}  # no hf_token: HF_TOKEN is env only

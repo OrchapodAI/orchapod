@@ -405,6 +405,7 @@ NODE_REGISTRY: dict[NodeType, dict] = {
         "inputs_schema": VLLMServeInputs,
         "outputs_schema": VLLMServeOutputs,
         "runtime": "api",  # it creates the endpoint and exits after POST /internal/ttl
+        "rents_gpu": True,  # but the endpoint bills GPU hours: budget's gpu guard must treat it as a gpu node
     },
 }
 

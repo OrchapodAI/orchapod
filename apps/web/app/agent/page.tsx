@@ -185,7 +185,7 @@ export default function AgentPage() {
           </p>
 
           {reply && (
-            <div className="card" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+            <div className="card" aria-label="Plan" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
               <div className="row">
                 <span style={{ fontWeight: 600 }}>{reply.plan.name}</span>
                 <span className="pill">{reply.plan.nodes.length} nodes</span>

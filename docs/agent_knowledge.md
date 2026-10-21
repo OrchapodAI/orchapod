@@ -22,7 +22,16 @@ Source of truth: `NODE_REGISTRY` in apps/api. Backend adds one row per node as i
 ## Expected plans for the canonical intents
 1. "Fine-tuned Llama 3B over US real-estate compliance": web-research (Tavily; Fair Housing Act, RESPA, TILA/TRID, state licensing, disclosure rules) → synth-distilabel grounded Q&A (Super) → data-prep → tf-finetune on meta-llama/Llama-3.2-3B-Instruct → deploy (path depends on spike 1: per-token LoRA if /v0/models accepts the base, else vllm-serve + lora_adapter; the plan card states which and why) → judge-eval (Ultra, reference-guided, base vs tuned) → report.
 2. "Synthetic data of movie likes, shares and subscribes": synth-distilabel structured mode (user_id, movie_title, action ∈ {like, share, subscribe}, timestamp, device; realistic distributions) → data-prep (validate, dedupe, stats) → dataset with download link and stats card. No training; the plan says so.
-3. "Quantize a model which is an expert in maths": pick from the maths shortlist (ml-engineering fills it on D4) and say why → hf-download → quantize (GGUF q4_k_m on CPU; AWQ via Serverless Job when GPU quota exists) → quick eval (50 GSM8K-style items, exact match, plus the Ultra judge on 20) → artifact and report.
+3. "Quantize a model which is an expert in maths": pick from the maths shortlist below and say why → hf-download → quantize (GGUF q4_k_m on CPU, keep_f16; AWQ needs a GPU job) → data-prep (hf://openai/gsm8k, main, test[:50], qa) → judge-eval (base = quantize gguf_f16, tuned = gguf_file, exact_match, n_judge 20) → artifact and report.
+
+## Maths shortlist (intent #3)
+Rule: at most 2B parameters and a short chain of thought, because judge-eval answers with llama.cpp on CPU (a 276-token answer took 214 s on a busy laptop CPU). Parameter counts and licences are from the Hugging Face API on 2026-10-21.
+| Model | Params | Licence | Why |
+| --- | --- | --- | --- |
+| Qwen/Qwen2.5-Math-1.5B-Instruct (default) | 1.54B | Apache-2.0, not gated | Maths-tuned; its chat template asks for step-by-step reasoning with the answer in \boxed{}, so answers are short and exact match reads them. Proven here: q4_k_m 0.99 GB from a 3.09 GB f16 GGUF, and the q4 answered GSM8K test item 1 correctly. |
+| nvidia/AceMath-1.5B-Instruct | 1.78B | CC-BY-NC-4.0 (non-commercial) | NVIDIA's maths model on the Qwen2.5-Math base, same short boxed answers; choose it for an NVIDIA-only story when non-commercial use is acceptable. |
+
+Not on the list: DeepSeek-R1-Distill-Qwen-1.5B (MIT) and nvidia/OpenMath-Nemotron-1.5B (CC-BY-4.0) are long-reasoning models for competition maths (OpenMath-Nemotron's card example allows 4,096 new tokens), too slow on CPU; Qwen/Qwen3-1.7B is 2.03B and thinks at length by default; SmolLM2-1.7B-Instruct, Llama-3.2-1B-Instruct and gemma-2-2b-it (2.6B) are general models, and the last two are gated (HF_TOKEN plus an accepted licence).
 
 ## Other prices
 - GPU-hour: gpu-h100-sxm $4.50, gpu-l40s-a $1.82 (nebius.com/prices, 2026-10-20). Tavily: $0.008 per credit. Fine-tune $ per trained token: from spike 1.

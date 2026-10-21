@@ -136,5 +136,6 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - 2026-10-20: $1.29 (vast.ai A100 SXM4 80 GB at $1.2485/h, 48 min, spike 4; instance destroyed)
 ## Golden path status (last real run: id, date, cost, result)
 - 2026-10-21: G1 STUB milestone — `e2e_agent.py --stub --strict` 3/3 PASS on 3b80954 (intent #1 6 s, estimate $1.62; #2 24 s, $0.15; #3 4 s, $0.10; reports ready); demo e2e PASS. Live runs wait on NEBIUS_API_KEY.
+- 2026-10-21: `make ui-smoke` 4/4 PASS in STUB on 5910747, golden path included (template → run → eval view → compare playground, 8.3 s).
 - 2026-10-21: intent #2 STUB e2e PASS (`make check E2E=1` on 1c0b746): run 9214965e succeeded in 4 s, $0, dataset/train_jsonl/eval_jsonl registered, 500 rows downloadable. Live (non-STUB) runs wait on NEBIUS_API_KEY.
 - Live: never run (waits on the key). `make check` green at 3d250c5 (519 passed, 126 warnings; web tests pass); gitleaks clean at bootstrap (1 triaged false positive).

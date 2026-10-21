@@ -28,7 +28,7 @@ async function template(n: 1 | 2): Promise<Template> {
 function watch(page: Page): string[] {
   const problems: string[] = [];
   page.on("pageerror", (e) => problems.push(`page error: ${e.message}`));
-  page.on("console", (m) => m.type() === "error" && !/favicon/.test(m.text()) && problems.push(`console.error: ${m.text()}`));
+  page.on("console", (m) => m.type() === "error" && !/favicon/.test(m.location().url + m.text()) && problems.push(`console.error: ${m.text()}`));
   page.on("response", (r) => {
     if (r.url().startsWith(API) && r.status() >= 400) problems.push(`${r.request().method()} ${r.url().slice(API.length)} -> ${r.status()}`);
   });
@@ -55,10 +55,11 @@ test("/agent: intent #2 is planned, run and reported", async ({ page }, testInfo
   await run.click();
   await expect(run).toBeDisabled(); // one click, one run
 
-  // the report is written when the run ends (STUB: the deterministic template), cost $0
-  await expect(page.getByText(`${t.plan.name}: succeeded`)).toBeVisible({ timeout: 240_000 });
+  // the report is written when the run ends (STUB: the deterministic template), cost $0; a failure shows up as soon as it happens
+  const succeeded = page.getByText(`${t.plan.name}: succeeded`);
+  await expect(succeeded.or(page.getByText(/Run failed|Couldn't start the run|Couldn't load the report/))).toBeVisible({ timeout: 240_000 });
+  await expect(succeeded).toBeVisible();
   await expect(page.getByText("$0.00 spent of $0.15 estimated")).toBeVisible();
-  await expect(page.getByText("Run failed")).toHaveCount(0);
 
   await page.getByRole("button", { name: "artifacts" }).click();
   for (const name of ["dataset", "train_jsonl", "eval_jsonl", "cost_json"]) {

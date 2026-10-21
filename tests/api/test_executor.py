@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import uuid
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -16,7 +18,7 @@ from sqlmodel import select
 from api.executor import run_workflow as ex
 from api.models.db import Artifact, ArtifactKind, NodeRun, NodeStatus, Run, RunStatus, Workflow
 from api.services import budget
-from packages.providers.base import Pod
+from packages.providers.base import GPUSpec, Pod, Quote
 
 CHAIN = """
 name: chain
@@ -56,6 +58,9 @@ class FakeProvider:
         self.envs[env["ORCHAPOD_NODE_ID"]] = env
         return Pod(provider="local-docker", pod_id=env["ORCHAPOD_NODE_ID"])
 
+    async def quote(self, gpu_spec):
+        return Quote(provider=self.name, price_per_hour=4.5, available=True, gpu_type="gpu-h100-sxm")
+
     async def stream_logs(self, pod):
         for line in self.logs:
             yield line
@@ -69,6 +74,15 @@ class FakeProvider:
             nr.outputs = {**(nr.outputs or {}), **step.get("outputs", {})}
             nr.error = step.get("error")
             await self.db.commit()
+        if "cost" in step:  # the node's SDK registers its cost_json through /internal/artifact (self.client)
+            env = self.envs[pod.pod_id]
+            run = Run(id=uuid.UUID(env["ORCHAPOD_RUN_ID"]), user_id=uuid.uuid4())
+            body = cost_json(run, pod.pod_id, step["cost"], 1, env["ORCHAPOD_ATTEMPT"])
+            assert (await self.client.post("/internal/artifact", json=body)).is_success
+        if "during" in step:  # something that lands while the pod runs (an earlier attempt's late flush, say)
+            assert (await step["during"]()).is_success
+        if "pod_error" in step:  # platform-w5's NebiusProvider: why the job ended, set before wait() returns
+            pod.error = step["pod_error"]
         if "exit" in step and step["exit"] is None:
             await asyncio.Event().wait()
         return step.get("exit", 0)
@@ -93,6 +107,53 @@ def provider(db, monkeypatch):
     monkeypatch.setattr("api.services.provider_selector.pick_local_docker", local)
     monkeypatch.setattr("api.services.provider_selector.pick_provider", no_gpu)
     return p
+
+
+@pytest.fixture
+def gpu(provider, db, monkeypatch):
+    """The GPU provider gpu nodes land on (Nebius, an H100 at $4.50 an hour); cpu and api nodes stay on `provider`."""
+    p = FakeProvider(db)
+    p.name = "nebius"
+
+    async def pick(resources):
+        return p, GPUSpec(gpu_type="H100")
+
+    monkeypatch.setattr("api.services.provider_selector.pick_provider", pick)
+    # a gpu pod's bill has a session of its own, on the test's database (never the module's engine)
+    monkeypatch.setattr("api.database.AsyncSessionLocal", async_sessionmaker(db.bind, class_=AsyncSession,
+                                                                             expire_on_commit=False))
+    return p
+
+
+@pytest.fixture
+def nebius_cli(tmp_path, monkeypatch):
+    """`nebius` on the API host's PATH: `iam get-access-token` prints a token; `calls` lists each run's arguments."""
+    cli = tmp_path / "bin" / "nebius"
+    cli.parent.mkdir()
+    cli.write_text(f'#!/bin/sh\necho "$@" >> {tmp_path / "calls"}\necho "Note: a newer CLI is out"\necho " iam-token-1 "\n')
+    cli.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{cli.parent}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.delenv("NEBIUS_IAM_TOKEN", raising=False)  # hosted: blank, so the CLI signs one
+    monkeypatch.delenv("STUB", raising=False)
+    return SimpleNamespace(path=cli, calls=tmp_path / "calls")
+
+
+EVERY_RUNTIME = """
+name: g
+nodes:
+  - {id: prep, type: data-prep, inputs: {dataset: "hf://x"}}
+  - {id: finetune, type: tf-finetune, needs: [prep], inputs: {train_data: "r2://b/train"}}
+  - {id: serve, type: vllm-serve, needs: [finetune], inputs: {model: m}}
+  - {id: train, type: unsloth-train, needs: [serve], inputs: {train_data: "r2://b/train"}}
+"""
+
+
+@pytest.fixture
+def endpoint_node(monkeypatch):
+    """vllm-serve as ml-w4 registers it: an api node (LocalDocker) whose container creates a Nebius endpoint."""
+    from packages.workflow_schema.models import NODE_REGISTRY, NodeType
+    monkeypatch.setitem(NODE_REGISTRY[NodeType.VLLM_SERVE], "runtime", "api")
+    monkeypatch.setitem(NODE_REGISTRY[NodeType.VLLM_SERVE], "rents_gpu", True)
 
 
 async def seed(db, yaml=CHAIN, inputs=None, status=RunStatus.PROVISIONING_GPU, **run_fields):
@@ -221,17 +282,18 @@ async def test_build_env_forwards_exactly_the_contract_vars(db, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-x")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-y")
     monkeypatch.setenv("TAVILY_API_KEY", "tvly-z")
+    monkeypatch.setenv("NEBIUS_IAM_TOKEN", "iam-x")  # only a node that rents a GPU gets one (test below)
     nr = NodeRun(run_id=uuid.uuid4(), node_id="train", node_type="unsloth-train", inputs={"model": "m"},
                  outputs={"checkpoint_step_000100": "r2://b/100", "checkpoint_step_000200": "r2://b/200"})
 
     env = ex._build_env(nr, 1.25)
 
     assert set(env) == {
-        "NEBIUS_API_KEY", "NEBIUS_BASE_URL", "TAVILY_API_KEY", "HF_TOKEN", "NEBIUS_PROJECT_ID", "NEBIUS_IAM_TOKEN",
+        "NEBIUS_API_KEY", "NEBIUS_BASE_URL", "TAVILY_API_KEY", "HF_TOKEN", "NEBIUS_PROJECT_ID",
         "ORCHAPOD_ENDPOINT_TOKEN", "ORCHAPOD_R2_ENDPOINT", "ORCHAPOD_R2_REGION", "ORCHAPOD_R2_ACCESS_KEY",
         "ORCHAPOD_R2_SECRET_KEY", "ORCHAPOD_R2_BUCKET", "ORCHAPOD_CONTROL_URL", "ORCHAPOD_INTERNAL_SECRET",
         "ORCHAPOD_MAX_COST_USD", "STUB", "ORCHAPOD_NODE_INPUTS", "ORCHAPOD_NODE_OUTPUTS_DIR", "ORCHAPOD_RUN_ID",
-        "ORCHAPOD_NODE_ID", "ORCHAPOD_RESUME_CHECKPOINT_URI",
+        "ORCHAPOD_NODE_ID", "ORCHAPOD_RESUME_CHECKPOINT_URI", "ORCHAPOD_ATTEMPT",
     }
     assert env["TAVILY_API_KEY"] == "tvly-z"
     assert env["NEBIUS_BASE_URL"] == "https://api.tokenfactory.nebius.com/v1"
@@ -239,6 +301,260 @@ async def test_build_env_forwards_exactly_the_contract_vars(db, monkeypatch):
     assert env["ORCHAPOD_INTERNAL_SECRET"] == INTERNAL_SECRET and INTERNAL_SECRET
     assert env["ORCHAPOD_MAX_COST_USD"] == "1.2500"
     assert env["ORCHAPOD_RESUME_CHECKPOINT_URI"] == "r2://b/200"  # retry reuses the row: newest checkpoint
+
+
+async def test_only_an_api_node_that_creates_endpoints_gets_a_fresh_iam_token(db, provider, gpu, nebius_cli,
+                                                                              endpoint_node, caplog, monkeypatch):
+    """The API host's nebius CLI signs a token at each start of vllm-serve (rents_gpu, api), whose container creates the
+    endpoint (the hosted VM sets no NEBIUS_IAM_TOKEN, and node images have no CLI). No other node gets one: not cpu or
+    api nodes, and not gpu nodes, which run third-party model code as Nebius Jobs; nor does any log, input or meta."""
+    run = await seed(db, EVERY_RUNTIME)
+
+    await ex.run_workflow(run.id, db, AsyncMock(), 1.0)
+
+    assert provider.envs["serve"]["NEBIUS_IAM_TOKEN"] == "iam-token-1"
+    assert [n for n, env in {**provider.envs, **gpu.envs}.items() if "NEBIUS_IAM_TOKEN" in env] == ["serve"]
+    assert set(gpu.envs) == {"train"} and set(provider.envs) == {"prep", "finetune", "serve"}  # every runtime ran
+    assert nebius_cli.calls.read_text() == "iam get-access-token\n"  # once per start of vllm-serve
+    rows = await nodes(db, run)
+    assert "iam-token-1" not in caplog.text + json.dumps([r.inputs for r in rows.values()])
+
+    monkeypatch.setenv("NEBIUS_IAM_TOKEN", "iam-set")  # a fresh token from the CLI beats a static one, which may be stale
+    again = await seed(db, EVERY_RUNTIME)
+    await ex.run_workflow(again.id, db, AsyncMock(), 1.0)
+    assert provider.envs["serve"]["NEBIUS_IAM_TOKEN"] == "iam-token-1"
+    assert nebius_cli.calls.read_text() == "iam get-access-token\n" * 2
+    nebius_cli.path.unlink()  # a host without the CLI uses the static token
+    last = await seed(db, EVERY_RUNTIME)
+    await ex.run_workflow(last.id, db, AsyncMock(), 1.0)
+    assert [(n, env["NEBIUS_IAM_TOKEN"]) for n, env in {**provider.envs, **gpu.envs}.items()
+            if "NEBIUS_IAM_TOKEN" in env] == [("serve", "iam-set")]
+
+
+SERVE_ONLY = "name: s\nnodes:\n  - {id: serve, type: vllm-serve, inputs: {model: m}}\n"
+
+
+@pytest.mark.parametrize("cli, error", [
+    (None, "no Nebius IAM token: the API host has no nebius CLI, and NEBIUS_IAM_TOKEN is blank or malformed"),
+    # stderr can name profiles, tenants, projects or a federation URL, and node errors are public: never shown
+    ('echo "profile /home/sa/.nebius tenant-e00secret" >&2\nexit 3', "no Nebius IAM token: nebius iam get-access-token exited 3"),
+    ('echo "token: x"\necho "Warning: rotate soon"', "no Nebius IAM token: nebius iam get-access-token printed no token"),
+    ("exec sleep 5", "no Nebius IAM token: nebius iam get-access-token took over 0.2 s"),
+])
+async def test_an_endpoint_node_without_a_token_fails_before_it_starts(db, provider, nebius_cli, endpoint_node,
+                                                                       monkeypatch, cli, error):
+    monkeypatch.setattr(ex, "IAM_TIMEOUT_S", 0.2)
+    if cli is None:
+        nebius_cli.path.unlink()
+    else:
+        nebius_cli.path.write_text(f"#!/bin/sh\n{cli}\n")
+    run = await seed(db, SERVE_ONLY)
+
+    await ex.run_workflow(run.id, db, AsyncMock(), 1.0)
+
+    assert ((await nodes(db, run))["serve"].error, provider.provisioned) == (error, [])
+    monkeypatch.setenv("STUB", "1")  # STUB never creates a Nebius resource, so it needs no token
+    stub = await seed(db, SERVE_ONLY)
+    await ex.run_workflow(stub.id, db, AsyncMock(), 1.0)
+    assert (await nodes(db, stub))["serve"].status == NodeStatus.SUCCEEDED
+
+
+async def test_why_the_provider_ended_a_pod_is_the_node_error(db, provider, gpu):
+    """A Nebius job that never ran its container (no capacity, preempted) ends with no ERROR line from the node: the
+    provider's reason says more than "exit 1". A node's own last ERROR line still wins."""
+    one = "name: t\nnodes:\n  - {id: train, type: unsloth-train, inputs: {train_data: r2://b/t}}\n"
+    reason = "FAILED NotEnoughResources: no gpu-h100-sxm capacity within 30 min"
+    gpu.script = {"train": {"exit": 1, "pod_error": reason}}
+    capacity = await seed(db, one)
+    await ex.run_workflow(capacity.id, db, AsyncMock(), 1.0)
+    assert (await nodes(db, capacity))["train"].error == reason
+
+    gpu.script = {"train": {"exit": 1, "pod_error": "FAILED ContainerFailed: exit 1", "error": "CUDA out of memory"}}
+    oom = await seed(db, one)
+    await ex.run_workflow(oom.id, db, AsyncMock(), 1.0)
+    assert (await nodes(db, oom))["train"].error == "exit 1: CUDA out of memory"
+
+
+ONE_GPU = "name: t\nnodes:\n  - {id: train, type: unsloth-train, inputs: {train_data: r2://b/t}}\n"
+
+
+def cost_json(run, node_id: str, usd: float, seq: int, attempt: str | None = None) -> dict:
+    """POST /internal/artifact's body for a node's cost_json, as the SDK sends it (it echoes ORCHAPOD_ATTEMPT)."""
+    return {"run_id": str(run.id), "node_id": node_id, "artifact": {
+        "name": "cost_json", "uri": f"r2://bk/runs/x/{node_id}/cost_json", "kind": "metrics",
+        "metadata": {"usd": usd, "seq": seq, **({"attempt": attempt} if attempt else {})}}}
+
+
+async def test_a_gpu_attempt_costs_its_wall_time_or_what_its_node_reported_whichever_is_more(client, db, provider, gpu,
+                                                                                            monkeypatch):
+    """Once a gpu pod is gone the executor bills its wall time (H100, 30 min: $2.25). A Nebius job's SIGTERM flush usually
+    lands later (terminate returns once cancel and delete are acknowledged), and a node may also report first. Either
+    way the attempt totals max(the bill, what the node reported), and the summary agrees with Run.cost_usd."""
+    clock = [0.0]
+    monkeypatch.setattr(ex, "monotonic", lambda: clock.append(clock[-1] + 1800) or clock[-1])  # 30 min a pod
+    gpu.client = client
+
+    async def cost(run):
+        await db.refresh(run)
+        return float(run.cost_usd), (await client.get(f"/runs/{run.id}/summary")).json()["nodes"][0]["usd"]
+
+    gpu.script = {"train": {"exit": 1, "pod_error": "FAILED Preempted: the VM was reclaimed"}}
+    killed, broadcast = await seed(db, ONE_GPU), AsyncMock()
+    await ex.run_workflow(killed.id, db, broadcast, 1.0)
+    bill = await db.scalar(select(Artifact).where(Artifact.name == "cost_json"))
+    assert (bill.meta, bill.uri) == ({"usd": 2.25, "wall_usd": 2.25, "gpu_hours": 0.5, "billed_by": "executor",
+                                      "attempt": gpu.envs["train"]["ORCHAPOD_ATTEMPT"]}, "nebius:train")
+    assert await cost(killed) == (2.25, 2.25) and {"type": "run_cost", "cost_usd": 2.25} in events(broadcast)
+    for usd, seq, total in ((1.0, 1, 2.25), (2.0, 2, 3.0),  # late flushes add only what the node reported beyond the bill
+                            (2.0, 2, 3.0),                   # a re-send of seq 2 (its POST broke after it landed): once
+                            (2.5, 2, 3.5)):                  # seq 2 sent again with more spend: only the difference
+        r = await client.post("/internal/artifact", json=cost_json(killed, "train", usd, seq))
+        assert (r.status_code, await cost(killed)) == (201, (total, total))
+    rows = (await db.scalars(select(Artifact).where(Artifact.name == "cost_json"))).all()
+    assert len(rows) == 4  # the bill and three reports: the re-send of seq 2 is not stored
+    for posing in ({"usd": -1.0}, {"usd": 0.0, "seq": 4, "billed_by": "executor", "wall_usd": 0.0}):
+        body = cost_json(killed, "train", 0, 0)
+        body["artifact"]["metadata"] = posing  # a node (gpu Jobs run third-party code) lowering its cost, or posing as the bill
+        await client.post("/internal/artifact", json=body)
+    assert await cost(killed) == (3.5, 3.5)
+    assert [a.meta.get("billed_by") for a in await db.scalars(select(Artifact).where(Artifact.name == "cost_json"))
+            ].count("executor") == 1
+
+    gpu.script = {"train": {"exit": None}}  # a long training job, then Cancel
+    gpu.started.clear()
+    cancelled = await seed(db, ONE_GPU)
+    task = asyncio.create_task(ex.run_workflow(cancelled.id, db, AsyncMock(), 1.0))
+    await asyncio.wait_for(gpu.started.wait(), 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert (await cost(cancelled), (await nodes(db, cancelled))["train"].error) == ((2.25, 2.25), "cancelled")
+
+    gpu.script = {"train": {"exit": 1, "cost": 0.4}}  # the node reports first (it may stop at its budget, say)
+    early = await seed(db, ONE_GPU)
+    await ex.run_workflow(early.id, db, AsyncMock(), 1.0)
+    assert await cost(early) == (2.25, 2.25)  # the bill adds only $1.85 above the node's $0.40
+
+    gpu.script = {"train": {"exit": 1}}  # Retry node: the first attempt's cost_json does not cover the second
+    await ex.run_workflow(early.id, db, AsyncMock(), 1.0)
+    assert await cost(early) == (4.5, 4.5)
+
+
+async def test_a_cost_json_racing_the_executors_bill_is_counted_once(client, provider, gpu, tmp_path, monkeypatch):
+    """The node's flush lands while the executor bills, between its read of the attempt and its insert: one lock
+    orders them, so the attempt still totals max(the bill, the report), not their sum. A file database gives each
+    session its own connection, as production has (the in-memory one shares one connection between all of them)."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlmodel import SQLModel
+    from api.database import get_session
+    from api.main import app
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'race.db'}")
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+    sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async def per_request():  # its own session, as in production: never the executor's
+        async with sessions() as session:
+            yield session
+            await session.commit()
+
+    app.dependency_overrides[get_session] = per_request
+    monkeypatch.setattr("api.database.AsyncSessionLocal", sessions)  # the bill's own session
+    monkeypatch.setattr(ex, "monotonic", lambda: 0.0 if not gpu.provisioned else 1800.0)
+    gpu.script = {"train": {"exit": 1}}
+    read, landed = budget.attempt_costs, []
+
+    async def racing(*args):
+        if not landed:  # the executor's read: the node's POST arrives now
+            landed.append(asyncio.create_task(client.post("/internal/artifact", json=cost_json(run, "train", 1.0, 1))))
+            for _ in range(20):
+                await asyncio.sleep(0)  # let the POST run as far as it can (to the lock, or into the database)
+        return await read(*args)
+
+    monkeypatch.setattr(budget, "attempt_costs", racing)
+    try:
+        async with sessions() as db:
+            run = await seed(db, ONE_GPU)
+            await ex.run_workflow(run.id, db, AsyncMock(), 1.0)
+            assert (await landed[0]).status_code == 201
+            await db.refresh(run)
+            assert float(run.cost_usd) == 2.25  # max($2.25 billed, $1.00 reported)
+    finally:
+        await engine.dispose()
+
+
+async def test_an_attempts_reports_add_up_to_at_most_twice_the_run_cap(client, db, seeded_node_run):
+    """Three $6 reports under new seqs once put $18 on one run: an attempt's reported total is capped at 2 x $3."""
+    run, _ = seeded_node_run
+    for usd, seq, status in ((4.0, 1, 201), (2.0, 2, 201), (0.01, 3, 422), (2.0, 2, 201)):  # the last: a re-send
+        assert (await client.post("/internal/artifact", json=cost_json(run, "node", usd, seq))).status_code == status
+    await db.refresh(run)
+    assert float(run.cost_usd) == 6.0
+
+
+async def test_a_late_flush_counts_toward_its_own_attempt_after_a_quick_retry(client, db, provider, gpu, monkeypatch):
+    """Arrival time used to split the attempts, so attempt 1's flush landing after Retry had started attempt 2 was
+    reconciled against attempt 2. The SDK echoes ORCHAPOD_ATTEMPT, so it counts toward its own attempt."""
+    clock = iter([0.0, 1800.0, 0.0, 3600.0])  # attempt 1: 30 min, $2.25; attempt 2: 60 min, $4.50
+    monkeypatch.setattr(ex, "monotonic", lambda: next(clock))
+    gpu.client, gpu.script = client, {"train": {"exit": 1}}
+    run = await seed(db, ONE_GPU)
+    await ex.run_workflow(run.id, db, AsyncMock(), 1.0)
+    first = gpu.envs["train"]["ORCHAPOD_ATTEMPT"]
+    late = cost_json(run, "train", 3.0, 1, first)  # attempt 1 reported more than its bill (Token Factory calls, say)
+
+    gpu.script = {"train": {"exit": 1, "during": lambda: client.post("/internal/artifact", json=late)}}
+    await ex.run_workflow(run.id, db, AsyncMock(), 1.0)  # Retry node: attempt 2, while attempt 1's flush lands
+
+    await db.refresh(run)
+    assert (gpu.envs["train"]["ORCHAPOD_ATTEMPT"] != first, float(run.cost_usd)) == (True, 7.5)  # $3.00 + $4.50
+
+
+GPU_THEN_CPU = """
+name: g
+nodes:
+  - {id: train, type: unsloth-train, inputs: {train_data: "r2://b/t"}}
+  - {id: prep, type: data-prep, needs: [train], inputs: {dataset: "hf://x"}}
+"""
+
+
+async def test_a_failed_bill_never_strands_the_run(db, provider, gpu, monkeypatch, caplog):
+    """The bill has its own session: when it fails, the executor's session (its run and NodeRuns) is untouched, so the
+    run goes on to its next node instead of stopping RUNNING."""
+    def blip(*_):  # after the bill's first query, so its transaction has begun
+        raise RuntimeError("database blip")
+
+    monkeypatch.setattr(budget, "attempt_cost", blip)
+    run = await seed(db, GPU_THEN_CPU)
+
+    await ex.run_workflow(run.id, db, AsyncMock(), 1.0)
+
+    await db.refresh(run)
+    rows = await nodes(db, run)
+    assert (run.status, rows["train"].status, rows["prep"].status) == (RunStatus.SUCCEEDED,) + (NodeStatus.SUCCEEDED,) * 2
+    assert "gpu time of nebius train not billed" in caplog.text
+
+
+async def test_a_second_cancel_in_the_grace_still_bills_the_gpu_pod(db, provider, gpu, monkeypatch):
+    """The bill is part of the shielded teardown task: a second click on Cancel inside the 30 s SIGTERM grace stops the
+    executor waiting, never the teardown or the bill."""
+    clock = [0.0]
+    monkeypatch.setattr(ex, "monotonic", lambda: clock.append(clock[-1] + 1800) or clock[-1])  # 30 min: $2.25
+    gpu.script, gpu.terminate_gate = {"train": {"exit": None}}, asyncio.Event()
+    run = await seed(db, ONE_GPU)
+    task = asyncio.create_task(ex.run_workflow(run.id, db, AsyncMock(), 1.0))
+    await asyncio.wait_for(gpu.started.wait(), 5)
+
+    task.cancel()
+    await asyncio.wait_for(gpu.terminating.wait(), 5)  # SIGTERM sent, grace running
+    task.cancel()                                      # a second click
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 5)
+    gpu.terminate_gate.set()
+    await drain()
+
+    await db.refresh(run)
+    assert run.cost_usd == Decimal("2.25")
 
 
 async def test_one_node_run_per_run_and_node(db):
@@ -278,8 +594,9 @@ async def test_startup_sweep_fails_orphaned_runs(db, provider):
 async def test_startup_runs_the_sweep_and_creates_the_bucket(monkeypatch):
     import threading
     from api import main
-    swept, bucket = AsyncMock(), threading.Event()
+    swept, resumed, bucket = AsyncMock(), AsyncMock(), threading.Event()
     monkeypatch.setattr(main, "sweep", swept)
+    monkeypatch.setattr(main.internal, "resume_ttls", resumed)  # endpoint expiries (tests/api/test_internal.py)
     monkeypatch.setattr(main, "create_tables", AsyncMock())
     monkeypatch.setattr(main, "register_providers", lambda **_: None)
     monkeypatch.setattr(main.storage, "ensure_bucket_exists", bucket.set)  # MinIO in dev starts without the bucket
@@ -290,6 +607,7 @@ async def test_startup_runs_the_sweep_and_creates_the_bucket(monkeypatch):
         pass
 
     swept.assert_awaited_once()
+    resumed.assert_awaited_once()
     assert await asyncio.to_thread(bucket.wait, 5)  # off the event loop: a slow store never delays startup
 
 
@@ -407,6 +725,18 @@ def launched(db, monkeypatch):
     return tasks
 
 
+@pytest.fixture
+def admin(monkeypatch):
+    """The X-Orchapod-Admin header: the admin cancels any run, with no cancel token."""
+    monkeypatch.setenv("ORCHAPOD_ADMIN_TOKEN", "s3cret")
+    return {"X-Orchapod-Admin": "s3cret"}
+
+
+def owner(started) -> dict:
+    """The cancel token header from a start reply: only the caller who started a run (or the admin) cancels it."""
+    return {"X-Orchapod-Cancel-Token": started.json()["cancel_token"]}
+
+
 def published():
     from api.services.events import event_bus
     return [c.args[1] for c in event_bus.publish.await_args_list]
@@ -416,11 +746,11 @@ async def test_cancel_terminates_the_pod_and_ends_cancelled(client, db, provider
     provider.script = {"a": {"exit": None}}  # a long-polling node
     run = await seed(db, status=RunStatus.PENDING)
 
-    r = await client.post(f"/runs/{run.id}/start")
-    assert (r.status_code, r.json()["status"]) == (200, "provisioning_gpu")
+    started = await client.post(f"/runs/{run.id}/start")
+    assert (started.status_code, started.json()["status"]) == (200, "provisioning_gpu")
     await asyncio.wait_for(provider.started.wait(), 5)
 
-    r = await client.post(f"/runs/{run.id}/cancel")
+    r = await client.post(f"/runs/{run.id}/cancel", headers=owner(started))
 
     assert (r.status_code, r.json()["status"]) == (200, "cancelled")
     assert provider.terminated == ["a"]
@@ -430,21 +760,21 @@ async def test_cancel_terminates_the_pod_and_ends_cancelled(client, db, provider
     assert ev.index({"type": "node_status", "node_id": "a", "status": "failed", "error": "cancelled"}) \
         < ev.index({"type": "run_status", "status": "cancelled", "error": "cancelled"})
     assert run.id not in ex.running_tasks
-    assert (await client.post(f"/runs/{run.id}/cancel")).status_code == 409
+    assert (await client.post(f"/runs/{run.id}/cancel", headers=owner(started))).status_code == 409
 
 
-async def test_cancel_a_run_that_never_started(client, db):
+async def test_cancel_a_run_that_never_started(client, db, admin):
     run = await seed(db, status=RunStatus.PENDING)
-    r = await client.post(f"/runs/{run.id}/cancel")
+    r = await client.post(f"/runs/{run.id}/cancel", headers=admin)  # no token exists until a start
     assert (r.status_code, r.json()["status"]) == (200, "cancelled")
 
 
-async def test_cancel_rereads_the_run_before_deciding(client, db):
+async def test_cancel_rereads_the_run_before_deciding(client, db, admin):
     run = await seed(db, status=RunStatus.RUNNING)
     async with async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)() as other:
         (await other.get(Run, run.id)).status = RunStatus.SUCCEEDED  # finished meanwhile, elsewhere
         await other.commit()
-    r = await client.post(f"/runs/{run.id}/cancel")
+    r = await client.post(f"/runs/{run.id}/cancel", headers=admin)
     assert r.json()["status"] == "succeeded"
 
 
@@ -473,9 +803,9 @@ async def test_retry_reruns_the_failed_node_and_continues(client, db, provider, 
 async def test_retry_waits_for_a_provision_still_in_flight(client, db, provider, launched):
     provider.provision_gate = asyncio.Event()
     run = await seed(db, status=RunStatus.PENDING)
-    await client.post(f"/runs/{run.id}/start")
+    started = await client.post(f"/runs/{run.id}/start")
     await asyncio.wait_for(provider.provisioning.wait(), 5)
-    assert (await client.post(f"/runs/{run.id}/cancel")).json()["status"] == "cancelled"
+    assert (await client.post(f"/runs/{run.id}/cancel", headers=owner(started))).json()["status"] == "cancelled"
 
     r = await client.post(f"/runs/{run.id}/nodes/a/retry")
     assert r.status_code == 409  # the cancelled node's container is still coming up
@@ -614,7 +944,7 @@ async def test_cost_json_adds_to_run_cost(client, db, seeded_node_run):
         {"type": "run_cost", "cost_usd": 0.25}, {"type": "run_cost", "cost_usd": 0.5}]
 
 
-async def test_events_fire_only_after_their_change_is_committed(client, tmp_path, monkeypatch):
+async def test_events_fire_only_after_their_change_is_committed(client, tmp_path, monkeypatch, admin):
     """A client re-reads /runs/{id}/summary on run_cost, artifact and run_status: it must see the change."""
     from sqlalchemy.ext.asyncio import create_async_engine
     from sqlmodel import SQLModel
@@ -646,7 +976,7 @@ async def test_events_fire_only_after_their_change_is_committed(client, tmp_path
     event_bus.publish.side_effect = reread
     await client.post("/internal/artifact", json={"run_id": str(run.id), "node_id": "n", "artifact": {
         "name": "cost_json", "uri": "r2://b/runs/x/n/cost_json", "kind": "metrics", "metadata": {"usd": 0.25}}})
-    await client.post(f"/runs/{idle.id}/cancel")
+    await client.post(f"/runs/{idle.id}/cancel", headers=admin)
     await engine.dispose()
 
     assert seen == [("run_cost", "running", 0.25, ["cost_json"]), ("artifact", "running", 0.25, ["cost_json"]),

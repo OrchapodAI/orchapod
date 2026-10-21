@@ -12,10 +12,13 @@ from api.services.redact import REDACTED, redact
 def test_secret_looking_keys_are_redacted_at_any_depth():
     secrets = {"api_key", "API_KEY", "apiKey", "apikey", "x-api-key", "openai_api_key", "token", "accessToken",
                "endpoint_token", "Authorization", "client_secret", "secret_key", "password",
-               "hf_token_env"}  # an _env key whose value is not an env var's name is the secret itself
+               "hf_token_env",  # an _env key whose value is not an env var's name is the secret itself
+               "HFToken", "APIToken", "APIKey", "OAuthToken",  # acronyms in camelCase
+               "access_key", "accessKey", "aws_access_key_id", "AWSAccessKeyId"}
     alike = {"api_key_env": "ORCHAPOD_ENDPOINT_TOKEN", "max_tokens": 512, "trained_tokens": 9, "in_tokens": 1,
              "tokenizer": "bpe", "keep_alive_min": 30, "token_count": 3,  # a ModelRef's env var name, counts, settings
-             "usd_by_provider": {"token_factory": 0.12}}  # ... and Token Factory's provider name stay
+             "usd_by_provider": {"token_factory": 0.12},  # ... and Token Factory's provider name stay
+             "maxTokens": 9, "GPUHours": 0.5, "HFModel": "m", "TokenFactory": "tf"}  # acronyms that are no secret
     meta = {**{k: "sk-live" for k in secrets}, **alike,
             "nested": {"rows": [{"secret": {"x": 1}, "ok": 1}], "url": "https://e.example/v1"}}
 
@@ -31,7 +34,7 @@ def test_secret_looking_keys_are_redacted_at_any_depth():
 async def test_no_route_returns_an_artifact_secret(client, db, seeded_node_run):
     run, node_run = seeded_node_run
     r = await client.post("/internal/artifact", json={"run_id": str(run.id), "node_id": "node", "artifact": {  # old vllm-serve
-        "name": "openai_api_key", "uri": "r2://orchapod-artifacts/runs/x/node/openai_api_key", "kind": "endpoint",
+        "name": "openai_api_key", "uri": "r2://orchapod-artifacts/runs/x/node/openai_api_key", "kind": "metrics",
         "metadata": {"api_key": "sk-live-1", "model": "m"}}})
     assert r.status_code == 201
     stored = await db.scalar(select(Artifact).where(Artifact.name == "openai_api_key"))
@@ -48,7 +51,7 @@ async def test_no_route_returns_an_artifact_secret(client, db, seeded_node_run):
 
 def test_without_secrets_drops_secret_keys_at_any_depth_of_an_input():
     from api.services.redact import without_secrets
-    inputs = {"cfg": {"hf_token": "hf_X", "k": 1}, "refs": [{"api_key": "sk-X", "model": "m"}],
+    inputs = {"cfg": {"hf_token": "hf_X", "HFToken": "hf_Y", "accessKey": "AK", "k": 1}, "refs": [{"api_key": "sk-X", "model": "m"}],
               "headers": {"Authorization": "Bearer X"}, "max_tokens": 5, "api_key_env": "NEBIUS_API_KEY"}
     out = without_secrets({"nodes": [{"id": "n", "inputs": inputs}]})["nodes"][0]["inputs"]
     assert out == {"cfg": {"k": 1}, "refs": [{"model": "m"}], "headers": {}, "max_tokens": 5, "api_key_env": "NEBIUS_API_KEY"}

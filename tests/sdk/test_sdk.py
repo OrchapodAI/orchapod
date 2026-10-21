@@ -5,9 +5,11 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import signal
 import subprocess
 import sys
 import textwrap
+import time
 import urllib.request
 from pathlib import Path
 
@@ -184,24 +186,51 @@ _NODE = textwrap.dedent("""
         if sys.argv[1] == "sigterm":
             os.kill(os.getpid(), signal.SIGTERM)
             time.sleep(10)
+        if sys.argv[1] == "busy_pool":  # main returns while a worker is still in a slow call
+            concurrent.futures.ThreadPoolExecutor(1).submit(time.sleep, 60)
+        if sys.argv[1] == "pool_spends":  # a call still in flight when main returns bills after it
+            concurrent.futures.ThreadPoolExecutor(1).submit(lambda: time.sleep(0.5) or cost.add("token_factory", "m", usd=0.5))
+        if sys.argv[1] == "sigterm_in_pool":  # a cancel while the node's `with` block waits for its worker
+            with concurrent.futures.ThreadPoolExecutor(1) as pool:
+                pool.submit(time.sleep, 60)
+                os.kill(os.getpid(), signal.SIGTERM)
+                time.sleep(10)
     finally:
         (cap / "finally").write_text("ran")
 """)
 
 
-@pytest.mark.parametrize("mode, code", [("ok", 0), ("raise", 1), ("sigterm", 143)])
-def test_cost_json_written_at_every_exit(tmp_path, mode, code):
+def node(mode: str, tmp_path: Path) -> list[str]:
+    """The command of a node process in `mode`, and its env (the SDK only; object storage and webhooks are files)."""
     env = {k: v for k, v in os.environ.items() if not k.startswith(("ORCHAPOD_", "STUB"))}
     env.update(PYTHONPATH=str(SDK), ORCHAPOD_NODE_INPUTS="{}", ORCHAPOD_RUN_ID="run1", ORCHAPOD_NODE_ID="prep",
                ORCHAPOD_R2_BUCKET="b", ORCHAPOD_NODE_OUTPUTS_DIR=str(tmp_path / "out"))
-    proc = subprocess.run([sys.executable, "-c", _NODE, mode, str(tmp_path)], env=env, cwd=tmp_path,
-                          capture_output=True, text=True, timeout=60)
+    return dict(args=[sys.executable, "-c", _NODE, mode, str(tmp_path)], env=env, cwd=tmp_path, text=True)
+
+
+def registered(tmp_path: Path, name: str) -> list[dict]:
+    """The metadata of each `name` artifact the node has registered so far (complete lines only: it may be writing)."""
+    path = tmp_path / "posts.jsonl"
+    posts = [json.loads(line) for line in path.read_text().split("\n")[:-1]] if path.exists() else []
+    return [p[1]["artifact"]["metadata"] for p in posts if p[0] == "/internal/artifact" and p[1]["artifact"]["name"] == name]
+
+
+def wait_for_cost_json(tmp_path: Path, proc: subprocess.Popen) -> None:
+    deadline = time.monotonic() + 20
+    while not registered(tmp_path, "cost_json"):
+        assert proc.poll() is None and time.monotonic() < deadline, "no cost_json while the node was still running"
+        time.sleep(0.05)
+
+
+@pytest.mark.parametrize("mode, code", [("ok", 0), ("raise", 1), ("sigterm", 143)])
+def test_cost_json_written_at_every_exit(tmp_path, mode, code):
+    proc = subprocess.run(**node(mode, tmp_path), capture_output=True, timeout=60)
     assert proc.returncode == code, proc.stderr
 
     assert json.loads((tmp_path / "cost_json").read_text())["usd"] == 0.25
     posts = [json.loads(line) for line in (tmp_path / "posts.jsonl").read_text().splitlines()]
     assert ["/internal/artifact", {"artifact": {"name": "cost_json", "uri": "r2://b/runs/run1/prep/cost_json",
-                                                "kind": "metrics", "metadata": {"usd": 0.25}}}] in posts
+                                                "kind": "metrics", "metadata": {"usd": 0.25, "seq": 1}}}] in posts
     assert (tmp_path / "finally").exists()  # SIGTERM unwinds the node's finally (remote cleanup)
     errors = [p[1]["message"] for p in posts if p[0] == "/internal/log" and p[1]["level"] == "ERROR"]
     assert errors == (["RuntimeError: boom"] if mode == "raise" else [])
@@ -211,3 +240,76 @@ def test_cost_json_written_at_every_exit(tmp_path, mode, code):
     lines = [json.loads(line) for line in (tmp_path / "logs").read_text().splitlines()]
     assert [(x["level"], x["message"]) for x in lines] == [("INFO", "started")] + [("ERROR", m) for m in errors]
     assert all(x["ts"] for x in lines)
+
+
+def test_cost_json_does_not_wait_for_a_pool_still_busy_at_exit(tmp_path):
+    """Main returns while a worker is still in a slow (paid) call: the interpreter joins that worker before atexit, so
+    cost_json goes out first; then a SIGTERM (cancel, timeout) ends the wait at once, and `logs` are written too."""
+    proc = subprocess.Popen(**node("busy_pool", tmp_path))
+    try:
+        wait_for_cost_json(tmp_path, proc)  # the worker still has most of its 60 s to go
+        proc.send_signal(signal.SIGTERM)
+        proc.wait(timeout=10)
+    finally:
+        proc.kill()
+    assert registered(tmp_path, "cost_json") == [{"usd": 0.25, "seq": 1}]  # once: nothing was spent after
+    assert registered(tmp_path, "logs") == [{}]
+
+
+def test_cost_json_is_written_at_sigterm_while_the_node_still_waits_for_its_pool(tmp_path):
+    """A cancel while the node's own cleanup waits for its worker (ThreadPoolExecutor's `with`): past the 30 s grace
+    SIGKILL ends the node before any exit hook, so the spend goes out from the SIGTERM handler."""
+    proc = subprocess.Popen(**node("sigterm_in_pool", tmp_path))
+    try:
+        wait_for_cost_json(tmp_path, proc)
+    finally:
+        proc.kill()  # docker stop: SIGKILL after the grace
+    assert registered(tmp_path, "cost_json") == [{"usd": 0.25, "seq": 1}]
+
+
+def test_what_calls_in_flight_at_exit_spend_is_added_after_them(tmp_path):
+    proc = subprocess.run(**node("pool_spends", tmp_path), capture_output=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    # each cost_json adds its usd to the run: when main ended, then what the worker billed after
+    assert registered(tmp_path, "cost_json") == [{"usd": 0.25, "seq": 1}, {"usd": 0.5, "seq": 2}]
+    assert json.loads((tmp_path / "cost_json").read_text())["usd"] == 0.75  # the file: the node's whole spend
+
+
+def test_each_cost_record_registers_its_own_spend(sdk, node_env, posts, monkeypatch):
+    """Several nodes in one process (tests/drills runs them so, each with a fresh cost record): each cost_json carries
+    its own node's spend, never the difference from the node before."""
+    io, cost = sdk.io, sdk.cost
+    monkeypatch.setattr(io, "_upload_to_r2", lambda **_: None)
+    for usd in (0.25, 0.1, 0.0):
+        monkeypatch.setattr(cost, "_items", {})
+        if usd:
+            cost.add("token_factory", "m", usd=usd)
+        io._at_exit()
+    assert [p["body"]["artifact"]["metadata"] for p in posts if p["body"].get("artifact", {}).get("name") == "cost_json"
+            ] == [{"usd": 0.25, "seq": 1}, {"usd": 0.1, "seq": 1}, {"usd": 0.0, "seq": 1}]
+
+
+def test_a_registration_that_failed_goes_again_under_its_seq(sdk, node_env, monkeypatch):
+    """It may still have landed (a POST broken after the API counted it, or a lost reply): sent again under the same seq
+    with whatever was spent since, the API counts that seq once, at its largest."""
+    io, cost, log = sdk.io, sdk.cost, sdk.log
+    monkeypatch.setattr(io, "_upload_to_r2", lambda **_: None)
+    monkeypatch.setattr(io.time, "sleep", lambda s: None)
+    sent, down = [], [True]
+
+    def post(path, payload, timeout=3):
+        if path == "/internal/artifact" and payload["artifact"]["name"] == "cost_json":
+            sent.append(payload["artifact"]["metadata"])
+            if down[0]:
+                raise OSError("control plane down")
+
+    monkeypatch.setattr(log, "post", post)
+    monkeypatch.setenv("ORCHAPOD_ATTEMPT", "2026-10-24T12:00:00.000001")  # the executor's attempt, echoed
+    cost.add("token_factory", "m", usd=0.25)
+    io._flush_cost()  # every try fails
+    down[0] = False
+    cost.add("token_factory", "m", usd=0.1)
+    io._flush_cost()
+    io._flush_cost()  # nothing new
+    attempt = {"attempt": "2026-10-24T12:00:00.000001"}
+    assert sent == [{"usd": 0.25, "seq": 1, **attempt}] * 4 + [{"usd": 0.35, "seq": 1, **attempt}]

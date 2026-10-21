@@ -19,13 +19,51 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from api import config
-from api.models.db import Run, Spend, utcnow
+from api.models.db import Artifact, Run, Spend, utcnow
 from packages.providers.tokenfactory import TokenFactory
 
 # run_id → (what its running node may spend, the scale it was granted at), granted at the node boundary and released
 # when the node ends, so concurrent runs never hand out the same dollars twice. ponytail: in-process, which the one API
 # worker allows.
 _granted: dict[uuid.UUID, tuple[float, float]] = {}
+
+
+# A node's cost_json and the executor's wall-time bill of the same attempt never interleave. ponytail: in-process, which
+# the one API worker allows.
+cost_lock = asyncio.Lock()
+
+
+def reported_cost(metas: list[dict]) -> float:
+    """What the node reported in one attempt's cost_json metas: a seq counts once, at its largest (a re-send after a
+    broken POST)."""
+    seqs, reported = {}, 0.0
+    for m in metas:
+        if m.get("billed_by") != "executor":
+            usd = float(m.get("reported_usd", m.get("usd", 0)))
+            if isinstance(m.get("seq"), int):
+                seqs[m["seq"]] = max(seqs.get(m["seq"], 0.0), usd)
+            else:
+                reported += usd
+    return reported + sum(seqs.values())
+
+
+def attempt_cost(metas: list[dict]) -> float:
+    """What one attempt of a node costs (contracts "Run state machine"): what the node reported, or the executor's
+    wall-time bill of its gpu pod when that is more."""
+    return max([reported_cost(metas), *(float(m.get("wall_usd", 0)) for m in metas if m.get("billed_by") == "executor")])
+
+
+def attempt_of(node_run) -> str:
+    """A node attempt's id: when it started (a retry restarts it). The executor passes it as ORCHAPOD_ATTEMPT."""
+    return node_run.started_at.isoformat() if node_run.started_at else ""
+
+
+async def attempt_costs(db: AsyncSession, node_run_id: uuid.UUID, attempt: str) -> list[dict]:
+    """The metas of the node's cost_json rows of one attempt, which every row carries (the SDK echoes ORCHAPOD_ATTEMPT):
+    a late flush counts toward its own attempt, even after a quick Retry."""
+    metas = await db.scalars(select(Artifact.meta).where(Artifact.node_run_id == node_run_id,
+                                                          Artifact.name == "cost_json"))
+    return [m for m in metas if m and m.get("attempt") == attempt]
 
 
 def admin(x_orchapod_admin: str = Header(default="")) -> bool:

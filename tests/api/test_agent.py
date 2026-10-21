@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import functools
 import json
 import re
@@ -20,6 +21,7 @@ from api.agent import planner
 from api.executor import run_workflow as ex
 from api.models.db import AgentRun, Artifact, ArtifactKind, NodeRun, NodeStatus, Run, RunStatus, Spend, Workflow, utcnow
 from api.services import budget
+from orchapod.prices import PRICES
 from packages.providers.tokenfactory import LIGHTNING, SUPER, TokenFactory
 from packages.workflow_schema.models import NODE_REGISTRY, ResourceSpec, SynthDistilabelInputs
 
@@ -107,8 +109,9 @@ async def test_run_it_yourself_clones_each_template_at_reduced_scale(client, mon
             assert cut["inputs"] == {**full["inputs"], **t["reduced_inputs"].get(full["id"], {})}  # ... smaller inputs
         assert set(t["reduced_inputs"]) <= {n["id"] for n in t["plan"]["nodes"]}
         assert 0 < small["estimate"]["usd"] < t["estimate"]["usd"]
-    # gpu-l40s-a at $1.55/h; the docs specialist is mostly tf-finetune's typical $0.50 until spike 1 prices it
-    assert [round(t["reduced"]["estimate"]["usd"], 2) for t in templates] == [0.83, 0.03, 0.02, 0.55]
+    # gpu-l40s-a at $1.55/h for vllm-serve's ~5 min start + keep_alive_min (real-estate was $0.83 before the start was
+    # billed); the docs specialist is mostly tf-finetune's typical $0.50 until spike 1 prices it
+    assert [round(t["reduced"]["estimate"]["usd"], 2) for t in templates] == [0.96, 0.03, 0.02, 0.55]
     # fits: the reduced plan's estimate within the caller's run cap ($3 x ORCHAPOD_ANON_SCALE 0.1 when anonymous)
     assert [t["fits"] for t in templates] == [False, True, True, False]  # real-estate and docs: admin-only by default
     monkeypatch.setenv("ORCHAPOD_ADMIN_TOKEN", "s3cret")
@@ -152,6 +155,17 @@ async def test_stub_plans_with_the_closest_template_and_calls_nothing(client, mo
     assert r.json()["plan"] == templates[2]["plan"]
     r = await client.post("/agent/plan", json={"intent": "Distill a docs specialist"})  # PLAN's name for the golden path
     assert r.json()["plan"] == templates[3]["plan"]
+
+
+@pytest.mark.parametrize("intent, slug", [  # function words ("an", "in", "the", "which", "is") once outvoted the content
+    ("Distill an expert in the Nebius documentation", "nebius-docs-specialist"),
+    ("Distill an expert in Nebius", "nebius-docs-specialist"),
+    ("A model which is an expert in US real-estate compliance", "real-estate-compliance"),
+])
+async def test_stub_matching_ignores_stopwords(client, monkeypatch, intent, slug):
+    monkeypatch.setenv("STUB", "1")
+    r = await client.post("/agent/plan", json={"intent": intent})
+    assert f"'{slug}'" in r.json()["rationale"]
 
 
 async def test_plan_refuses_bad_intents_the_kill_switch_and_a_missing_key(client, monkeypatch):
@@ -359,6 +373,39 @@ def test_estimates_never_go_negative_and_count_page_extraction():
     assert estimate["by_node"]["s"]["usd"] == 0.0
     assert estimate["by_node"]["r"]["usd"] == pytest.approx((2 * 2 + 20 / 5) * 0.008)  # advanced searches + pages read
     assert "s: keep_alive_min: Input should be greater than or equal to 1" in errors_of({"name": "p", "nodes": [serve]})
+
+
+def test_tf_finetune_is_priced_from_its_trained_tokens_once_the_base_has_a_price(monkeypatch):
+    docs = planner.templates()[3]  # synth 300 rows -> data-prep train_split 0.8 -> tf-finetune 2 epochs on Llama 3.1 8B
+    est, warnings = planner.estimate(docs["plan"])
+    assert est["by_node"]["finetune"]["usd"] == 0.5  # TYPICAL until spike 1 fills the price ...
+    assert "finetune: no fine-tune price for meta-llama/Llama-3.1-8B-Instruct yet (spike 1); the estimate assumes $0.50" in warnings
+
+    monkeypatch.setitem(PRICES["token_factory_finetune"], "meta-llama/Llama-3.1-8B-Instruct", 0.4e-6)  # $0.40 per 1M
+    est, warnings = planner.estimate(docs["plan"])
+    assert est["by_node"]["finetune"]["usd"] == pytest.approx(300 * 0.8 * 250 * 2 * 0.4e-6)  # rows x tokens x epochs x $
+    assert not [w for w in warnings if w.startswith("finetune:")]
+    small = planner.reduced(docs)["estimate"]  # 40 rows, 1 epoch
+    assert small["by_node"]["finetune"]["usd"] == pytest.approx(40 * 0.8 * 250 * 0.4e-6)
+    assert small["usd"] <= budget.run_cap(0.1)  # ... which decides `fits` on the public app
+
+    plan = copy.deepcopy(docs["plan"])
+    plan["nodes"][3]["inputs"]["hyperparameters"] = {"n_epochs": 3}  # wins over n_epochs, as in the node
+    assert planner.estimate(plan)[0]["by_node"]["finetune"]["usd"] == pytest.approx(300 * 0.8 * 250 * 3 * 0.4e-6)
+    hf = {"name": "p", "nodes": [node("prep", "data-prep", dataset="hf://x"),
+                                 node("ft", "tf-finetune", ["prep"], train_data="${{ nodes.prep.outputs.train_jsonl }}")]}
+    est, warnings = planner.estimate(hf)
+    assert (est["by_node"]["ft"]["usd"], warnings) == (0.5, [
+        "ft: the rows of train_data are unknown (not from synth-distilabel); the estimate assumes $0.50"])
+    del hf["nodes"][0]["inputs"]["dataset"]  # a required input missing: review() reports it, the estimate never crashes
+    assert planner.review(hf)[0] == ["prep: dataset: Field required"]
+
+
+def test_vllm_serve_is_priced_from_the_endpoints_creation():
+    """vllm-serve bills from creation (ml-w4): the typical start (5 min; 15 at most) plus keep_alive_min, at its rate."""
+    est = planner.estimate({"nodes": [node("s", "vllm-serve", model="m", keep_alive_min=30),
+                                      node("h", "vllm-serve", model="m", keep_alive_min=10, platform="gpu-h100-sxm")]})[0]
+    assert (est["by_node"]["s"]["usd"], est["by_node"]["h"]["usd"]) == (round(35 / 60 * 1.55, 4), round(15 / 60 * 4.5, 4))
 
 
 def test_review_reports_an_estimate_over_the_budget_left():

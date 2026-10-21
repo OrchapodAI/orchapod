@@ -140,3 +140,75 @@ async def test_public_lists_cap_limit_at_500(client, db):
             assert (await client.get(path, params={"limit": bad})).status_code == 422
     assert len((await client.get("/workflows")).json()) == 51
     assert (await client.get("/artifacts", params={"limit": -1})).status_code == 422  # SQLite reads -1 as no limit
+
+
+async def test_runs_carry_their_workflows_name(client, db, no_bg_tasks):
+    """The golden-run link finds its run by workflow name, without reading the newest 500 workflows."""
+    from api.models.db import Run, Workflow
+    golden = Workflow(user_id=uuid.uuid4(), name="nebius-docs-specialist-llama-8b", yaml="name: x\nnodes: []\n",
+                      graph_json={})
+    db.add(golden)
+    await db.flush()
+    run, standalone = Run(workflow_id=golden.id, user_id=golden.user_id), Run(user_id=uuid.uuid4())
+    db.add_all([run, standalone])
+    await db.commit()
+
+    listed = {r["id"]: r["workflow_name"] for r in (await client.get("/runs")).json()}
+    assert listed == {str(run.id): "nebius-docs-specialist-llama-8b", str(standalone.id): None}
+    assert (await client.get(f"/runs/{run.id}")).json()["workflow_name"] == "nebius-docs-specialist-llama-8b"
+    made = await client.post("/runs", json={"workflow_id": str(golden.id)})
+    assert made.json()["workflow_name"] == "nebius-docs-specialist-llama-8b"
+
+
+# ---------------------------------------------------------------------------
+# Cancel token: visitors cannot cancel each other's runs
+# ---------------------------------------------------------------------------
+
+GOOD_PLAN = {"name": "qa-data", "nodes": [
+    {"id": "synth", "type": "synth-distilabel", "needs": [], "inputs": {"pipeline_template": "self-instruct", "n_samples": 100}},
+    {"id": "prep", "type": "data-prep", "needs": ["synth"], "inputs": {"dataset": "${{ nodes.synth.outputs.dataset }}"}},
+]}
+
+
+async def test_only_the_caller_who_started_a_run_or_the_admin_cancels_it(client, db, monkeypatch):
+    import hashlib
+    from sqlmodel import select
+    from api.executor import run_workflow as ex
+    from api.models.db import CancelToken, Run, RunStatus, Workflow
+    monkeypatch.setattr(ex, "launch", lambda run_id, scale: None)
+    monkeypatch.setenv("ORCHAPOD_ADMIN_TOKEN", "s3cret")
+    wf = Workflow(user_id=uuid.uuid4(), name="w", yaml="name: w\nnodes:\n  - {id: d, type: data-prep, inputs: {dataset: hf://x}}\n",
+                  graph_json={})
+    db.add(wf)
+    await db.flush()
+    started, by_agent, pending = (Run(workflow_id=wf.id, user_id=wf.user_id) for _ in range(3))
+    db.add_all([started, by_agent, pending])
+    await db.commit()
+
+    token = (await client.post(f"/runs/{started.id}/start")).json()["cancel_token"]
+    agent = (await client.post("/agent/run", json={"intent": "Q&A data", "plan": GOOD_PLAN})).json()
+    kept = {r.run_id: r.sha256 for r in await db.scalars(select(CancelToken))}
+    assert kept[started.id] == hashlib.sha256(token.encode()).hexdigest() and token not in str(kept)  # only its hash
+
+    def cancel(run_id, **headers):
+        return client.post(f"/runs/{run_id}/cancel", headers=headers)
+    for refused in (await cancel(started.id), await cancel(started.id, **{"X-Orchapod-Cancel-Token": "guess"}),
+                    await cancel(started.id, **{"X-Orchapod-Cancel-Token": agent["cancel_token"]}),  # another run's
+                    await cancel(pending.id)):  # never started: no token exists
+        assert refused.status_code == 403 and "cancel token" in refused.json()["detail"]
+    r = await cancel(started.id, **{"X-Orchapod-Cancel-Token": token})
+    assert (r.status_code, r.json()["status"]) == (200, "cancelled")
+    r = await cancel(agent["run_id"], **{"X-Orchapod-Cancel-Token": agent["cancel_token"]})
+    assert (r.status_code, r.json()["status"]) == (200, "cancelled")
+    assert (await cancel(pending.id, **{"X-Orchapod-Admin": "s3cret"})).json()["status"] == "cancelled"  # the admin: any
+    assert (await cancel(uuid.uuid4())).status_code == 404
+
+    from api.models.db import NodeRun, NodeStatus
+    db.add(NodeRun(run_id=started.id, node_id="d", node_type="data-prep", status=NodeStatus.FAILED, error="cancelled"))
+    await db.commit()
+    assert (await client.post(f"/runs/{started.id}/nodes/d/retry")).status_code == 202  # anyone may retry ...
+    r = await cancel(started.id, **{"X-Orchapod-Cancel-Token": token})  # ... and the starter's token still cancels it
+    assert (r.status_code, r.json()["status"]) == (200, "cancelled")
+    run = await db.get(Run, started.id)
+    await db.refresh(run)
+    assert run.status == RunStatus.CANCELLED

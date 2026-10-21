@@ -30,7 +30,8 @@ REMOVED = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "JUDGE_MODEL", "NEBIUS_FOLDER_
            "RUNPOD_API_KEY", "GITHUB_ORG", "CLOUDFLARE_TUNNEL_TOKEN"]
 NOT_IN_ENV_EXAMPLE = {  # read by code, set by nobody's .env
     **dict.fromkeys(["ORCHAPOD_NODE_INPUTS", "ORCHAPOD_NODE_OUTPUTS_DIR", "ORCHAPOD_RUN_ID", "ORCHAPOD_NODE_ID",
-                     "ORCHAPOD_MAX_COST_USD", "ORCHAPOD_RESUME_CHECKPOINT_URI"], "the executor sets it per node"),
+                     "ORCHAPOD_MAX_COST_USD", "ORCHAPOD_RESUME_CHECKPOINT_URI", "ORCHAPOD_ATTEMPT"],
+                    "the executor sets it per node"),
     "ORCHAPOD_CHECKPOINT_STEPS": "SDK default 100; the executor does not forward it",
 }
 READ = re.compile(r"""os\.(?:environ\.get|getenv|environ\.setdefault)\(\s*["']([A-Z][A-Z0-9_]*)["']"""

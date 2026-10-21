@@ -28,7 +28,7 @@ from api.database import get_session
 from api.executor import run_workflow as executor
 from api.executor.dag import workflow_to_graph_json
 from api.models.db import AgentRun, Run, RunStatus, Workflow
-from api.routes.runs import TERMINAL, run_summary
+from api.routes.runs import TERMINAL, cancel_token, run_summary
 from api.services import budget, ratelimit
 from api.services.redact import without_secrets
 
@@ -55,7 +55,8 @@ async def plan(body: PlanRequest, db: Session, scale: Scale):
 
 @router.post("/run", status_code=201, dependencies=[Depends(ratelimit.limit("run"))])
 async def run(body: RunRequest, db: Session, scale: Scale):
-    """503 kill switch; 422 {detail, errors} when the plan fails validation; 402 when its estimate is over budget."""
+    """503 kill switch; 422 {detail, errors} when the plan fails validation; 402 when its estimate is over budget.
+    → 201 {run_id, workflow_id, estimate, cancel_token}: the token is returned once; an anonymous cancel needs it."""
     if budget.kill_switch():
         raise HTTPException(status_code=503, detail="the kill switch is on (ORCHAPOD_KILL_SWITCH)")
     errors, _, estimate = planner.review(body.plan)
@@ -72,10 +73,11 @@ async def run(body: RunRequest, db: Session, scale: Scale):
     run = Run(workflow_id=workflow.id, user_id=workflow.user_id, status=RunStatus.PROVISIONING_GPU)
     db.add(run)
     await db.flush()
-    db.add(AgentRun(run_id=run.id, intent=body.intent, plan=plan, estimate=estimate))
+    token, kept = cancel_token(run.id)
+    db.add_all([AgentRun(run_id=run.id, intent=body.intent, plan=plan, estimate=estimate), kept])
     await db.commit()  # the executor reads the run in its own session
     executor.launch(run.id, scale)
-    return {"run_id": run.id, "workflow_id": workflow.id, "estimate": estimate}
+    return {"run_id": run.id, "workflow_id": workflow.id, "estimate": estimate, "cancel_token": token}  # once
 
 
 @router.get("/runs/{run_id}/report")

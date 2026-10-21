@@ -35,6 +35,7 @@ async def lifespan(app: FastAPI):
     await event_bus.connect()
     async with AsyncSessionLocal() as db:
         await sweep(db)  # runs a restart left mid-flight fail; their pods are terminated
+    await internal.resume_ttls()  # endpoints past their expiry are deleted; the others get their timers back
     # MinIO in dev starts without the bucket; off the event loop, so a slow or absent store never delays startup
     asyncio.get_running_loop().run_in_executor(None, storage.ensure_bucket_exists)
 

@@ -11,9 +11,10 @@ from __future__ import annotations
 import re
 
 REDACTED = "[redacted]"
-# words of the key, after camelCase and kebab-case become snake_case; token only as the last word (token_factory and
-# token_count are names and counts)
-_SECRET = re.compile(r"(?:^|_)(?:api_?key|secret|password|authorization)(?:_|$)|(?:^|_)token$")
+# words of the key, after camelCase (acronyms too: HFToken → hf_token) and kebab-case become snake_case; token only as
+# the last word (token_factory and token_count are names and counts)
+_SECRET = re.compile(r"(?:^|_)(?:api_?key|access_?key|secret|password|authorization)(?:_|$)|(?:^|_)token$")
+_WORDS = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 _ENV_NAME = re.compile(r"[A-Z][A-Z0-9_]*")
 
 
@@ -47,7 +48,7 @@ def _drop(value):
 
 
 def _secret(key, value) -> bool:
-    k = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", str(key)).lower().replace("-", "_")
+    k = _WORDS.sub("_", str(key)).lower().replace("-", "_")
     if k.endswith("_env"):
         if isinstance(value, str) and _ENV_NAME.fullmatch(value):
             return False  # it names where the secret is, not the secret

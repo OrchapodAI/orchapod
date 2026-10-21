@@ -172,7 +172,7 @@ The other templates need `hf-download quantize data-prep judge-eval` (maths), `w
 | Per UTC day | $15 | `ORCHAPOD_MAX_DAY_USD` |
 | Serverless Job timeout | 1 hour | fixed |
 | Node backstop timeout | 5,400 s | `ORCHAPOD_NODE_TIMEOUT_S` |
-| Endpoint keep-alive | 30 min, at most 120 (TODO(D8): deletion at expiry is not wired to Nebius yet, so delete a live endpoint by hand; an L40S left up costs $1.55/h) | `keep_alive_min` on `vllm-serve` |
+| Endpoint keep-alive | 30 min, at most 120 (the API deletes the endpoint at expiry; TODO(D8): verify on a live endpoint) | `keep_alive_min` on `vllm-serve` |
 | Compare streams in flight | 4 | `ORCHAPOD_MAX_COMPARES` |
 | Kill switch | off | `ORCHAPOD_KILL_SWITCH=1` |
 | Anonymous visitors | caps × 0.1 | `ORCHAPOD_ANON_SCALE` |

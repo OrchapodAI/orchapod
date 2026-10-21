@@ -26,6 +26,7 @@ from api import config
 from api.agent.planner import tf_base
 from api.database import get_session
 from api.models.db import Artifact, ArtifactKind
+from api.routes.internal import _expiry, _live
 from api.services import budget, ratelimit
 from packages.providers.base import ProviderError
 from packages.providers.tokenfactory import TokenFactory
@@ -128,13 +129,13 @@ async def _key(db: AsyncSession, ref: ModelRef) -> str:
 
 
 async def _registered(db: AsyncSession, url: str) -> bool:
-    """An endpoint our vllm-serve registered (its base URL, with or without /v1) that has neither expired nor been deleted."""
+    """An endpoint our vllm-serve registered (its base URL, with or without /v1) that has not expired, been deleted, or
+    been superseded by a later registration of the same endpoint."""
     root = url.removesuffix("/v1")
     rows = await db.scalars(select(Artifact).where(Artifact.kind == ArtifactKind.ENDPOINT,
                                                    Artifact.uri.in_([root, root + "/", root + "/v1", root + "/v1/"])))
     now = datetime.now(timezone.utc)
-    return any(a.meta.get("expires_at") and not a.meta.get("deleted_at")
-               and datetime.fromisoformat(a.meta["expires_at"]) > now for a in rows)
+    return any(_live(a.meta) and _expiry(a.meta) > now for a in rows)
 
 
 async def _both(finishes: list) -> None:

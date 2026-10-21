@@ -32,7 +32,8 @@ Every node is a Docker container that:
 | `ORCHAPOD_INTERNAL_SECRET` | Sent by the SDK as `X-Orchapod-Secret` on every /internal call |
 | `ORCHAPOD_MAX_COST_USD` | Node budget: the smaller of the run and day budgets left; `cost.add` raises `BudgetExceeded` past it |
 | `STUB` | `1` = deterministic outputs, no paid calls |
-| Provider keys | `NEBIUS_API_KEY`, `NEBIUS_BASE_URL`, `TAVILY_API_KEY`, `HF_TOKEN`, `NEBIUS_PROJECT_ID`, `NEBIUS_IAM_TOKEN`, `ORCHAPOD_ENDPOINT_TOKEN` (docs/contracts.md "Config") |
+| `ORCHAPOD_ATTEMPT` | This attempt of the node (a retry gets a new one); the SDK echoes it in `cost_json` |
+| Provider keys | `NEBIUS_API_KEY`, `NEBIUS_BASE_URL`, `TAVILY_API_KEY`, `HF_TOKEN`, `NEBIUS_PROJECT_ID`, `NEBIUS_IAM_TOKEN` (vllm-serve only), `ORCHAPOD_ENDPOINT_TOKEN` (docs/contracts.md "Config") |
 
 ## Artifact addressing
 
@@ -75,7 +76,7 @@ if __name__ == "__main__":
 
 Only through `packages.providers`: `TokenFactory(on_usage=cost.add).chat(messages, model, json_schema=schema)` and `Tavily(on_usage=cost.add).extract(urls)`. The clients own retries, the $ of every call (`orchapod.prices.PRICES`; an unpriced model is refused before anything is sent), the rule that `NEBIUS_API_KEY` only goes to `NEBIUS_BASE_URL`, and `STUB=1` (deterministic fakes, no network). Every failure is a `ProviderError`; log `str(e)` as the node's last ERROR line.
 
-Cost, metrics and exit (docs/contracts.md "Node SDK"): record each billed call with `cost.add(provider, model, in_tokens, out_tokens, usd=None, **extra)` (clients take `on_usage=cost.add`) and call `io.write_metrics({...})` once. After `io.read_inputs()` the SDK writes `cost_json` at any exit: normal, an uncaught exception (logged as ERROR) or SIGTERM, which it raises as `SystemExit(143)` so your `finally` blocks run — cancel remote jobs there. Then it writes `logs` (kind `log`): the last 5,000 lines the node logged through `log`, as JSONL `{ts, level, message}`, so a finished run keeps its logs after the live stream is gone. The name `logs` is reserved: `write_output` refuses it. Cancel and the `ORCHAPOD_NODE_TIMEOUT_S` backstop (5400 s) send SIGTERM and kill after 30 s; a failed node's error is `exit <code>: <last log.error line>`; `POST /runs/{id}/nodes/{node_id}/retry` re-runs the same NodeRun and continues downstream.
+Cost, metrics and exit (docs/contracts.md "Node SDK"): record each billed call with `cost.add(provider, model, in_tokens, out_tokens, usd=None, **extra)` (clients take `on_usage=cost.add`) and call `io.write_metrics({...})` once. After `io.read_inputs()` the SDK writes `cost_json` at any exit: normal, an uncaught exception (logged as ERROR) or SIGTERM, which it raises as `SystemExit(143)` so your `finally` blocks run — cancel remote jobs there. It never waits for your worker threads: cost_json goes out at SIGTERM and as soon as main ends, and calls still in flight then add their spend at exit. Then it writes `logs` (kind `log`): the last 5,000 lines the node logged through `log`, as JSONL `{ts, level, message}`, so a finished run keeps its logs after the live stream is gone. The name `logs` is reserved: `write_output` refuses it. Cancel and the `ORCHAPOD_NODE_TIMEOUT_S` backstop (5400 s) send SIGTERM and kill after 30 s; a failed node's error is `exit <code>: <last log.error line>`; `POST /runs/{id}/nodes/{node_id}/retry` re-runs the same NodeRun and continues downstream.
 
 ## Adding a new node
 

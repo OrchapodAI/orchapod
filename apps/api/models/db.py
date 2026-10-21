@@ -131,6 +131,14 @@ class AgentRun(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
 
 
+class CancelToken(SQLModel, table=True):
+    """The SHA-256 of the token start and /agent/run return once: an anonymous POST /runs/{id}/cancel needs the token, so
+    visitors cannot cancel each other's runs. Its own table, so existing databases gain it at startup (create_all)."""
+    __tablename__ = "cancel_token"
+    run_id: uuid.UUID = Field(foreign_key="run.id", primary_key=True)
+    sha256:  str
+
+
 class Spend(SQLModel, table=True):
     """Control-plane spend (planner, reporter, /compare): the per-UTC-day ledger the day cap counts (R6)."""
     id:         Optional[int] = Field(default=None, primary_key=True)

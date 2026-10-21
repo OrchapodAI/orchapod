@@ -20,15 +20,20 @@ import logging
 import re
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
+from time import monotonic
 from typing import Awaitable, Callable
 
+from sqlalchemy import func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from api import config
 from api.executor.dag import DAGNode, compile_dag
-from api.models.db import NodeRun, NodeStatus, Run, RunStatus, Workflow, utcnow
+from api.models.db import Artifact, ArtifactKind, NodeRun, NodeStatus, Run, RunStatus, Workflow, utcnow
 from api.services import budget
+
+from packages.providers.nebius import TOKEN  # what may go into an Authorization header: no space, no newline
 
 Broadcast = Callable[[uuid.UUID, dict], Awaitable[None]]
 
@@ -43,8 +48,8 @@ _inflight: dict[uuid.UUID, set[asyncio.Future]] = {}
 _SDK_LINE = re.compile(r"\[[^\]]+\] \[(INFO|WARN|ERROR|PROGRESS)\] ")
 _REF = re.compile(r"\$\{\{\s*(?:inputs\.(\w+)|nodes\.([^.\s}]+)\.outputs\.(\w+))\s*\}\}")
 
-# contracts "Config": exactly these reach containers, with config's defaults.
-FORWARD = ("NEBIUS_API_KEY NEBIUS_BASE_URL TAVILY_API_KEY HF_TOKEN NEBIUS_PROJECT_ID NEBIUS_IAM_TOKEN ORCHAPOD_ENDPOINT_TOKEN "
+# contracts "Config": exactly these reach containers, with config's defaults; NEBIUS_IAM_TOKEN only vllm-serve (_iam_token).
+FORWARD = ("NEBIUS_API_KEY NEBIUS_BASE_URL TAVILY_API_KEY HF_TOKEN NEBIUS_PROJECT_ID ORCHAPOD_ENDPOINT_TOKEN "
            "ORCHAPOD_R2_ENDPOINT ORCHAPOD_R2_REGION ORCHAPOD_R2_ACCESS_KEY ORCHAPOD_R2_SECRET_KEY ORCHAPOD_R2_BUCKET "
            "ORCHAPOD_CONTROL_URL STUB").split()
 
@@ -131,6 +136,8 @@ async def run_workflow(run_id: uuid.UUID, db: AsyncSession, broadcast: Broadcast
                 continue
             if budget.kill_switch():
                 raise NodeFailed("kill switch")
+            if scale < 1 and budget.gpu_nodes([node.type]):  # behind the routes' gpu_guard: the public never rents one
+                raise NodeFailed(f"admin only: {node.type} runs on a rented GPU")
             max_cost, which, cap = await budget.reserve(db, run, scale)  # granted to this node until it ends
             if max_cost <= 0:
                 raise NodeFailed(f"budget: {which} cap ${cap:g} reached")
@@ -197,7 +204,8 @@ async def _execute_node(
     node_run.inputs = _resolve_inputs(dag_node.inputs, run, rows)  # resolved inputs = lineage
 
     # cpu and api nodes run on LocalDocker; gpu nodes on a GPU provider
-    runtime = NODE_REGISTRY.get(NodeType(dag_node.type), {}).get("runtime", "gpu")
+    row = NODE_REGISTRY.get(NodeType(dag_node.type), {})
+    runtime = row.get("runtime", "gpu")
     resources = ResourceSpec(**dag_node.resources) if isinstance(dag_node.resources, dict) and dag_node.resources else ResourceSpec()
     try:
         provider, gpu_spec = await (pick_local_docker if runtime in ("cpu", "api") else pick_provider)(resources)
@@ -205,7 +213,12 @@ async def _execute_node(
         raise NodeFailed(f"no {runtime} provider: {e}")
 
     env = _build_env(node_run, max_cost)
+    # Only an api node whose container creates Nebius endpoints (vllm-serve) gets a token: gpu nodes run third-party model
+    # code as Nebius Jobs, and a project-wide token there could rent more GPUs.
+    if runtime == "api" and row.get("rents_gpu") and config.env("STUB") != "1":
+        env["NEBIUS_IAM_TOKEN"] = await _iam_token()
     image = f"{config.env('ORCHAPOD_IMAGE_PREFIX')}/{dag_node.type}:latest"
+    started = monotonic()
     prov = asyncio.ensure_future(provider.provision(gpu_spec=gpu_spec, image=image, env=env))
     try:
         pod = await asyncio.shield(prov)  # a cancel mid-provision (image pull, jobs.create) leaves it running
@@ -217,6 +230,8 @@ async def _execute_node(
         raise NodeFailed(f"provision failed: {e}")
 
     stream = asyncio.create_task(_stream_stdout(provider, pod, node_run, broadcast))
+    bill = None if runtime in ("cpu", "api") else (  # once the pod is gone, inside its shielded teardown
+        lambda: _bill_gpu_time(run.id, node_run.id, env["ORCHAPOD_ATTEMPT"], provider, gpu_spec, pod, started, broadcast))
     try:
         node_run.gpu_provider = run.gpu_provider = provider.name
         node_run.gpu_pod_id = run.gpu_pod_id = pod.pod_id
@@ -225,20 +240,49 @@ async def _execute_node(
     except TimeoutError:
         raise NodeFailed(f"timeout after {timeout:g} s")
     finally:
-        await _terminate(provider, pod, run.id)  # cancel/timeout: SIGTERM, 30 s grace, kill; after exit: cleanup
+        await _terminate(provider, pod, run.id, bill)  # cancel/timeout: SIGTERM, 30 s grace, kill; after exit: cleanup
         await asyncio.wait({stream}, timeout=5)  # drain the tail of stdout
         stream.cancel()
 
     await db.refresh(node_run)  # outputs and the last ERROR line arrive through /internal webhooks
-    if exit_code != 0:
-        raise NodeFailed(f"exit {exit_code}: {node_run.error}" if node_run.error else f"exit {exit_code}")
+    if exit_code != 0:  # the node's last ERROR line, else why its provider ended the pod (platform-w5's pod.error)
+        raise NodeFailed(f"exit {exit_code}: {node_run.error}" if node_run.error
+                         else getattr(pod, "error", None) or f"exit {exit_code}")
     return node_run.outputs or {}
 
 
-def _terminate(provider, pod, run_id: uuid.UUID) -> asyncio.Future:
+async def _bill_gpu_time(run_id: uuid.UUID, node_run_id: uuid.UUID, attempt: str, provider, gpu_spec, pod,
+                         started: float, broadcast: Broadcast) -> None:
+    """A gpu attempt costs max(its pod's wall time at the provider's hourly quote, what the node reported) (contracts
+    "Run state machine"). Once the pod is gone the executor records its bill (one per attempt), adding only what exceeds the node's
+    reports so far; a later cost_json (a Nebius job's SIGTERM flush lands after terminate returns) adds only what
+    exceeds the bill (/internal/artifact). It runs in the teardown task, so a second Cancel cannot skip it, and in a
+    session of its own, so a failure never touches the executor's run and NodeRuns. Never raises.
+    ponytail: provision to teardown, so queueing and a wait for capacity count too (over, never under); a pod that a
+    cancel caught still provisioning is not billed, and vllm-serve's endpoint bills itself (its lifecycle is /internal/ttl)."""
+    from api import database
+    try:
+        hours = (monotonic() - started) / 3600
+        bill = {"wall_usd": round(hours * (await provider.quote(gpu_spec)).price_per_hour, 6),
+                "gpu_hours": round(hours, 4), "billed_by": "executor", "attempt": attempt}
+        async with budget.cost_lock, database.AsyncSessionLocal() as db:
+            earlier = await budget.attempt_costs(db, node_run_id, attempt)
+            usd = round(budget.attempt_cost(earlier + [bill]) - budget.attempt_cost(earlier), 6)
+            db.add(Artifact(node_run_id=node_run_id, name="cost_json", kind=ArtifactKind.METRICS,
+                            uri=f"{provider.name}:{pod.pod_id}", meta={"usd": usd, **bill}))
+            total = await db.scalar(update(Run).where(Run.id == run_id).values(cost_usd=func.coalesce(Run.cost_usd, 0)
+                                                                                + Decimal(str(usd)))
+                                    .returning(Run.cost_usd).execution_options(synchronize_session=False))
+            await db.commit()
+        await broadcast(run_id, {"type": "run_cost", "cost_usd": float(total)})
+    except Exception:
+        log.exception("gpu time of %s %s not billed", provider.name, pod.pod_id)
+
+
+def _terminate(provider, pod, run_id: uuid.UUID, then=None) -> asyncio.Future:
     """Teardown runs as its own task, tracked under its run, and is awaited through shield, so a second
-    cancel cannot interrupt the SIGTERM grace; it never raises."""
-    return asyncio.shield(_track(run_id, asyncio.ensure_future(_terminate_now(provider, pod))))
+    cancel cannot interrupt the SIGTERM grace, nor `then` (a gpu pod's bill) after it; it never raises."""
+    return asyncio.shield(_track(run_id, asyncio.ensure_future(_terminate_now(provider, pod, then))))
 
 
 async def _terminate_when_up(provider, provision: asyncio.Future) -> None:
@@ -249,11 +293,13 @@ async def _terminate_when_up(provider, provision: asyncio.Future) -> None:
     await _terminate_now(provider, pod)
 
 
-async def _terminate_now(provider, pod) -> None:
+async def _terminate_now(provider, pod, then=None) -> None:
     try:
         await provider.terminate(pod)
     except Exception as e:
         log.warning("terminate %s failed: %s", pod.pod_id, e)
+    if then:
+        await then()
 
 
 async def _stream_stdout(provider, pod, node_run: NodeRun, broadcast: Broadcast) -> None:
@@ -297,12 +343,42 @@ def _build_env(node_run: NodeRun, max_cost_usd: float) -> dict[str, str]:
         "ORCHAPOD_NODE_OUTPUTS_DIR": "/tmp/orchapod_outputs",
         "ORCHAPOD_RUN_ID":           str(node_run.run_id),
         "ORCHAPOD_NODE_ID":          node_run.node_id,
+        "ORCHAPOD_ATTEMPT":          budget.attempt_of(node_run),  # the SDK echoes it in cost_json
     })
     # Retry reuses the row and keeps its outputs, so the newest checkpoint resumes training.
     checkpoints = sorted(k for k in (node_run.outputs or {}) if k.startswith("checkpoint_step_"))
     if checkpoints:
         env["ORCHAPOD_RESUME_CHECKPOINT_URI"] = node_run.outputs[checkpoints[-1]]
     return env
+
+
+IAM_TIMEOUT_S = 10
+
+
+async def _iam_token() -> str:
+    """NEBIUS_IAM_TOKEN for an api node that creates Nebius endpoints: a fresh one (tokens expire) from the nebius CLI on
+    the API host (R15's profile; node images have no CLI), whose last stdout line must look like a token; the API's own
+    NEBIUS_IAM_TOKEN only on a host without the CLI. NodeFailed otherwise, with a fixed message: node errors are public,
+    and the CLI's stderr can name profiles, tenants and projects. The token is never logged."""
+    try:
+        cli = await asyncio.create_subprocess_exec("nebius", "iam", "get-access-token", stdout=asyncio.subprocess.PIPE,
+                                                   stderr=asyncio.subprocess.PIPE)
+    except OSError:
+        if TOKEN.fullmatch(token := config.env("NEBIUS_IAM_TOKEN").strip()):
+            return token
+        raise NodeFailed("no Nebius IAM token: the API host has no nebius CLI, and NEBIUS_IAM_TOKEN is blank or malformed")
+    try:
+        out, _ = await asyncio.wait_for(cli.communicate(), IAM_TIMEOUT_S)
+    except TimeoutError:
+        cli.kill()
+        await cli.wait()
+        raise NodeFailed(f"no Nebius IAM token: nebius iam get-access-token took over {IAM_TIMEOUT_S:g} s")
+    if cli.returncode:
+        raise NodeFailed(f"no Nebius IAM token: nebius iam get-access-token exited {cli.returncode}")
+    token = (out.decode(errors="replace").strip().splitlines() or [""])[-1].strip()
+    if not TOKEN.fullmatch(token):
+        raise NodeFailed("no Nebius IAM token: nebius iam get-access-token printed no token")
+    return token
 
 
 def node_order(workflow: Workflow | None, run: Run) -> list[str]:
@@ -319,7 +395,9 @@ def node_order(workflow: Workflow | None, run: Run) -> list[str]:
 
 async def sweep(db: AsyncSession) -> None:
     """At API start: runs left mid-flight fail; a running node's pod is terminated so the node
-    cancels its remote job, and that node (or else the first unfinished one) fails "control plane restarted"."""
+    cancels its remote job, and that node (or else the first unfinished one) fails "control plane restarted".
+    ponytail: a Nebius job or endpoint that no row names (a create lost to a SIGTERM) is not swept; deleting our
+    "orchapod-" names needs platform-w5's jobs.list()/endpoints.list() and a rule for a project two APIs share."""
     from api.services.provider_selector import get_providers, pick_local_docker
     from packages.providers.base import Pod
 

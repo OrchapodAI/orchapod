@@ -80,10 +80,19 @@ def test_every_todo_names_its_day():
 
 
 def test_unbuilt_make_targets_are_marked_todo():
-    # Their scripts are not written yet; drop this test when scripts/e2e_demo.py, e2e_agent.py and seed-golden-run.py land.
+    # `make e2e` needs the real mode of scripts/e2e_demo.py (only --stub exists); e2e_agent.py and seed-golden-run.py are not
+    # written yet. Drop this test when all three targets work.
     for line in README.splitlines():
         if re.search(r"\bmake (e2e|agent-e2e|demo)\b", line):
-            assert "TODO(D8)" in line, f"the target has no script yet: {line[:70]}"
+            assert "TODO(D8)" in line, f"the target does not work yet: {line[:70]}"
+
+
+def test_unmeasured_claims_carry_a_todo():
+    # Drop each needle when the golden run measures it (D8).
+    for needle in ("An evaluation you can trust", "The guard checks the estimate"):
+        line = next((ln for ln in README.splitlines() if needle in ln), "")
+        assert line, f"the README line with {needle!r} is missing"
+        assert "TODO(D8)" in line, f"nothing measured yet, so the line needs TODO(D8): {needle}"
 
 
 def test_make_targets_and_env_vars_exist():

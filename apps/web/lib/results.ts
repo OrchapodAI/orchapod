@@ -1,4 +1,4 @@
-import type { DataPrepMetrics, EvalSummary, ModelRef, RunSummary } from "./types";
+import type { DataPrepMetrics, EvalSummary, ModelRef, RunSummary, WsEvent } from "./types";
 
 // What a run produced, read from GET /runs/{id}/summary (artifact metas come from the DB; no storage fetch).
 
@@ -43,4 +43,43 @@ export function modelRefsOf(s: RunSummary): RunModelRef[] {
                      base_model: typeof m.base_model === "string" ? m.base_model : null, expires_at });
   }
   return refs;
+}
+
+/** One point of the loss chart; valid_loss where the fine-tune reports it (Token Factory checkpoints). */
+export interface ProgressPoint { node_id: string; step: number; loss?: number; valid_loss?: number }
+
+/** Node types that train, so a run with none of them has no loss to chart. */
+export const TRAINERS = new Set(["tf-finetune", "unsloth-train"]);
+
+type LossSource = { node_id: string; rows?: unknown[]; url?: string };
+
+/** Where each fine-tune node's loss_curve is: its metrics meta, else the file behind download_url (unsloth-train's
+ *  train_metrics_json carries no meta, and write_metrics cuts the meta to {truncated: true} above 16 KB). */
+export function lossSources(s: RunSummary): LossSource[] {
+  return s.nodes.filter((n) => TRAINERS.has(n.type)).flatMap(({ node_id }): LossSource[] => {
+    const a = artifact(s, node_id, "metrics_json") ?? artifact(s, node_id, "train_metrics_json");
+    const rows = a?.meta?.loss_curve;
+    return Array.isArray(rows) ? [{ node_id, rows }] : a?.download_url ? [{ node_id, url: a.download_url }] : [];
+  });
+}
+
+const point = (node_id: string, step: number, loss: unknown, valid_loss?: unknown): ProgressPoint => ({
+  node_id, step, ...(typeof loss === "number" ? { loss } : {}), ...(typeof valid_loss === "number" ? { valid_loss } : {}),
+});
+
+/** The loss chart: each curve's rows (tf-finetune {step, train_loss, valid_loss}; unsloth-train {step, loss}), then live
+ *  `progress` events for steps the curves do not have, by step. ponytail: two fine-tune nodes share one line. */
+export function lossPoints(curves: { node_id: string; rows: unknown[] }[], events: WsEvent[]): ProgressPoint[] {
+  const points = new Map<string, ProgressPoint>();
+  const add = (p: ProgressPoint) => {
+    const key = `${p.node_id}:${p.step}`;
+    if (!points.has(key) && ("loss" in p || "valid_loss" in p)) points.set(key, p);
+  };
+  for (const { node_id, rows } of curves) {
+    for (const r of rows as Record<string, unknown>[]) {
+      if (typeof r?.step === "number") add(point(node_id, r.step, r.loss ?? r.train_loss, r.valid_loss));
+    }
+  }
+  for (const e of events) if (e.type === "progress") add(point(e.node_id, e.step, e.loss));
+  return [...points.values()].sort((a, b) => a.step - b.step);
 }

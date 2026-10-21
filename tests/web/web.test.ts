@@ -7,7 +7,7 @@ import { yamlValue, buildYamlFromGraph, planYaml } from "../../apps/web/lib/work
 import { api, apiDate, explainError, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
 import { applyCompareEvent, applyRunEvent, canRetry } from "../../apps/web/lib/runEvents.ts";
 import { defaultInputs, NODE_FORMS } from "../../apps/web/lib/nodeForms.ts";
-import { datasetOf, evalOf, modelRefsOf } from "../../apps/web/lib/results.ts";
+import { datasetOf, evalOf, lossPoints, lossSources, modelRefsOf } from "../../apps/web/lib/results.ts";
 
 const node = (id: string, node_type: string, inputs: Record<string, unknown>) =>
   ({ id, position: { x: 0, y: 0 }, data: { label: id, node_type, inputs, resources: {} } }) as never;
@@ -270,4 +270,36 @@ test("a failed fetch with no error display of its own raises one readable toast"
   }
   assert.deepEqual(raised.map((e) => [e.type, e.detail]),
     [[TOAST_EVENT, "Couldn't load runs: Can't reach the Orchapod API at http://localhost:8001. Is it running?"]]);
+});
+
+test("the loss chart fills on load from each fine-tune node's loss_curve: its metrics meta, else the file behind download_url", () => {
+  const tf = [{ step: 1, train_loss: 1.0, valid_loss: 1.0 }, { step: 2, train_loss: 0.5, valid_loss: 0.5 }]; // tf-finetune/run.py:140
+  const run = summary([nodeRun("prep", "data-prep"), nodeRun("tune", "tf-finetune"), nodeRun("train", "unsloth-train"),
+                       nodeRun("big", "tf-finetune")], [
+    art("prep", "metrics_json", { total: 3 }),
+    art("tune", "job", { job_id: "ftjob-1" }), art("tune", "metrics_json", { stub: true, loss_curve: tf }),
+    art("train", "train_metrics_json"), // unsloth-train/run.py:177 writes the curve into the file only
+    art("big", "metrics_json", { truncated: true }), // write_metrics keeps metadata only up to 16 KB
+  ]);
+  assert.deepEqual(lossSources(run), [
+    { node_id: "tune", rows: tf },
+    { node_id: "train", url: "/artifacts/train-train_metrics_json/download" },
+    { node_id: "big", url: "/artifacts/big-metrics_json/download" },
+  ]);
+  assert.deepEqual(lossPoints([{ node_id: "tune", rows: tf }], []), [
+    { node_id: "tune", step: 1, loss: 1.0, valid_loss: 1.0 }, { node_id: "tune", step: 2, loss: 0.5, valid_loss: 0.5 },
+  ]);
+  assert.deepEqual(lossSources(summary([nodeRun("prep", "data-prep")], [art("prep", "metrics_json", { total: 3 })])), []);
+});
+
+test("live progress events append to the loss curve, and a step the curve already has is drawn once", () => {
+  const unsloth = [{ step: 10, loss: 2.4 }, { step: 20, loss: 1.9 }]; // unsloth-train/run.py:177
+  const progress = (node_id: string, step: number, loss: number | null) => ({ type: "progress" as const, node_id, step, total: 500, loss });
+  const events = [progress("train", 20, 1.9), progress("train", 30, 1.5), progress("prep", 3, null),
+                  { type: "log" as const, node_id: "train", ts: "", level: "INFO", message: "loss=9" }];
+  assert.deepEqual(lossPoints([{ node_id: "train", rows: unsloth }], events as never), [
+    { node_id: "train", step: 10, loss: 2.4 }, { node_id: "train", step: 20, loss: 1.9 }, { node_id: "train", step: 30, loss: 1.5 },
+  ]);
+  // a run still training has no metrics yet: the events alone draw the chart, as before
+  assert.deepEqual(lossPoints([], [progress("train", 10, 2.4)] as never), [{ node_id: "train", step: 10, loss: 2.4 }]);
 });

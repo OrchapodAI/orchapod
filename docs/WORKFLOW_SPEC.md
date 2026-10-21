@@ -31,7 +31,7 @@ nodes:
 ## The 7 node types
 
 ### `data-prep`
-Load, validate, split, reformat dataset to ChatML. CPU-only (no GPU pod).
+Load (`r2://` JSONL unless `.csv`; `hf://<id>` or `<org>/<name>` with `hf_config`/`hf_split`), convert (`chatml` | `alpaca` | `sharegpt` | `qa` | `structured`), drop rows that break Token Factory's chat rules, exact + near dedupe, split with seed 42 stratified by `source_url` (`train_split`, `test_split`) → `dataset`, `train_jsonl`, `eval_jsonl`, `test_jsonl` plus metrics. CPU-only; `STUB=1` needs no network.
 
 ### `unsloth-train`
 LoRA SFT via Unsloth. 2-5x faster, ~80% less VRAM than vanilla HF.

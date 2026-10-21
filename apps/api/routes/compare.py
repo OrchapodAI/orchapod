@@ -19,15 +19,16 @@ from typing import Annotated, Iterator, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.agent.planner import tf_base
 from api.database import get_session
 from api.models.db import Artifact, ArtifactKind
 from api.services import budget
 from packages.providers.base import ProviderError
-from packages.providers.tokenfactory import TF_BASE, TokenFactory
+from packages.providers.tokenfactory import TokenFactory
 
 log = logging.getLogger("api.compare")
 router = APIRouter()
@@ -35,9 +36,13 @@ router = APIRouter()
 Session = Annotated[AsyncSession, Depends(get_session)]
 Scale = Annotated[float, Depends(budget.scale)]  # 1 for X-Orchapod-Admin, else ORCHAPOD_ANON_SCALE (R7)
 
-# Answers still streaming: each one runs to its end and records its spend even when the client has hung up.
-# ponytail: two worker threads per compare while it streams; D6 rate limits bound how many run at once.
+# Compares still streaming: each answer runs to its end and records its spend, also when the client has hung up or
+# the request was refused after the other answer had started. ponytail: the client bills after the last chunk, so an
+# answer that breaks mid-stream records $0 of what Token Factory charged for it.
 _streams: set[asyncio.Task] = set()
+# Each compare holds two worker threads until both answers end; past this many, 503, so the planner and reporter
+# (asyncio.to_thread too) always find a thread.
+_slots = asyncio.Semaphore(int(os.environ.get("ORCHAPOD_MAX_COMPARES") or 4))
 
 
 class ModelRef(BaseModel):
@@ -50,7 +55,7 @@ class ModelRef(BaseModel):
 
 class Message(BaseModel):
     role: Literal["system", "user", "assistant"]
-    content: str = Field(max_length=8000)
+    content: str
 
 
 class CompareRequest(BaseModel):
@@ -58,44 +63,57 @@ class CompareRequest(BaseModel):
     refs: list[ModelRef] = Field(min_length=2, max_length=2)
     max_tokens: int = Field(512, ge=1, le=2048)
 
+    @model_validator(mode="after")
+    def _short(self):
+        """At most 16,000 characters of prompt, so one compare's worst case stays at cents."""
+        if sum(len(m.content) for m in self.messages) > 16_000:
+            raise ValueError("the messages hold more than 16,000 characters")
+        return self
+
 
 @router.post("")
 async def compare(body: CompareRequest, db: Session, scale: Scale):
     """Both answers start before the 200, so a refusal is an HTTP error, never a broken stream: 422 for a ref outside the
     key↔URL pairs or a request Token Factory rejects (an unpriced model, an unknown one); 502 when a model call fails;
-    402/503 for the day budget and the kill switch. The same decoding for both: temperature 0, max_tokens."""
+    402/503 for the day budget and the kill switch, 503 too while ORCHAPOD_MAX_COMPARES compares are in flight. The same
+    decoding for both: temperature 0, max_tokens."""
     await budget.guard(db, scale)
     keys = [await _key(db, ref) for ref in body.refs]
+    if _slots.locked():
+        raise HTTPException(status_code=503, detail="too many compares in flight; try again in a moment")
+    await _slots.acquire()  # held until both answers have ended (_both)
     messages = [m.model_dump() for m in body.messages]
     spent: list[list[float]] = [[], []]
     answers = [TokenFactory(on_usage=budget.meter(spent[i])).stream_chat(
         messages, ref.model, base_url=ref.base_url, api_key=key, base_model=ref.base_model, max_tokens=body.max_tokens)
         for i, (ref, key) in enumerate(zip(body.refs, keys))]
     firsts = await asyncio.gather(*(asyncio.to_thread(next, a, None) for a in answers), return_exceptions=True)
-    for i, first in enumerate(firsts):
-        if isinstance(first, BaseException):
-            for a in answers:
-                a.close()  # ponytail: an answer that had started is billed by Token Factory but not in our ledger
-            if isinstance(first, ProviderError) and first.kind == "bad_request":
-                raise HTTPException(status_code=422, detail=f"refs[{i}]: {first}")
-            log.warning("compare refs[%d] %s failed: %r", i, body.refs[i].model, first)
-            raise HTTPException(status_code=502, detail=f"refs[{i}] ({body.refs[i].model}) failed; the API log has the cause")
+    failed = next(((i, e) for i, e in enumerate(firsts) if isinstance(e, BaseException)), None)
 
     queue: asyncio.Queue = asyncio.Queue()
-    for i, (answer, first) in enumerate(zip(answers, firsts)):
-        if first is not None:
+    for i, first in enumerate(firsts):
+        if failed is None and first is not None:
             queue.put_nowait({"i": i, "delta": first})
-        task = asyncio.create_task(_finish(i, answer, queue, spent[i]))
-        _streams.add(task)
-        task.add_done_callback(_streams.discard)
-    return StreamingResponse(_sse(queue, len(answers)), media_type="text/event-stream")
+    # a refused compare still drains the answer that started, into a queue nobody reads, so its spend is recorded
+    task = asyncio.create_task(_both([_finish(i, a, queue if failed is None else asyncio.Queue(), spent[i])
+                                      for i, a in enumerate(answers)]))
+    _streams.add(task)
+    task.add_done_callback(_streams.discard)
+    if failed:
+        i, e = failed
+        if isinstance(e, ProviderError) and e.kind == "bad_request":
+            raise HTTPException(status_code=422, detail=f"refs[{i}]: {e}")
+        log.warning("compare refs[%d] %s failed: %r", i, body.refs[i].model, e)
+        raise HTTPException(status_code=502, detail=f"refs[{i}] ({body.refs[i].model}) failed; the API log has the cause")
+    return StreamingResponse(_sse(queue, len(answers)), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 async def _key(db: AsyncSession, ref: ModelRef) -> str:
     """The key the pairing rule allows for this ref: NEBIUS_API_KEY only with Token Factory, ORCHAPOD_ENDPOINT_TOKEN only
     with an endpoint registered through /internal/ttl. Anything else would hand our key (or our network) to a caller's URL."""
     url = ref.base_url.strip().rstrip("/")
-    if ref.api_key_env == "NEBIUS_API_KEY" and url == (os.environ.get("NEBIUS_BASE_URL") or TF_BASE).strip().rstrip("/"):
+    if ref.api_key_env == "NEBIUS_API_KEY" and url == tf_base():
         return os.environ.get("NEBIUS_API_KEY") or ""
     if ref.api_key_env == "ORCHAPOD_ENDPOINT_TOKEN" and await _registered(db, url):
         return os.environ.get("ORCHAPOD_ENDPOINT_TOKEN") or ""
@@ -112,6 +130,14 @@ async def _registered(db: AsyncSession, url: str) -> bool:
     now = datetime.now(timezone.utc)
     return any(a.meta.get("expires_at") and not a.meta.get("deleted_at")
                and datetime.fromisoformat(a.meta["expires_at"]) > now for a in rows)
+
+
+async def _both(finishes: list) -> None:
+    """Both answers to their end, then the compare's slot is free."""
+    try:
+        await asyncio.gather(*finishes)
+    finally:
+        _slots.release()
 
 
 async def _finish(i: int, answer: Iterator[str], queue: asyncio.Queue, spent: list[float]) -> None:

@@ -216,13 +216,17 @@ def _input_problems(key: str, value: Any, n: PlanNode, nodes: dict[str, PlanNode
     return []
 
 
+def tf_base() -> str:
+    """$NEBIUS_BASE_URL (default Token Factory) as the pairing rule compares base URLs: stripped, no trailing slash."""
+    return (os.environ.get("NEBIUS_BASE_URL") or TF_BASE).strip().rstrip("/")
+
+
 def _model_ref_problems(ref: dict) -> list[str]:
     """Inline ModelRefs pair NEBIUS_API_KEY only with Token Factory; endpoint refs come only from a vllm-serve
     model_ref output (contracts "ModelRef"), so a plan never sends our keys to a URL it chose."""
-    tf_base = (os.environ.get("NEBIUS_BASE_URL") or TF_BASE).strip().rstrip("/")
-    if ref.get("api_key_env") == "NEBIUS_API_KEY" and str(ref.get("base_url") or "").strip().rstrip("/") == tf_base:
+    if ref.get("api_key_env") == "NEBIUS_API_KEY" and str(ref.get("base_url") or "").strip().rstrip("/") == tf_base():
         return []
-    return [f"refused ModelRef: an inline ref may only pair NEBIUS_API_KEY with {tf_base}; "
+    return [f"refused ModelRef: an inline ref may only pair NEBIUS_API_KEY with {tf_base()}; "
             "endpoint refs come from a vllm-serve model_ref output"]
 
 

@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.models.db import Artifact, ArtifactKind, Spend
 from api.routes import compare as route
 from api.services import budget
+from packages.providers.base import ProviderError
 from packages.providers.tokenfactory import LIGHTNING, ULTRA, TokenFactory
 
 TF = "https://api.tokenfactory.nebius.com/v1"
@@ -87,6 +88,7 @@ async def test_streams_both_answers_side_by_side_in_stub(client, monkeypatch):
     r = await client.post("/compare", json={"messages": MESSAGES, "refs": [ref(), ref(model="nvidia/other")]})
 
     assert r.status_code == 200
+    assert (r.headers["cache-control"], r.headers["x-accel-buffering"]) == ("no-cache", "no")  # no proxy holds it back
     evs = events(r)
     text = answers(evs)
     assert text[0].startswith("stub-") and text[1].startswith("stub-") and text[0] != text[1]
@@ -149,13 +151,15 @@ async def test_an_endpoint_counts_only_while_its_registration_holds(client, db, 
     (ULTRA, 404, 422),                               # Token Factory rejects the request
     (ULTRA, 401, 502),                               # Token Factory fails
 ])
-async def test_refusals_are_http_errors_before_any_200(client, db, tf, model, status, code):
+@pytest.mark.parametrize("deltas", [["ok"], []])  # [] = the other answer ended inside its first read
+async def test_refusals_are_http_errors_before_any_200(client, db, tf, model, status, code, deltas):
     _, replies = tf
     replies[model] = (status, ["never"], {})
-    replies[LIGHTNING] = (200, ["ok"], {"prompt_tokens": 1, "completion_tokens": 1})
+    replies[LIGHTNING] = (200, deltas, {"prompt_tokens": 1_000_000, "completion_tokens": 0})
     r = await client.post("/compare", json={"messages": MESSAGES, "refs": [ref(), ref(model=model)]})
     assert r.status_code == code and "refs[1]" in r.json()["detail"]
-    assert await ledger(db) == []  # the answer that had started is closed, unread
+    await asyncio.wait_for(asyncio.gather(*route._streams), 5)
+    assert await ledger(db) == [pytest.approx(0.06)]  # the answer that had started still lands in the ledger
 
 
 async def test_a_failure_mid_stream_ends_that_answer_with_an_error(client, db, tf, monkeypatch):
@@ -164,18 +168,20 @@ async def test_a_failure_mid_stream_ends_that_answer_with_an_error(client, db, t
     real = TokenFactory.stream_chat
 
     def breaks(self, messages, model, **kw):
-        yield from real(self, messages, model, **kw)
-        if model == ULTRA:
-            raise httpx.ReadError("connection reset")
+        if model != ULTRA:
+            yield from real(self, messages, model, **kw)
+            return
+        yield "half"  # then the connection drops, as the real client sees it: before the usage chunk
+        raise ProviderError("token_factory", "server", None, "ReadError('connection reset')")
 
     monkeypatch.setattr(TokenFactory, "stream_chat", breaks)
-    replies[ULTRA] = (200, ["half"], {"prompt_tokens": 1_000_000, "completion_tokens": 0})
     r = await client.post("/compare", json={"messages": MESSAGES, "refs": [ref(), ref(model=ULTRA)]})
 
     done = {e["i"]: e for e in events(r) if e.get("done")}
     assert done[1]["usd"] is None and "mid-stream" in done[1]["error"] and "connection reset" not in r.text
     assert done[0]["usd"] == pytest.approx(10 * 0.06 / 1e6 + 10 * 0.24 / 1e6)
-    assert sorted(await ledger(db)) == [pytest.approx(done[0]["usd"]), pytest.approx(1.0)]  # billed, then broke
+    # the client bills after the last chunk, so the broken answer records $0 (ponytail in compare.py)
+    assert await ledger(db) == [pytest.approx(done[0]["usd"])]
 
 
 async def test_spend_is_recorded_when_nobody_reads_the_stream(db, tf):
@@ -197,8 +203,10 @@ async def test_kill_switch_budget_and_request_bounds(client, db, monkeypatch):
     db.add(Spend(source="planner", usd=Decimal("1.5")))  # an anonymous caller's day ($15 x 0.1) is spent
     await db.commit()
     assert (await client.post("/compare", json=body)).status_code == 402
+    too_long = [{"role": "user", "content": "x" * 5334}] * 3  # 16,002 chars in all, each message short
     for bad in ({**body, "refs": [ref()]}, {**body, "max_tokens": 0}, {**body, "max_tokens": 4096},
-                {**body, "messages": []}, {**body, "messages": [{"role": "tool", "content": "x"}]}):
+                {**body, "messages": []}, {**body, "messages": [{"role": "tool", "content": "x"}]},
+                {**body, "messages": too_long}):
         assert (await client.post("/compare", json=bad)).status_code == 422
 
 
@@ -211,3 +219,21 @@ async def test_a_ledger_that_cannot_be_written_never_hangs_the_stream(client, tf
 
     assert [e["usd"] for e in events(r) if e.get("done")] == [pytest.approx(0.06)] * 2
     assert "not in the day ledger" in caplog.text  # the money is named in the log, at ERROR
+
+
+async def test_too_many_compares_in_flight_are_503_before_the_200(client, db, tf, monkeypatch):
+    _, replies = tf
+    replies[LIGHTNING] = (200, ["ok"], {"prompt_tokens": 1, "completion_tokens": 1})
+    monkeypatch.setattr(route, "_slots", asyncio.Semaphore(1))  # ORCHAPOD_MAX_COMPARES=1
+    body = {"messages": MESSAGES, "refs": [ref(), ref()]}
+
+    assert (await client.post("/compare", json=body)).status_code == 200
+    await asyncio.wait_for(asyncio.gather(*route._streams), 5)
+    await route._slots.acquire()  # one compare still streaming
+    r = await asyncio.wait_for(client.post("/compare", json=body), 5)  # refused at once, never queued
+    assert r.status_code == 503 and "compares" in r.json()["detail"]
+    route._slots.release()
+    replies[ULTRA] = (404, [], {})  # a refused compare gives its slot back once its started answer has drained
+    assert (await client.post("/compare", json={**body, "refs": [ref(), ref(model=ULTRA)]})).status_code == 422
+    await asyncio.wait_for(asyncio.gather(*route._streams), 5)
+    assert (await client.post("/compare", json=body)).status_code == 200

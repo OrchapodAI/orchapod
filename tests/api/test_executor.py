@@ -608,6 +608,45 @@ async def test_cost_json_adds_to_run_cost(client, db, seeded_node_run):
         {"type": "run_cost", "cost_usd": 0.25}, {"type": "run_cost", "cost_usd": 0.5}]
 
 
+async def test_events_fire_only_after_their_change_is_committed(client, tmp_path, monkeypatch):
+    """A client re-reads /runs/{id}/summary on run_cost, artifact and run_status: it must see the change."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlmodel import SQLModel
+    from api.database import get_session
+    from api.main import app
+    from api.services.events import event_bus
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'events.db'}")  # its own connections
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+    sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with sessions() as s:
+        run, idle = Run(user_id=uuid.uuid4(), status=RunStatus.RUNNING), Run(user_id=uuid.uuid4())
+        s.add_all([run, idle])
+        await s.flush()
+        s.add(NodeRun(run_id=run.id, node_id="n", node_type="data-prep", status=NodeStatus.RUNNING))
+        await s.commit()
+    monkeypatch.setattr("api.database.AsyncSessionLocal", sessions)
+    app.dependency_overrides.pop(get_session)  # production's session: commits when the request ends
+
+    seen = []
+
+    async def reread(run_id, event):  # what another connection sees when the event fires
+        async with sessions() as s:
+            r = await s.get(Run, run_id)
+            names = [a.name for a in await s.scalars(select(Artifact))]
+            seen.append((event["type"], r.status.value, float(r.cost_usd or 0), names))
+
+    event_bus.publish.side_effect = reread
+    await client.post("/internal/artifact", json={"run_id": str(run.id), "node_id": "n", "artifact": {
+        "name": "cost_json", "uri": "r2://b/runs/x/n/cost_json", "kind": "metrics", "metadata": {"usd": 0.25}}})
+    await client.post(f"/runs/{idle.id}/cancel")
+    await engine.dispose()
+
+    assert seen == [("run_cost", "running", 0.25, ["cost_json"]), ("artifact", "running", 0.25, ["cost_json"]),
+                    ("run_status", "cancelled", 0.0, ["cost_json"])]
+
+
 async def test_deploy_launches_through_the_one_launcher(client, monkeypatch):
     launched = []
     monkeypatch.setattr(ex, "launch", launched.append)  # launch() registers the task cancel looks up

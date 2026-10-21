@@ -146,7 +146,7 @@ async def cancel_run(run_id: uuid.UUID, db: Session):
     if run.status not in TERMINAL:  # never started (or still stopping after 60 s)
         run.status = RunStatus.CANCELLED
         run.finished_at = utcnow()
-        await db.flush()
+        await db.commit()  # before the event: subscribers re-read the run on it
         await event_bus.publish(run_id, {"type": "run_status", "status": "cancelled"})
     return _run_out(run)
 

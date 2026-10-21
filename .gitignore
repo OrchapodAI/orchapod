@@ -15,6 +15,9 @@ node_modules/
 *.tsbuildinfo
 next-env.d.ts
 
+# pnpm 11 writes this (allowBuilds) when it ignores a build script; a local workaround that broke CI once (012ac47)
+apps/web/pnpm-workspace.yaml
+
 # Claude Code (settings.json and agents/ are committed)
 .claude/worktrees/
 .claude/settings.local.json

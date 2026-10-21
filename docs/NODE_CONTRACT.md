@@ -83,8 +83,9 @@ Cost, metrics and exit (docs/contracts.md "Node SDK"): record each billed call w
 2. Create `containers/{node-name}/run.py` (follow template above)
 3. Add input/output schemas to `packages/workflow_schema/models.py`
 4. Register in `NODE_REGISTRY` in the same file
-5. Build and push: `bash scripts/build-and-push-containers.sh`
+5. Build and push: `bash scripts/build-and-push-containers.sh` (it builds every `containers/*/Dockerfile` and pushes to `${ORCHAPOD_IMAGE_PREFIX:-ghcr.io/bangadpurva}`, so there is no node list to update)
 6. Add `{node-name}` to the `containers` matrix in `.github/workflows/ci.yml` (a test fails if it is missing): CI pushes `ghcr.io/bangadpurva/{node-name}:latest` from NebiusHackathon, the image the executor pulls (contracts R4)
+7. `make check E2E=1` also runs the stub e2e of intent #2 (`scripts/e2e_demo.py --stub --strict`; needs Docker and `make up`; orchestrator/integration only, because it rebuilds and retags the shared `orchapod/<node>:dev` images): it rebuilds every node of that template from your tree, runs them through the API and asserts the artifacts and a $0 cost
 
 Local runs use `orchapod/<node>:dev` when that image exists (`docker build -t orchapod/<node>:dev -f containers/<node>/Dockerfile .`), else `${ORCHAPOD_IMAGE_PREFIX:-ghcr.io/bangadpurva}/<node>:latest`, which docker pulls. Cancel stops a container with SIGTERM and a 30 s grace before SIGKILL. Containers run without auto-remove, so the exit code is read even when a node fails at once; the container is removed after that.
 

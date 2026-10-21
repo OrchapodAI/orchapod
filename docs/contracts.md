@@ -30,12 +30,13 @@ Contents: Node SDK · Provider interfaces · Config · Data nodes · ML nodes ·
 ### TokenFactory — packages/providers/tokenfactory.py
 - Base `NEBIUS_BASE_URL` (default https://api.tokenfactory.nebius.com/v1), key `NEBIUS_API_KEY`. wins: skeleton; four files still call the legacy https://api.studio.nebius.ai/v1.
 - Ids: `SUPER` = nvidia/nemotron-3-super-120b-a12b, `ULTRA` = nvidia/Nemotron-3-Ultra-550b-a55b, `LIGHTNING` = nvidia/Nemotron-3_5-Lightning, `NANO` = nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B.
-- `chat(messages, model=SUPER, *, temperature=0.0, max_tokens=1024, json_schema=None, thinking=None, base_url=None, api_key=None, base_model=None, **params) -> dict`
+- `chat(messages, model=SUPER, *, temperature=0.0, max_tokens=1024, json_schema=None, thinking=None, base_url=None, api_key=None, base_model=None, read_timeout=None, **params) -> dict`
+  - `read_timeout` (seconds) sets the read timeout of this call only (None = 120 s) and never reaches the body; the planner passes 300, so a long call is not re-sent and billed twice.
   - Returns `{"text": str, "parsed": dict | list | None, "model": str, "in_tokens": int, "out_tokens": int, "usd": float, "finish_reason": str}`.
   - `json_schema` → `response_format={"type": "json_schema", "json_schema": {"name": "output", "schema": json_schema, "strict": true}}`, TF's documented form (not `extra_body.guided_json`). `parsed = json.loads(text)`. Invalid JSON → `ProviderError` kind `bad_output` naming finish_reason, never retried: a temperature-0 retry repeats the truncation, so raise max_tokens or set thinking=False.
   - `thinking=False` → `chat_template_kwargs={"enable_thinking": false}`; None keeps the model's default (on for Nemotron 3). `**params` go into the request body verbatim (top_p, stop, seed, …).
   - ModelRef targets: `base_url` + `api_key` (+ `base_model`) send the same call, with the same retries, to any OpenAI-compatible URL. Off Token Factory, usd = 0 and on_usage is skipped (GPU time is billed by the hour). On Token Factory, usd = in × p_in + out × p_out per 1M from `orchapod.cost.PRICES` by `model`, else by `base_model` (LoRA names). No price → `ProviderError` kind `bad_request` before the call, so nothing is spent unpriced.
-  - Pairing rule, enforced here at the last hop as well as by backend and judge-eval: when the key equals `NEBIUS_API_KEY` and base_url is not `NEBIUS_BASE_URL`, the client sends nothing and raises `ProviderError` kind `auth`.
+  - Pairing rule, enforced here at the last hop as well as by backend and judge-eval: when the key equals `NEBIUS_API_KEY` (compared after `.strip()`) and base_url is not `NEBIUS_BASE_URL`, the client sends nothing and raises `ProviderError` kind `auth`.
 - `stream_chat(<chat args>) -> Iterator[str]` yields content deltas. It sends `stream_options={"include_usage": true}` and calls on_usage after the last chunk; retries happen only before the first chunk.
 - `files.create(path, purpose="fine-tune") -> str` (file id) · `files.content(file_id) -> bytes` (for checkpoint `result_files`).
 - `fine_tuning.create(model, training_file, validation_file=None, hyperparameters=None, suffix=None, seed=None) -> dict` (the TF job). Hyperparameters keep TF's names and defaults: lora (false, so set true), n_epochs (3), batch_size (8), learning_rate (1e-5), lora_r (8), lora_alpha (8), lora_dropout (0), packing (true), context_length (8192), warmup_ratio, weight_decay, max_grad_norm. wins: TF's OpenAPI over ORCHESTRATOR §7's `learning_rate_multiplier`, which TF does not have.
@@ -64,6 +65,7 @@ Contents: Node SDK · Provider interfaces · Config · Data nodes · ML nodes ·
 - Retried inside the client, at most 3 times: 429 (sleep Retry-After, capped at 60 s), 500/502/503/504, timeouts and connection errors, backing off 1, 2, 4 s plus up to 1 s of jitter. Still failing → rate_limit or server.
 - Creates (files.create, fine_tuning.create, lora.deploy, jobs.create, endpoints.create) retry only on 429 and connect errors, never after a 5xx or read timeout, so a lost response never starts a second paid job.
 - Not retried: 400/404/409/422 → bad_request; 401/403 → auth (after Nebius's one IAM refresh); 402, Tavily 432/433 and Nebius NotEnoughResources → quota.
+- A 2xx reply that cannot be read (not a JSON object, an undecodable body, a malformed stream chunk) → bad_output, not retried: the call already happened.
 - Timeouts: connect 10 s, read 120 s.
 
 ### Prices — numbers for `orchapod.cost.PRICES` (backend's SDK table, settled; synth-distilabel's stale table is deleted)

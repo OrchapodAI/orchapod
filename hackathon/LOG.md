@@ -343,3 +343,11 @@ worktrees:
   - Known: a job that waited for capacity and never ran is billed its wait (conservative).
 - 2026-10-21T17:03Z frontend-w5 merged after backend-w5 (fix rounds 0/5 by the implementer; the exact-match ruling applied by the orchestrator in b60d3d6). make check green (850 + web 30). Next: E2E=1 + ui-smoke on the merged tree (e2e_demo's cancel-after-timeout now needs the token → qa-w6), then qa-w6.
 - 2026-10-21T17:05Z INTEGRATION on d80d368 (wave 5 complete): `make check E2E=1` exit 0 — 850 passed; demo PASS; agent 3 PASS / 0 FAIL (intent #1 estimate $1.7502 now with vllm-serve start time). `make ui-smoke` 4 passed (golden path 6.1 s).
+- 2026-10-21T17:33Z qa-w6 reported DONE (6c6d0f6..83f8941 on 04af555; make check 857; $0).
+  - e2e_demo sends the cancel token, and a refused cancel fails the e2e (200 with the token / 403 without / 409 after the end).
+  - Preempted-Job drill pinned to the real Pod.error ('FAILED ContainerFailed: exit code 143, see <hidden>').
+  - Playwright 409 → Save a copy case (public-scale API).
+  - Linux: LocalDocker already adds host-gateway (now pinned); the real gap was the stub API binding 127.0.0.1 → 0.0.0.0 on Linux (unverified there; security question sent to review).
+  - Open: make ui-deps installs no Playwright browser (a fresh clone fails); README:121 stale; backend edge cases (a cancel within ms of start on SQLite logs PendingRollbackError; a cancel mid-provision + API shutdown leaked one local container, removed by name); the VM may need `ufw allow in on docker0` for rehearsals.
+  - No leftover orchapod containers (the exited complychip2 ones are not ours).
+  - Review dispatched (sonnet).

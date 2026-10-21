@@ -239,3 +239,9 @@ worktrees:
   - README AUDIT (16 gaps for devrel): non-Docker steps ~40 s and make check 16.9 s, but a fresh visitor cannot reach a first run. Causes: the clone URL needs GitHub credentials (repo private); pnpm 11 install/dev/test exit 1 without the flag; all 12 node images refuse anonymous pulls (GHCR private → Purva); the shipped .env (no STUB, scale 0.1) blocks keyless and golden-path runs.
   - Run by the orchestrator: `make ui-smoke UI_ARGS="-g ANON_SCALE"` (expect real-estate + docs disabled, movie + maths enabled).
   - Review dispatched (sonnet).
+- 2026-10-21T14:39Z ml-w4 review (opus): APPROVED.
+  - Confirmed: all of item 0; the arm64 diagnosis (scoped, harmless on amd64; f16 0.78 vs q4 0.84 is a 3-row gap at n = 50, i.e. noise, don't present it as 'q4 beats f16'); vllm-serve to contract with every pre-spend refusal and one finally owning delete-and-bill; unsloth-train faithful to spike 4; diff 257 lines shorter.
+  - Important, not blocking STUB/merge: (1) a create that reached Nebius without an id leaks a paid endpoint (≈ $37/day for an L40S) → ml-w5: log the deterministic name now, endpoints.list recovery once platform-w5 lands; (2) /internal/ttl dropped endpoint_id, and at expiry it terminated only vast.ai pods and then set node + run SUCCEEDED regardless of state.
+  - Merged, with orchestrator fixes in 18fcc8e: gpu_nodes also reads rents_gpu (else anonymous callers could start a paid endpoint); TTL expiry no longer overwrites statuses; the secrets test expects 422 for the removed hf_token and keeps a 201 case with a secret nested in synth's row_schema. make check green: 688 + web 27.
+  - The full TTL fix (endpoint_id, endpoints.delete, startup sweep) and vllm-serve's start time in the planner estimate were added to backend-w5. Removed the :ml-w4 images.
+  - Running: E2E=1 (rebuilds all :dev, incl. new vllm-serve and the arm64-fixed judge-eval), then `e2e_agent.py --stub --strict` (ml-w4 acceptance: 3 PASS).

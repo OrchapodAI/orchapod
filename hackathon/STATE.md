@@ -4,7 +4,7 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 ## Next actions (in order)
 1. Hari: NEBIUS_API_KEY and TAVILY_API_KEY into ~/src/orchapod-hack/.env — both lines still empty on disk (2026-10-21T02:37Z); the hidden-input command is in chat. Unblocks spikes 1–3 and every live check.
 2. Spikes 1–3 (hackathon/briefs/2026-10-22-spikes.md; worktrees spike1–3 at c164e4e) — dispatch the moment the key lands.
-3. Wave 3: COMPLETE. Wave 4 (hackathon/briefs/2026-10-23-wave4.md): MERGED frontend-w4, platform-w4, data-w4, backend-w4; IN_PROGRESS ml-w4, qa-w4.
+3. Wave 3: COMPLETE. Wave 4: MERGED frontend/platform/data/backend/ml-w4; REVIEW qa-w4. Wave 5 (hackathon/briefs/2026-10-24-wave5.md): REVIEW platform-w5; IN_PROGRESS backend-w5; queued frontend-w5, platform-w6 (shared fence), devrel-w5, ml-w5 (vllm-serve lost-create recovery).
 4. After wave 3: shared fence() (platform), apps/api/config.py (platform), vllm-serve rewrite (ml), `make check E2E=1` + Playwright smoke on the merged branch, D6 hardening (anonymous budget ceiling).
 5. G1 Oct 24: golden path green from the UI (needs spike 1's deploy answer) + intent #2 from the agent chat (STUB green 2026-10-21; live waits on the key).
 
@@ -45,9 +45,9 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [x] P0 D3 tf-deploy node (unsupported path → vllm-serve message; price check before deploy) — DONE (ml-w2; /v0/models = spike 1)
 - [x] P0 D4 judge-eval node: base vs tuned, identical decoding, Ultra pairwise reference-guided, position swap, R18 fencing, pairing rule, GGUF via llama-server — DONE (ml-w3; R23)
 - [x] P0 D4 quantize path for intent #3: maths shortlist, GGUF q4_k_m + keep_f16 on CPU, hf-download hardened — DONE (ml-w3); CPU timing of the full template → ml-w4
-- [ ] P1 D2 unsloth-train container: bucket I/O, SDK logs, --max-steps, pinned to spike 4's requirements.lock.txt (BOS fix; Mamba out_proj excluded; tvm-ffi restore) — TODO
+- [x] P1 D2 unsloth-train container on spike 4's lock: bucket I/O, SDK logs + loss, --max-steps, STUB — DONE (ml-w4; not built locally: ~20 GB amd64+CUDA)
 - [ ] P1 D3 vllm-serve: test `--enable-lora` with the 8B adapter (one endpoint for base + tuned); merged weights are the proven fallback — TODO
-- [ ] P0 SECURITY vllm-serve writes metadata={"api_key": …} (containers/vllm-serve/run.py) — the API now redacts meta on the way in and out (backend-w3, R22); ml-w4's vllm-serve rewrite removes it at the source — TODO(ml-w4)
+- [x] P0 SECURITY vllm-serve token out of meta at the source (ModelRef api_key_env) + API redaction — DONE (ml-w4, backend-w3)
 - [ ] P1 shared fence(): move the R18 fixpoint fence helper into packages/providers and use it from synth-distilabel, data-prep and judge-eval (one implementation, one test) — TODO (after wave 3 merges; platform)
 - [ ] P1 D3 vllm-serve spec (vllm/vllm-openai:v0.18.0-cu130, token auth) + smoke script — TODO
 - [ ] P1 D5 after G2: real Serverless Job + Endpoint; D6 eval vs base; D7 judging-window plan — TODO

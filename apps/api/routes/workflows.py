@@ -89,8 +89,9 @@ async def create_workflow(body: WorkflowCreate, db: Session):
 
 
 @router.get("", response_model=list[WorkflowOut])
-async def list_workflows(db: Session, user_id: uuid.UUID | None = None, limit: int = Query(50, ge=1, le=500)):
-    stmt = select(Workflow).order_by(Workflow.created_at.desc()).limit(limit)  # a public caller never gets every row
+async def list_workflows(db: Session, user_id: uuid.UUID | None = None, limit: int = Query(500, ge=1, le=500)):
+    """Newest first, at most 500: the runs page names up to 500 runs from this list (its golden-run filter)."""
+    stmt = select(Workflow).order_by(Workflow.created_at.desc()).limit(limit)
     if user_id:
         stmt = stmt.where(Workflow.user_id == user_id)
     result = await db.execute(stmt)

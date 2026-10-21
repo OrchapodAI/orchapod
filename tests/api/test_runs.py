@@ -126,9 +126,11 @@ async def test_public_lists_cap_limit_at_500(client, db):
     db.add_all(Workflow(user_id=uuid.uuid4(), name="w", yaml="", graph_json={}) for _ in range(51))
     await db.commit()
 
-    for path in ("/runs", "/workflows"):
-        assert len((await client.get(path)).json()) == 50
-        assert len((await client.get(path, params={"limit": 500})).json()) == 51  # the golden-run filter asks for 500
+    assert len((await client.get("/runs")).json()) == 50
+    assert len((await client.get("/workflows", params={"limit": 50})).json()) == 50
+    for path in ("/runs", "/workflows"):  # the runs page reads 500 runs and names them from the default workflow list
+        assert len((await client.get(path, params={"limit": 500})).json()) == 51
         for bad in (0, 501):  # a public caller cannot ask for every row
             assert (await client.get(path, params={"limit": bad})).status_code == 422
+    assert len((await client.get("/workflows")).json()) == 51
     assert (await client.get("/artifacts", params={"limit": -1})).status_code == 422  # SQLite reads -1 as no limit

@@ -4,7 +4,7 @@
 # show in `journalctl -u orchapod-watchdog`. A stopped api is left alone: someone stopped it on purpose.
 set -eu
 for c in $(docker ps -q --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME:-orchapod}" \
-    --filter label=com.docker.compose.service=api --filter health=unhealthy); do
+    --filter label=com.docker.compose.service=api --filter label=com.docker.compose.oneoff=False --filter health=unhealthy); do
   echo "api container $c is unhealthy: restarting it"
   docker restart "$c"
 done

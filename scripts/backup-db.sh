@@ -3,7 +3,10 @@
 # NN = days since 1970 mod 14, so the bucket keeps the last 14 nights with no lifecycle rule. Restore: docs/HOSTING.md.
 set -euo pipefail
 project=${COMPOSE_PROJECT_NAME:-orchapod}
-container() { docker ps -q --filter "label=com.docker.compose.project=$project" --filter "label=com.docker.compose.service=$1"; }
+container() {  # the service's own container, never a one-off `dc run` of it
+  docker ps -q --filter "label=com.docker.compose.project=$project" --filter "label=com.docker.compose.service=$1" \
+    --filter label=com.docker.compose.oneoff=False
+}
 key=backups/pg/orchapod-$(printf %02d $(( $(date -u +%s) / 86400 % 14 ))).dump
 
 # The dump goes to a file first, so a failed pg_dump never overwrites a good slot.

@@ -13,6 +13,9 @@ Dated, user-facing changes made during the Nebius × NVIDIA hackathon submission
 - Hosting files for one VM (Docker Compose, automatic HTTPS, nightly backups, a watchdog); not deployed yet.
 - Web app: the evaluation view, a dataset card, error toasts, honest empty and loading states, a demo banner and a loss chart that also works for finished runs.
 - Tests: the agent end to end passes for all three example intents in stub mode, a browser test covers the golden path from template to playground, and failure drills check the exact error a visitor sees.
+- Paid GPU safety: every Nebius job and endpoint gets an expiry and is deleted when it expires, a create whose reply was lost is found by name and cleaned up, a job stops when it reaches its node's budget, and GPU time is billed even when a job is killed; the Nebius Serverless client for Jobs and Endpoints is built and tested offline, not yet run live.
+- Visitors can cancel only the runs they started, and editing a workflow that already has runs saves a copy instead.
+- Prompt-injection guard: text from the web reaches a model only inside fenced tags that disguised characters (zero-width, bidirectional, fullwidth, hidden tag characters) cannot close; one shared implementation for every node.
 
 ## 2026-10-20
 - The Orchapod Agent API: one sentence in, a validated Nemotron plan with cost and time estimates out; plans run, are monitored and get a written report. Spend caps per run and per day, with reservations so parallel runs cannot overshoot.

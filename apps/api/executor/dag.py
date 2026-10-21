@@ -48,9 +48,14 @@ class DAG:
         return order
 
 
+_MAX_YAML = 256_000  # characters; a real workflow is a few KB, and every save parses it more than once on the one worker
+
+
 def load_yaml(text: str):
     """yaml.safe_load without aliases: a chain of a few hundred bytes (`&b [*a, *a, ...]`) expands to gigabytes once the
     spec is copied or serialised (graph_json, json.dumps), which would freeze the one API worker."""
+    if len(text) > _MAX_YAML:
+        raise ValueError(f"workflow YAML is {len(text):,} characters; the limit is {_MAX_YAML:,}")
     if any(isinstance(event, yaml.AliasEvent) for event in yaml.parse(text, Loader=yaml.SafeLoader)):
         raise ValueError("workflow YAML may not use aliases (*name)")
     return yaml.safe_load(text)

@@ -270,7 +270,7 @@ API code reads these through `apps/api/config.py` (`env(name)`: os.environ on ev
 - `run_status` {status: running|succeeded|failed|cancelled, error?}.
 - `node_status` {node_id, status: running|succeeded|failed, outputs? (on succeeded), error? (on failed)}. Today the executor never sends `failed`.
 - `log` {node_id, ts, level: INFO|WARN|ERROR|STDOUT, message}. Container stdout arrives as STDOUT, skipping SDK-formatted lines that were already posted. Today these events carry `line` and no `ts`, so they render blank.
-- `progress` {node_id, step, total?, loss?, ...extra} · `artifact` {node_id, name, uri, kind, expires_at?} · `run_cost` {cost_usd} (the UI already types it, but only /inference/extend sends it today) · `endpoint_expiry` (unchanged).
+- `progress` {node_id, step, total?, loss?, ...extra} · `artifact` {node_id, name, uri, kind, expires_at?} · `run_cost` {cost_usd} (sent by /internal when a node's cost is recorded; the run page's cost meter) · `endpoint_expiry` (unchanged).
 - The agent monitor is just these events on the /agent page. Scripts poll GET /agent/runs/{id}/report every 5 s until `ready`.
 
 ## Agent API (apps/api/agent; Nemotron on Token Factory only)

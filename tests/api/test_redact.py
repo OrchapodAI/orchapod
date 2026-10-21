@@ -44,3 +44,11 @@ async def test_no_route_returns_an_artifact_secret(client, db, seeded_node_run):
     for path in (f"/runs/{run.id}/summary", f"/runs/{run.id}/artifacts", "/artifacts", f"/agent/runs/{run.id}/report"):
         r = await client.get(path)
         assert r.status_code == 200 and "sk-live" not in r.text and REDACTED in r.text, path
+
+
+def test_without_secrets_drops_secret_keys_at_any_depth_of_an_input():
+    from api.services.redact import without_secrets
+    inputs = {"cfg": {"hf_token": "hf_X", "k": 1}, "refs": [{"api_key": "sk-X", "model": "m"}],
+              "headers": {"Authorization": "Bearer X"}, "max_tokens": 5, "api_key_env": "NEBIUS_API_KEY"}
+    out = without_secrets({"nodes": [{"id": "n", "inputs": inputs}]})["nodes"][0]["inputs"]
+    assert out == {"cfg": {"k": 1}, "refs": [{"model": "m"}], "headers": {}, "max_tokens": 5, "api_key_env": "NEBIUS_API_KEY"}

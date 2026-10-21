@@ -235,6 +235,12 @@ async def test_workflow_yaml_with_an_alias_is_refused_before_it_expands(client, 
         compile_dag(bomb, {})  # the executor and the planner compile through it too
 
 
+
+async def test_workflow_yaml_over_the_size_cap_is_refused(client, db):
+    big = "name: w\nnotes: \"" + "x" * 300_000 + "\"\nnodes: []\n"
+    r = await client.post("/workflows", json={"name": "w", "yaml": big})
+    assert r.status_code == 422 and "limit" in r.json()["detail"]
+
 async def test_endpoint_extend_is_gone(client, db, seeded_node_run):
     """It had no limit, guard, kill switch or admin check, and a signed extend_min: -60 lowered today's spend."""
     run, _ = seeded_node_run  # a running vllm-serve node, which the route used to extend

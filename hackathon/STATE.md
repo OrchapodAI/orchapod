@@ -29,9 +29,9 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D3 .env.example complete (every var + where to get it) + budget-guard settings — TODO
 - [ ] P0 D4 hosting decision; reachable by D6 with an uptime check — TODO
 ### data-engineering
-- [ ] P0 D2 web-research node: seed URLs | query → extract → chunk → corpus.jsonl, dedupe, max_pages, STUB=1 — TODO
-- [ ] P0 D2 synth-distilabel grounded mode (passage → short sourced Q&A, JSON schema) + price fix $0.30/$0.90 — TODO
-- [ ] P0 D2 synth-distilabel structured mode for intent #2 (user_id, movie_title, action, timestamp, device) — TODO
+- [x] P0 D2 web-research node: seed URLs | query → extract → chunk → corpus.jsonl, dedupe, max_pages, STUB=1 — DONE (data-w2)
+- [x] P0 D2 synth-distilabel grounded mode (passage → short sourced Q&A, JSON schema) + price fix $0.30/$0.90 — DONE (data-w2)
+- [x] P0 D2 synth-distilabel structured mode for intent #2 (user_id, movie_title, action, timestamp, device) — DONE (data-w2)
 - [ ] P0 D2 Dockerfiles build from the repo root (synth-distilabel, data-prep: `COPY packages/sdk-py/orchapod`, `COPY containers/<node>/…`); delete synth-distilabel's byte-identical SDK copy — TODO
 - [ ] P0 D2 data-engineering reviews the R19 diffs of its two Dockerfiles (synth-distilabel, data-prep) — TODO (wave 2)
 - [ ] P0 D2 synth-distilabel: remove the Anthropic/OpenAI teacher branches and the openai/anthropic pip deps from its image (Nemotron via packages/providers only) — TODO (wave 2)

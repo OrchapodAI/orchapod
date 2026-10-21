@@ -126,3 +126,21 @@ Use a free port for the web app, as before: `NEXT_PUBLIC_API_URL=http://127.0.0.
 - The run page reads `GET /runs/{id}` plus `GET /runs/{id}/summary`; `/runs/{id}/nodes` and `/runs/{id}/artifacts` are no longer called by the UI. It re-snapshots on mount, on socket open and close, and on each `artifact` event.
 - The sidebar shows navigation only until the API serves counts, team or budget. Made-up team, owner and budget values are removed everywhere on screen.
 - Drop defaults for nodes without a form live in `lib/nodeForms.ts` `defaultInputs`.
+
+## Pre-merge fixes (d91ac0c, after review)
+1. **Re-snapshot on status events.** RunView now also re-snapshots on `run_status` and `node_status`; the events still apply at once. A page opened before the executor committed its NodeRun rows now fills in instead of staying on "Waiting for nodes…". This also narrows the snapshot-vs-event race listed under ceilings: the executor commits before it broadcasts, and only the newest snapshot applies.
+2. **A failed retry re-syncs.** A 409 from Retry (retried elsewhere, or "still stopping") calls `load()`, so the node and button state refresh.
+3. **Dead code deleted:** `api.runs.nodes`, `api.runs.artifacts` and the `NodeRun` interface, with their imports.
+4. **"Started" in local time.** It now goes through `apiDate()` in lib/api.ts, which appends `Z` to naive UTC strings and keeps strings that already carry a zone. Without that guard, a timezone-aware backend would produce "…+00:00Z", which is an Invalid Date.
+   - New test: it fails on this EDT machine with a bare `new Date()` (1 fail), and passes with the fix.
+   - Other pages (/runs and /workflows `timeAgo`) still read these datetimes as local time; they were not touched.
+
+**Proof:**
+- `node --test "tests/web/*.test.ts"`: 12 pass, 0 fail.
+- `tsc --noEmit`: exit 0.
+- Live check rerun against NebiusHackathon's API (same setup as before): A–F as before. C now also caught the intermediate state, `Retrying…(disabled)` → `Running · no retry button` → `Failed · Retry node`.
+- "Started" read 8:54:16 PM at 8:53 PM EDT local; before the fix it showed 12:32 AM for a run started at 8:32 PM.
+
+**Untouched, as asked:** no admin token reaches the browser, and EndpointCountdown and `meta.api_key` are left for wave 3.
+
+**Process note.** The rerun's teardown hung again and was backgrounded; I stopped it. uvicorn's graceful stop waits on the page's open WebSocket handler, which sits in Redis `listen()`, and that kept the output pipe open. The leftover test API on :8013 was killed with SIGKILL, and the ports were confirmed free.

@@ -1,23 +1,22 @@
 #!/bin/bash
-# Build and push all 6 node container images to GHCR.
-# Run from repo root: bash scripts/build-and-push-containers.sh
+# Build and push every node image (one per containers/*/Dockerfile, so it always matches the CI matrix)
+# to the registry CI pushes to (contracts R4). Run from the repo root: bash scripts/build-and-push-containers.sh
 #
 # Prerequisites:
 #   docker login ghcr.io -u YOUR_GITHUB_USERNAME -p YOUR_GITHUB_PAT
-#   export GITHUB_ORG=orchapod  # your GitHub org/username
+#   export ORCHAPOD_IMAGE_PREFIX=ghcr.io/your-org   # optional; default ghcr.io/bangadpurva
 
 set -e
 
-REGISTRY="ghcr.io/${GITHUB_ORG:-orchapod}"
+REGISTRY="${ORCHAPOD_IMAGE_PREFIX:-ghcr.io/bangadpurva}"
 TAG="${IMAGE_TAG:-latest}"
 
-NODES=(data-prep unsloth-train distill-sft quantize lm-eval vllm-serve)
-
-for node in "${NODES[@]}"; do
+for dockerfile in containers/*/Dockerfile; do
+  node=$(basename "$(dirname "$dockerfile")")
   echo "Building $node..."
   docker build \
     -t "$REGISTRY/$node:$TAG" \
-    -f "containers/$node/Dockerfile" \
+    -f "$dockerfile" \
     .
   echo "Pushing $node..."
   docker push "$REGISTRY/$node:$TAG"

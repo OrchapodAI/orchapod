@@ -83,10 +83,10 @@ Cost, metrics and exit (docs/contracts.md "Node SDK"): record each billed call w
 2. Create `containers/{node-name}/run.py` (follow template above)
 3. Add input/output schemas to `packages/workflow_schema/models.py`
 4. Register in `NODE_REGISTRY` in the same file
-5. Build and push: `bash scripts/build-and-push-containers.sh`
+5. Build and push: `bash scripts/build-and-push-containers.sh` (it builds every `containers/*/Dockerfile` and pushes to `${ORCHAPOD_IMAGE_PREFIX:-ghcr.io/bangadpurva}`, so there is no node list to update)
 6. Add `{node-name}` to the `containers` matrix in `.github/workflows/ci.yml` (a test fails if it is missing): CI pushes `ghcr.io/bangadpurva/{node-name}:latest` from NebiusHackathon, the image the executor pulls (contracts R4)
 
-Local runs use `orchapod/<node>:dev` when that image exists (`docker build -t orchapod/<node>:dev -f containers/<node>/Dockerfile .`), else `${ORCHAPOD_IMAGE_PREFIX:-ghcr.io/bangadpurva}/<node>:latest`, which docker pulls. Cancel stops a container with SIGTERM and a 30 s grace before SIGKILL.
+Local runs use `orchapod/<node>:dev` when that image exists (`docker build -t orchapod/<node>:dev -f containers/<node>/Dockerfile .`), else `${ORCHAPOD_IMAGE_PREFIX:-ghcr.io/bangadpurva}/<node>:latest`, which docker pulls. Cancel stops a container with SIGTERM and a 30 s grace before SIGKILL. `make check` ends with the stub e2e (`scripts/e2e_demo.py --stub`, needs Docker and `make up`): it rebuilds `orchapod/<node>:dev` from your tree for every node of the intent #2 template, runs it through the API and asserts the artifacts and a $0 cost.
 
 That's it. The executor, canvas, and agent pick it up automatically.
 

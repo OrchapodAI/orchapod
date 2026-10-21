@@ -79,14 +79,11 @@ def test_every_todo_names_its_day():
     assert not re.search(r"TODO(?!\(D8\))", README)
 
 
-def test_targets_without_scripts_are_marked_todo():
-    """`make e2e|agent-e2e|demo` may stand unmarked only once the script behind the target exists."""
+def test_unbuilt_make_targets_are_marked_todo():
+    # Their scripts are not written yet; drop this test when scripts/e2e_demo.py, e2e_agent.py and seed-golden-run.py land.
     for line in README.splitlines():
-        for target in re.findall(r"\bmake (e2e|agent-e2e|demo)\b", line):
-            script = re.search(rf"^{target}:.*?(scripts/\S+\.py)", MAKEFILE, re.M)
-            assert not script or (ROOT / script.group(1)).exists() or "TODO(D8)" in line, (
-                f"`make {target}` runs {script.group(1)}, which does not exist: {line[:70]}"
-            )
+        if re.search(r"\bmake (e2e|agent-e2e|demo)\b", line):
+            assert "TODO(D8)" in line, f"the target has no script yet: {line[:70]}"
 
 
 def test_make_targets_and_env_vars_exist():

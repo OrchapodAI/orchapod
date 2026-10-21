@@ -67,7 +67,7 @@ Under the hood:
 
 ### Nemotron on Nebius Token Factory
 
-Every Agent run starts with a Nemotron call (the plan) and ends with one (the report); the nodes between them make their own. All calls go to `https://api.tokenfactory.nebius.com/v1` (OpenAI-compatible, key `NEBIUS_API_KEY`) through one client that retries, prices every call from a single table, refuses to send our key to any other host and honours `STUB=1`.
+A run planned from a sentence starts with a Nemotron call (the plan), a run started from a template skips it, and every run ends with one (the report); the nodes between them make their own. All calls go to `https://api.tokenfactory.nebius.com/v1` (OpenAI-compatible, key `NEBIUS_API_KEY`) through one client that retries, prices every call from a single table, refuses to send our key to any other host and honours `STUB=1`.
 
 | Role | Model id | Where |
 | --- | --- | --- |
@@ -108,8 +108,10 @@ make up                         # Postgres, Redis and MinIO
 
 python3.12 -m venv .venv && . .venv/bin/activate
 pip install -r requirements-dev.txt -r apps/api/requirements.txt
-make check                      # ruff + unit tests + stub e2e (TODO(D8): script pending); no keys, no spend
+make check                      # ruff + unit tests + web tests; no keys, no spend
 ```
+
+On pnpm 9, run `make check PNPM=pnpm`. `make check E2E=1` adds the stub end-to-end run of the synthetic-data intent through the API; it needs Docker and `make up`, rebuilds and retags the local `orchapod/<node>:dev` images, and is meant for the integration branch, not for every edit. TODO(D8): the stub e2e is not verified end to end yet.
 
 Then create the artifact bucket once and start the API and the web app (two terminals):
 

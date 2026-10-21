@@ -1,6 +1,7 @@
 """Unit tests for containers/vllm-serve/run.py (docs/contracts.md "ML nodes → vllm-serve", "ModelRef", R10, R11)."""
 
 import json
+import signal
 import time
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -23,16 +24,25 @@ URL = "https://ep-1.serverless.example"
 TOKEN = "endpoint-token"
 NAME = "orchapod-12345678-serve-8b"  # run 1234567890ab, node serve_8b
 CREATE_S = 5  # a create takes a moment, and spend counts from just before it
+IGNORE_TERM = ("signal", signal.SIGTERM, signal.SIG_IGN)  # the node's `finally` starts with it
 
 
 class Endpoints:
-    """A fake NebiusServerless().endpoints. `ops` records find, create and delete in order. create notes the WARN lines
-    logged before it, takes CREATE_S and raises `create_error` when set. get walks `states` and find walks `finds`, each
-    then staying on its last item (find: None when empty)."""
+    """A fake NebiusServerless().endpoints. `ops` records list, find, create and delete in order (and the fixture adds
+    the node's signal calls). create notes the WARN lines logged before it, takes CREATE_S and raises `create_error` when
+    set; delete raises `delete_error` when set. get walks `states`, list `lists` and find `finds`, each then staying on
+    its last item (list: [] and find: None when empty); an exception in `lists` is raised."""
 
     def __init__(self, states=("PROVISIONING", "STARTING", "RUNNING")):
-        self.states, self.finds, self.create_error = list(states), [], None
+        self.states, self.lists, self.finds, self.create_error, self.delete_error = list(states), [], [], None, None
         self.ops, self.created, self.deleted = [], [], []
+
+    def list(self):
+        self.ops.append(("list",))
+        items = self.lists.pop(0) if len(self.lists) > 1 else next(iter(self.lists), [])
+        if isinstance(items, BaseException):
+            raise items
+        return items
 
     def find(self, name):
         self.ops.append(("find", name))
@@ -53,11 +63,13 @@ class Endpoints:
 
     def delete(self, eid):
         self.ops.append(("delete", eid))
+        if self.delete_error:
+            raise self.delete_error
         self.deleted.append(eid)
 
 
-def listed(eid, state):
-    """find()'s view of an endpoint named NAME."""
+def view(eid, state):
+    """list()'s and find()'s view of an endpoint named NAME."""
     return {"id": eid, "name": NAME, "state": state, "url": None, "code": None, "message": None}
 
 
@@ -85,6 +97,9 @@ def node(mock_orchapod_io, monkeypatch, tmp_path, clock):
     http = httpx.Client(transport=httpx.MockTransport(vllm))
     monkeypatch.setattr(vs, "TokenFactory", lambda **kw: TokenFactory(http=http, **kw))
     monkeypatch.setattr(vs, "endpoints", lambda: run.eps)
+    sig = MagicMock(SIGTERM=signal.SIGTERM, SIG_IGN=signal.SIG_IGN)  # pytest's own SIGTERM handling stays as it is
+    sig.signal.side_effect = lambda signum, handler: run.eps.ops.append(("signal", signum, handler))
+    monkeypatch.setattr(vs, "signal", sig)
 
     def run(**inputs):
         mock_orchapod_io.read_inputs.return_value = {"model": BASE, "lora_adapter": ADAPTER, **inputs}
@@ -118,8 +133,6 @@ def test_base_and_adapter_share_one_endpoint_and_the_refs_name_the_token_env_var
     (create,) = node.eps.created
     assert (create["name"], create["image"], create["platform"], create["preset"], create["port"]) == (
         NAME, "vllm/vllm-openai:v0.18.0-cu130", "gpu-l40s-a", "1gpu-8vcpu-32gb", 8000)
-    assert node.eps.ops[:2] == [("find", NAME), ("create", NAME)]  # R19: a leftover would hold the name
-    assert any(NAME in line and "Nebius console" in line for line in create["warned"])  # before a SIGTERM can cut it
     assert create["args"].split() == [
         BASE, "--served-model-name", BASE, "--port", "8000", "--max-model-len", "8192", "--dtype", "bfloat16",
         "--gpu-memory-utilization", "0.9", "--enable-lora", "--lora-modules",
@@ -136,12 +149,19 @@ def test_base_and_adapter_share_one_endpoint_and_the_refs_name_the_token_env_var
     assert meta["endpoint_id"] == "ep-1" and meta["expires_at"] and meta["proof"] == "I can help."
     assert out["base_model_ref"][0] == {**ref, "model": BASE, "base_model": None}
     written = json.dumps([out, mock_orchapod_io.write_metrics.call_args.args])
-    assert TOKEN not in written  # R10/R21: the env var's name, never its value
+    assert TOKEN not in written and TOKEN not in str(vs.log.mock_calls)  # R10/R21: the env var's name, never its value
     assert node.eps.deleted == []  # registered: the backend deletes it at expiry
     (bill,) = vs.cost.add.call_args_list
     assert bill.args == ("nebius_serverless", "gpu-l40s-a/1gpu-8vcpu-32gb")
     # from just before the create: the create, 2 polls of 15 s, then 30 min
     assert bill.kwargs["gpu_hours"] == pytest.approx((CREATE_S + 30) / 3600 + 0.5, abs=1e-4)
+
+
+def test_the_normal_path_scans_the_list_once_and_names_the_endpoint_at_warn_before_the_create(node):
+    node()
+    assert node.eps.ops == [("list",), ("create", NAME), IGNORE_TERM]  # R19: one scan for a leftover holding the name
+    (create,) = node.eps.created
+    assert any(NAME in line and "Nebius console" in line for line in create["warned"])  # before a SIGTERM can cut it
 
 
 def test_a_merged_model_dir_is_served_from_the_bucket_as_tuned(node, monkeypatch):
@@ -188,16 +208,18 @@ def test_a_cancel_while_starting_deletes_the_endpoint(node, monkeypatch):
 @pytest.mark.parametrize("error, code", [
     (ProviderError("nebius_serverless", "server", 504, "deadline exceeded"), 1),
     (ProviderError("nebius_serverless", "bad_output", 200, f"endpoints create {NAME}: no resourceId"), 1),
+    (ProviderError("nebius_serverless", "bad_request", 409, "already exists"), 1),  # held by one the scan missed
     (SystemExit(143), 143),  # SIGTERM during the create's read: the SDK raises it there
-], ids=["5xx", "no-id", "sigterm"])
+], ids=["5xx", "no-id", "409", "sigterm"])
 def test_a_create_that_may_have_landed_is_found_by_name_and_deleted(node, error, code):
-    node.eps.create_error, node.eps.finds = error, [None, listed("ep-lost", "PROVISIONING")]
+    node.eps.create_error, node.eps.finds = error, [view("ep-lost", "PROVISIONING")]
     with pytest.raises(SystemExit) as e:
         node()
     assert e.value.code == code
-    assert node.eps.ops == [("find", NAME), ("create", NAME), ("find", NAME), ("delete", "ep-lost")]
+    # SIGTERM is ignored first, so a cancel cannot cut the lookup or the delete
+    assert node.eps.ops == [("list",), ("create", NAME), IGNORE_TERM, ("find", NAME), ("delete", "ep-lost")]
     assert vs.cost.add.call_args.kwargs["gpu_hours"] == pytest.approx(CREATE_S / 3600, abs=1e-4)  # from the create
-    assert ttl_posts() == [] and node.seen == []
+    assert ttl_posts() == [] and node.seen == [] and TOKEN not in str(vs.log.mock_calls)
     if code == 1:
         assert vs.log.error.call_args_list[0].args[0] == str(error)
 
@@ -206,24 +228,25 @@ def test_a_lost_create_that_find_misses_is_named_for_the_console(node):
     node.eps.create_error = ProviderError("nebius_serverless", "server", 504, "deadline exceeded")
     with pytest.raises(SystemExit):
         node()
-    assert node.eps.ops == [("find", NAME), ("create", NAME), ("find", NAME)] and not vs.cost.add.called
+    assert node.eps.ops == [("list",), ("create", NAME), IGNORE_TERM, ("find", NAME)] and not vs.cost.add.called
     assert NAME in vs.log.error.call_args.args[0] and "Nebius console" in vs.log.error.call_args.args[0]
 
 
-@pytest.mark.parametrize("kind, status", [("bad_request", 409), ("auth", 401), ("quota", 402), ("rate_limit", 429)])
+@pytest.mark.parametrize("kind, status", [("bad_request", 400), ("auth", 401), ("quota", 402), ("rate_limit", 429)])
 def test_a_refused_create_looks_nothing_up(node, kind, status):
     node.eps.create_error = ProviderError("nebius_serverless", kind, status, "refused")
     with pytest.raises(SystemExit) as e:
         node()
-    assert e.value.code == 1 and node.eps.ops == [("find", NAME), ("create", NAME)] and not vs.cost.add.called
+    assert e.value.code == 1 and node.eps.ops == [("list",), ("create", NAME), IGNORE_TERM]
+    assert not vs.cost.add.called
 
 
 @pytest.mark.parametrize("state, deleted", [("RUNNING", True), ("ERROR", True), ("DELETING", False)])
 def test_an_endpoint_left_by_an_earlier_attempt_is_deleted_and_a_fresh_one_created(node, state, deleted):
-    node.eps.finds = [listed("ep-old", state), listed("ep-old", "DELETING"), None]
+    node.eps.lists = [[view("ep-old", state)], [view("ep-old", "DELETING")], []]
     out = node()
-    assert node.eps.ops == ([("find", NAME)] + [("delete", "ep-old")] * deleted
-                            + [("find", NAME), ("find", NAME), ("create", NAME)])  # waits until the name is free
+    assert node.eps.ops == ([("list",)] + [("delete", "ep-old")] * deleted
+                            + [("list",), ("list",), ("create", NAME), IGNORE_TERM])  # waits until the name is free
     assert out["model_ref"][1]["endpoint_id"] == "ep-1"  # never adopted
     assert "ep-old" in vs.log.warn.call_args_list[0].args[0]
     # billed from the fresh endpoint's create: the 15 s spent waiting for the old one to go are not ours
@@ -231,11 +254,32 @@ def test_an_endpoint_left_by_an_earlier_attempt_is_deleted_and_a_fresh_one_creat
 
 
 def test_a_leftover_still_listed_15_min_after_its_delete_fails_before_any_create(node):
-    node.eps.finds = [listed("ep-old", "RUNNING")]
+    node.eps.lists = [[view("ep-old", "RUNNING")]]
     with pytest.raises(SystemExit) as e:
         node()
     assert e.value.code == 1 and node.eps.created == [] and node.eps.deleted == ["ep-old"]
     assert "still listed" in vs.log.error.call_args.args[0] and not vs.cost.add.called
+
+
+def test_a_leftover_that_cannot_be_deleted_exits_1_naming_it_for_the_console(node):
+    error = ProviderError("nebius_serverless", "server", 503, "unavailable")
+    node.eps.lists, node.eps.delete_error = [[view("ep-old", "RUNNING")]], error
+    with pytest.raises(SystemExit) as e:
+        node()
+    assert e.value.code == 1 and node.eps.created == [] and not vs.cost.add.called
+    assert vs.log.error.call_args.args[0] == f"could not delete endpoint ep-old ({NAME}): {error}; delete it in the " \
+                                             "Nebius console"
+
+
+@pytest.mark.parametrize("lists", [
+    [ProviderError("nebius_serverless", "auth", 401, "unauthenticated")],  # at once, not after find()'s 45 s
+    [[view("ep-old", "RUNNING")], ProviderError("nebius_serverless", "server", 503, "unavailable")],  # not "name free"
+], ids=["auth", "outage-while-waiting"])
+def test_a_failed_list_scan_stops_the_node_before_any_create(node, lists):
+    node.eps.lists = lists
+    with pytest.raises(SystemExit) as e:
+        node()
+    assert e.value.code == 1 and node.eps.created == [] and vs.log.error.call_args.args[0] == str(lists[-1])
 
 
 def test_vllm_still_loading_behind_a_running_endpoint_is_retried(node):

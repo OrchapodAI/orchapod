@@ -18,6 +18,7 @@ import contextlib
 import json
 import os
 import re
+import signal
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -53,18 +54,27 @@ def mounted(name: str, uri: str, bucket: str) -> str:
     return f"{MOUNT}/{uri.removeprefix(f'r2://{bucket}/')}"
 
 
+def listed(eps, name: str) -> dict | None:
+    """The endpoint named `name`, from one endpoints.list() scan. A failed scan raises: find(), made for a lost create,
+    would look for 45 s and call a failure a miss."""
+    return next((e for e in eps.list() if e["name"] == name), None)
+
+
 def clear(eps, name: str) -> None:
     """R19: names are unique per project, so an endpoint an earlier attempt of this node left is deleted (unless already
     DELETING) and the create waits until the name is free. Never adopted: get() shows no spec to check against this
-    attempt's inputs, and a registered one would still be deleted at its old expiry."""
-    old = eps.find(name)
+    attempt's inputs."""
+    old = listed(eps, name)
     if not old:
         return
     log.warn(f"endpoint {old['id']} ({name}) is {old['state']}, left by an earlier attempt: deleting it for a fresh one")
     if old["state"] != "DELETING":
-        eps.delete(old["id"])
+        try:
+            eps.delete(old["id"])
+        except ProviderError as e:
+            fail(f"could not delete endpoint {old['id']} ({name}): {e}; delete it in the Nebius console")
     deadline = time.monotonic() + WAIT_S
-    while eps.find(name):
+    while listed(eps, name):
         if time.monotonic() > deadline:
             fail(f"endpoint {name} is still listed {WAIT_S // 60} min after its delete; delete it in the Nebius console")
         time.sleep(POLL_S)
@@ -157,8 +167,8 @@ def main():
                 eid = eps.create(name, IMAGE, args=" ".join(args), platform=platform, preset=preset, port=8000,
                                  env={"HF_TOKEN": os.environ["HF_TOKEN"]} if hf_id and os.environ.get("HF_TOKEN") else {},
                                  auth_token=token, volumes=(f"s3://{bucket}:{MOUNT}:ro",) if not hf_id or adapter else ())
-            except ProviderError as e:
-                sent = e.kind in ("server", "bad_output")  # any other kind was refused: nothing to look for
+            except ProviderError as e:  # a 409: one the scan missed holds the name; any other refusal created nothing
+                sent = e.kind in ("server", "bad_output") or e.status == 409
                 raise
             log.info(f"endpoint {eid} ({name}) on {platform}/{preset}: {IMAGE} {' '.join(args)}")
             url = running(eps, eid, created)
@@ -185,8 +195,9 @@ def main():
     except ProviderError as e:  # create or poll: the node's last line is the provider's
         fail(str(e))
     finally:
-        if sent and not eid:  # the create may have reached Nebius without returning an id: 5xx, read timeout, SIGTERM
-            eid = (eps.find(name) or {}).get("id")
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)  # a cancel cannot cut the lookup or the delete; docker kills at 30 s
+        if sent and not eid:  # the create may have reached Nebius without returning an id (5xx, read timeout, SIGTERM),
+            eid = (eps.find(name) or {}).get("id")  # or a 409 named one that holds the name
             if not eid:
                 log.error(f"endpoint {name} is not listed after its create failed, but may still exist: delete it in "
                           "the Nebius console")

@@ -330,19 +330,3 @@ PROVIDERS: dict[str, GPUProvider] = {}
 def register_providers(vastai_key: str = "") -> None:
     if vastai_key:
         PROVIDERS["vastai"] = VastAIProvider(api_key=vastai_key)
-
-
-async def pick_provider(resources) -> GPUProvider:
-    """Pick the first available provider from the resource preference list."""
-    from .base import NoCapacity
-    pref = getattr(resources, "provider_pref", None) or ["vastai"]
-    for name in pref:
-        provider = PROVIDERS.get(name)
-        if provider is None:
-            continue
-        gpu_type = resources.gpu.split("x")[-1] if hasattr(resources, "gpu") else "H100"
-        gpu_spec = GPUSpec(gpu_type=gpu_type, count=1)
-        quote = await provider.quote(gpu_spec)
-        if quote.available:
-            return provider
-    raise NoCapacity("No GPU provider has available capacity for this spec.")

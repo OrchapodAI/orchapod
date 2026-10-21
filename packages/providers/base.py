@@ -148,6 +148,8 @@ def request(http: httpx.Client, provider: str, method: str, url: str, *, create:
             if resp.is_success:
                 return resp
             resp.read()
+        except httpx.DecodingError as e:  # an answer came but cannot be read: the call happened, so no retry
+            raise ProviderError(provider, "bad_output", None, repr(e)) from e
         except httpx.TransportError as e:
             err = ProviderError(provider, "server", None, repr(e))
             if create and not isinstance(e, (httpx.ConnectError, httpx.ConnectTimeout)):  # it may have landed
@@ -164,3 +166,14 @@ def request(http: httpx.Client, provider: str, method: str, url: str, *, create:
         if attempt == 3:
             raise err
         time.sleep(wait if wait is not None else 2 ** attempt + random.random())
+
+
+def json_of(resp: httpx.Response, provider: str) -> dict:
+    """A 2xx reply's JSON object; anything else is bad_output (not retried: the call already happened)."""
+    try:
+        data = resp.json()
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        raise ProviderError(provider, "bad_output", resp.status_code, f"reply is not a JSON object: {resp.text[:200]!r}")
+    return data

@@ -17,7 +17,7 @@ from typing import Iterator
 import httpx
 
 from orchapod.prices import PRICES
-from packages.providers.base import ProviderError, http_client, request, stub_hash
+from packages.providers.base import ProviderError, http_client, json_of, request, stub_hash
 
 TF_BASE = "https://api.tokenfactory.nebius.com/v1"
 SUPER = "nvidia/nemotron-3-super-120b-a12b"
@@ -31,7 +31,7 @@ class TokenFactory:
     """api_key defaults to NEBIUS_API_KEY; http is an httpx.Client (tests pass one on httpx.MockTransport)."""
 
     def __init__(self, api_key: str | None = None, *, on_usage=None, http: httpx.Client | None = None):
-        self.api_key = os.environ.get("NEBIUS_API_KEY") if api_key is None else api_key
+        self.api_key = ((os.environ.get("NEBIUS_API_KEY") if api_key is None else api_key) or "").strip()
         self.base_url = (os.environ.get("NEBIUS_BASE_URL") or TF_BASE).rstrip("/")
         self.on_usage = on_usage
         self.stub = os.environ.get("STUB") == "1"
@@ -39,11 +39,12 @@ class TokenFactory:
         self.files, self.fine_tuning, self.lora = _Files(self), _FineTuning(self), _Lora(self)
 
     def chat(self, messages: list[dict], model: str = SUPER, **kw) -> dict:
-        """kw: temperature=0.0, max_tokens=1024, json_schema=None, thinking=None, and for a ModelRef target
-        base_url, api_key, base_model; anything else goes into the request body verbatim (top_p, stop, seed, ...).
-        Returns {text, parsed, model, in_tokens, out_tokens, usd, finish_reason}."""
-        url, headers, body, bill = self._prepare(messages, model, **kw)
-        data = request(self.http, P, "POST", url, json=body, headers=headers).json()
+        """kw: temperature=0.0, max_tokens=1024, json_schema=None, thinking=None, read_timeout=None (seconds for this
+        call; None = the client's 120 s), and for a ModelRef target base_url, api_key, base_model; anything else goes
+        into the request body verbatim (top_p, stop, seed, ...). Returns {text, parsed, model, in_tokens, out_tokens,
+        usd, finish_reason}."""
+        url, req, bill = self._prepare(messages, model, **kw)
+        data = json_of(request(self.http, P, "POST", url, **req), P)
         usage = data.get("usage") or {}
         in_tokens, out_tokens = usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
         usd = bill(in_tokens, out_tokens)  # first: a bad reply still cost tokens
@@ -63,10 +64,9 @@ class TokenFactory:
 
     def stream_chat(self, messages: list[dict], model: str = SUPER, **kw) -> Iterator[str]:
         """Yields content deltas (same args as chat); retries happen only before the first chunk."""
-        url, headers, body, bill = self._prepare(messages, model, stream=True,
-                                                 stream_options={"include_usage": True}, **kw)
+        url, req, bill = self._prepare(messages, model, stream=True, stream_options={"include_usage": True}, **kw)
         usage = {}
-        resp = request(self.http, P, "POST", url, json=body, headers=headers, stream=True)
+        resp = request(self.http, P, "POST", url, stream=True, **req)
         try:  # ponytail: a stream abandoned before its last chunk records no usage (TF sends usage last)
             for line in resp.iter_lines():
                 if not line.startswith("data: ") or line == "data: [DONE]":
@@ -76,6 +76,8 @@ class TokenFactory:
                 for choice in chunk.get("choices") or []:
                     if (choice.get("delta") or {}).get("content"):
                         yield choice["delta"]["content"]
+        except (ValueError, AttributeError, TypeError, httpx.DecodingError) as e:  # a malformed chunk
+            raise ProviderError(P, "bad_output", resp.status_code, repr(e)) from e
         except httpx.HTTPError as e:  # mid-stream: too late to retry
             raise ProviderError(P, "server", None, repr(e)) from e
         finally:
@@ -83,11 +85,11 @@ class TokenFactory:
         bill(usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
 
     def _prepare(self, messages, model, *, temperature=0.0, max_tokens=1024, json_schema=None, thinking=None,
-                 base_url=None, api_key=None, base_model=None, **params):
+                 base_url=None, api_key=None, base_model=None, read_timeout=None, **params):
         base = (base_url or self.base_url).rstrip("/")
-        key = api_key if base_url else self.api_key  # a ModelRef brings its own key, or none
+        key = ((api_key if base_url else self.api_key) or "").strip()  # a ModelRef brings its own key, or none
         on_tf = base == self.base_url
-        if key and not on_tf and key in (self.api_key, os.environ.get("NEBIUS_API_KEY")):
+        if key and not on_tf and key in (self.api_key, os.environ.get("NEBIUS_API_KEY", "").strip()):
             raise ProviderError(P, "auth", None, f"refused: the Token Factory key goes only to {self.base_url}, not {base}")
         price = PRICES["token_factory"].get(model) or PRICES["token_factory"].get(base_model)
         if on_tf and not self.stub:
@@ -111,14 +113,18 @@ class TokenFactory:
                 self.on_usage(P, model, in_tokens, out_tokens, usd=usd)
             return usd
 
-        return f"{base}/chat/completions", {"Authorization": f"Bearer {key}"} if key else {}, body, bill
+        timeout = httpx.Timeout(120.0, connect=10.0, read=read_timeout) if read_timeout else httpx.USE_CLIENT_DEFAULT
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+        return f"{base}/chat/completions", {"json": body, "headers": headers, "timeout": timeout}, bill
 
-    def _call(self, method: str, path: str, *, v0: bool = False, create: bool = False, **kwargs) -> httpx.Response:
+    def _call(self, method: str, path: str, *, v0: bool = False, create: bool = False, raw: bool = False, **kwargs):
+        """The reply's JSON object (raw=True: the httpx.Response)."""
         if not self.api_key and not self.stub:
             raise ProviderError(P, "auth", None, "NEBIUS_API_KEY is not set")
         base = self.base_url.removesuffix("/v1") if v0 else self.base_url
-        return request(self.http, P, method, base + path, create=create,
+        resp = request(self.http, P, method, base + path, create=create,
                        headers={"Authorization": f"Bearer {self.api_key}"}, **kwargs)
+        return resp if raw else json_of(resp, P)
 
 
 class _Part:
@@ -130,14 +136,14 @@ class _Files(_Part):
     def create(self, path: str | Path, purpose: str = "fine-tune") -> str:
         """Upload a file; returns its id. Sent as bytes, so a retry re-sends the whole file."""
         files = {"file": (Path(path).name, Path(path).read_bytes())}
-        return self._tf._call("POST", "/files", create=True, files=files, data={"purpose": purpose}).json()["id"]
+        return self._tf._call("POST", "/files", create=True, files=files, data={"purpose": purpose})["id"]
 
     def get(self, file_id: str) -> dict:
         """File metadata: a checkpoint's result_files need their `filename`."""
-        return self._tf._call("GET", f"/files/{file_id}").json()
+        return self._tf._call("GET", f"/files/{file_id}")
 
     def content(self, file_id: str) -> bytes:
-        return self._tf._call("GET", f"/files/{file_id}/content").content
+        return self._tf._call("GET", f"/files/{file_id}/content", raw=True).content
 
 
 class _FineTuning(_Part):
@@ -151,17 +157,17 @@ class _FineTuning(_Part):
         body = {"model": model, "training_file": training_file, "validation_file": validation_file,
                 "hyperparameters": hyperparameters, "suffix": suffix, "seed": seed}
         return self._tf._call("POST", "/fine_tuning/jobs", create=True,
-                              json={k: v for k, v in body.items() if v is not None}).json()
+                              json={k: v for k, v in body.items() if v is not None})
 
     def get(self, job_id: str) -> dict:
         """status ∈ validating_files | queued | running | succeeded | failed | cancelled. Poll ≥ 15 s apart."""
-        return self._tf._call("GET", f"/fine_tuning/jobs/{job_id}").json()
+        return self._tf._call("GET", f"/fine_tuning/jobs/{job_id}")
 
     def events(self, job_id: str) -> list[dict]:
-        return self._tf._call("GET", f"/fine_tuning/jobs/{job_id}/events").json()["data"]
+        return self._tf._call("GET", f"/fine_tuning/jobs/{job_id}/events")["data"]
 
     def checkpoints(self, job_id: str) -> list[dict]:
-        return self._tf._call("GET", f"/fine_tuning/jobs/{job_id}/checkpoints").json()["data"]
+        return self._tf._call("GET", f"/fine_tuning/jobs/{job_id}/checkpoints")["data"]
 
     def best_checkpoint(self, job_id: str) -> dict:
         """The checkpoint with the lowest valid_loss, else the one with the highest step_number."""
@@ -174,11 +180,11 @@ class _FineTuning(_Part):
         return max(checkpoints, key=lambda c: c["step_number"])
 
     def cancel(self, job_id: str) -> dict:
-        return self._tf._call("POST", f"/fine_tuning/jobs/{job_id}/cancel").json()
+        return self._tf._call("POST", f"/fine_tuning/jobs/{job_id}/cancel")
 
     def list(self, limit: int = 20) -> list[dict]:
         """Recent jobs; find one by its `suffix` after a lost create response."""
-        return self._tf._call("GET", "/fine_tuning/jobs", params={"limit": limit}).json()["data"]
+        return self._tf._call("GET", "/fine_tuning/jobs", params={"limit": limit})["data"]
 
 
 class _Lora(_Part):
@@ -186,22 +192,22 @@ class _Lora(_Part):
         """POST /v0/models with source "<job_id>:<checkpoint_id>"; returns the model id to chat with (may differ
         from `name`). Unverified until spike 1, so a missing route or a rejected base raises kind `unsupported`."""
         try:
-            resp = self._tf._call("POST", "/v0/models", v0=True, create=True,
-                                  json={"name": name, "base_model": base_model, "source": source})
+            model = self._tf._call("POST", "/v0/models", v0=True, create=True,
+                                   json={"name": name, "base_model": base_model, "source": source})
         except ProviderError as e:
             if e.status in (400, 404, 405, 422):
                 raise ProviderError(P, "unsupported", e.status,
                                     f"Token Factory has no per-token LoRA deploy for {base_model} ({e.status}): "
                                     f"serve lora_adapter with vllm-serve; Token Factory said: {e.message}") from e
             raise
-        return resp.json().get("name", name)
+        return model.get("name", name)
 
     def status(self, name: str) -> str:
         """validating | active | error | deleted"""
-        return self._tf._call("GET", f"/v0/models/{name}", v0=True).json()["status"]
+        return self._tf._call("GET", f"/v0/models/{name}", v0=True)["status"]
 
     def delete(self, name: str) -> None:
-        self._tf._call("DELETE", f"/v0/models/{name}", v0=True)
+        self._tf._call("DELETE", f"/v0/models/{name}", v0=True, raw=True)
 
 
 def _minimal(schema: dict, s: str):

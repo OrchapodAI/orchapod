@@ -109,8 +109,9 @@ async def test_run_it_yourself_clones_each_template_at_reduced_scale(client, mon
             assert cut["inputs"] == {**full["inputs"], **t["reduced_inputs"].get(full["id"], {})}  # ... smaller inputs
         assert set(t["reduced_inputs"]) <= {n["id"] for n in t["plan"]["nodes"]}
         assert 0 < small["estimate"]["usd"] < t["estimate"]["usd"]
-    # gpu-l40s-a at $1.55/h; the docs specialist is mostly tf-finetune's typical $0.50 until spike 1 prices it
-    assert [round(t["reduced"]["estimate"]["usd"], 2) for t in templates] == [0.83, 0.03, 0.02, 0.55]
+    # gpu-l40s-a at $1.55/h for vllm-serve's ~5 min start + keep_alive_min (real-estate was $0.83 before the start was
+    # billed); the docs specialist is mostly tf-finetune's typical $0.50 until spike 1 prices it
+    assert [round(t["reduced"]["estimate"]["usd"], 2) for t in templates] == [0.96, 0.03, 0.02, 0.55]
     # fits: the reduced plan's estimate within the caller's run cap ($3 x ORCHAPOD_ANON_SCALE 0.1 when anonymous)
     assert [t["fits"] for t in templates] == [False, True, True, False]  # real-estate and docs: admin-only by default
     monkeypatch.setenv("ORCHAPOD_ADMIN_TOKEN", "s3cret")
@@ -398,6 +399,13 @@ def test_tf_finetune_is_priced_from_its_trained_tokens_once_the_base_has_a_price
         "ft: the rows of train_data are unknown (not from synth-distilabel); the estimate assumes $0.50"])
     del hf["nodes"][0]["inputs"]["dataset"]  # a required input missing: review() reports it, the estimate never crashes
     assert planner.review(hf)[0] == ["prep: dataset: Field required"]
+
+
+def test_vllm_serve_is_priced_from_the_endpoints_creation():
+    """vllm-serve bills from creation (ml-w4): the typical start (5 min; 15 at most) plus keep_alive_min, at its rate."""
+    est = planner.estimate({"nodes": [node("s", "vllm-serve", model="m", keep_alive_min=30),
+                                      node("h", "vllm-serve", model="m", keep_alive_min=10, platform="gpu-h100-sxm")]})[0]
+    assert (est["by_node"]["s"]["usd"], est["by_node"]["h"]["usd"]) == (round(35 / 60 * 1.55, 4), round(15 / 60 * 4.5, 4))
 
 
 def test_review_reports_an_estimate_over_the_budget_left():

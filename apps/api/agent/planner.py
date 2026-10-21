@@ -100,6 +100,7 @@ def _values(node: dict) -> dict:
 # Estimate and validation
 # ---------------------------------------------------------------------------
 
+ENDPOINT_START_MIN = 5  # a Serverless Endpoint's typical wait for Running (15 min at most), billed from creation
 TRAIN_TOKENS_PER_ROW = 250  # a short Q&A row in Llama's chat template; ponytail: measure it once a fine-tune has run
 
 
@@ -138,8 +139,9 @@ def estimate(plan: dict) -> tuple[dict, list[str]]:
             elif t == "judge-eval":  # both answer orders per judged row, ~1,500 tokens in and 300 out each
                 p, rows = tf.get(v.get("judge_model"), tf[ULTRA]), int(v.get("n_judge") or v.get("max_samples") or 60)
                 usd, minutes = 2 * rows * (1500 * p["in"] + 300 * p["out"]) / 1e6, 5 + rows / 6
-            elif t == "vllm-serve":  # the endpoint bills keep_alive_min of GPU time
-                usd = int(v.get("keep_alive_min") or 30) / 60 * gpu.get(v.get("platform"), gpu["gpu-l40s-a"])
+            elif t == "vllm-serve":  # the endpoint bills from creation: its start, then keep_alive_min
+                minutes_billed = ENDPOINT_START_MIN + int(v.get("keep_alive_min") or 30)
+                usd = minutes_billed / 60 * gpu.get(v.get("platform"), gpu["gpu-l40s-a"])
             elif t == "tf-finetune":  # trained tokens (rows x tokens per row x epochs) at the base's fine-tune price
                 price, rows = PRICES["token_factory_finetune"].get(str(v.get("model"))), _rows(nodes, v.get("train_data"))
                 if price is None:

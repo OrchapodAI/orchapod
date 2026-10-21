@@ -366,3 +366,18 @@ async def test_a_registration_never_extends_a_live_endpoint(client, db, seeded_n
     sooner = await client.post("/internal/ttl", json={**TTL, "run_id": str(run.id), "keep_alive_min": 10})
     await asyncio.sleep(0)
     assert sooner.json()["expires_at"] < expiry and timer.cancelled() and len(internal._ttl_tasks) == 1
+
+
+@pytest.mark.parametrize("usd", ["NaN", "Infinity", "-inf", "1e999", "lots", 6.01])  # $3 run cap: at most $6
+async def test_a_cost_json_must_be_a_finite_amount_within_twice_the_run_cap(client, db, seeded_node_run, usd, caplog):
+    """A compromised node (gpu Jobs run third-party code) must not poison Run.cost_usd, nor swamp it: one huge finite
+    report would block the whole UTC day."""
+    run, _ = seeded_node_run
+    r = await client.post("/internal/artifact", json={"run_id": str(run.id), "node_id": "node", "artifact": {
+        "name": "cost_json", "uri": "r2://b/runs/x/node/cost_json", "kind": "metrics", "metadata": {"usd": usd, "seq": 1}}})
+    await db.refresh(run)
+    assert (r.status_code, run.cost_usd) == (422, None) and "refused a cost_json" in caplog.text
+    ok = await client.post("/internal/artifact", json={"run_id": str(run.id), "node_id": "node", "artifact": {
+        "name": "cost_json", "uri": "r2://b/runs/x/node/cost_json", "kind": "metrics", "metadata": {"usd": 6.0, "seq": 2}}})
+    await db.refresh(run)
+    assert (ok.status_code, float(run.cost_usd)) == (201, 6.0)  # twice the cap is still accepted

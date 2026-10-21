@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import re
 import secrets
 import uuid
@@ -205,9 +206,17 @@ async def receive_artifact(event: ArtifactEvent, db: Session):
 async def _reconcile(db: AsyncSession, node_run: NodeRun, meta: dict) -> tuple[dict | None, float]:
     """A node's cost_json against its attempt's earlier ones (contracts "Run state machine"): its meta with usd = what
     it adds to the run, so the summary agrees, and reported_usd = the node's own figure; None for a re-send of a seq
-    already counted. A node's figure is never negative, and its meta cannot pose as the executor's bill."""
+    already counted. A node's figure is never negative, and its meta cannot pose as the executor's bill. 422 for a
+    figure that is not a finite amount within twice ORCHAPOD_MAX_RUN_USD: one huge report would block the whole day."""
     meta = {k: v for k, v in meta.items() if k not in ("billed_by", "wall_usd", "reported_usd")}
-    reported, seq = max(0.0, float(meta.get("usd") or 0)), meta.get("seq")
+    try:
+        reported = float(meta.get("usd") or 0)
+    except (TypeError, ValueError):
+        reported = math.nan
+    if not math.isfinite(reported) or reported > 2 * budget.run_cap(1.0):
+        log.warning("refused a cost_json of %r from run %s node %s", meta.get("usd"), node_run.run_id, node_run.node_id)
+        raise HTTPException(422, "cost_json usd must be a finite amount, at most twice ORCHAPOD_MAX_RUN_USD")
+    reported, seq = max(0.0, reported), meta.get("seq")
     earlier = await budget.attempt_costs(db, node_run)
     if isinstance(seq, int) and any(m.get("seq") == seq and m.get("billed_by") != "executor"
                                     and float(m.get("reported_usd", m.get("usd", 0))) >= reported for m in earlier):

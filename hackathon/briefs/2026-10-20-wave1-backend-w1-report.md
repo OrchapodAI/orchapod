@@ -119,3 +119,47 @@ These were not caught by the unit tests.
 ## Open questions
 1. **`ORCHAPOD_PREVIOUS_OUTPUTS`** (Config: "backend's") has no definition anywhere, and retry already forwards `ORCHAPOD_RESUME_CHECKPOINT_URI`. Define it or drop it from the contract?
 2. **The `api` runtime rows** (tf-finetune, tf-deploy, judge-eval, vllm-serve) arrive with ml's NODE_REGISTRY blocks in wave 2. The executor supports them now, and a test covers it by patching the registry.
+
+## Fix round 1 (commit f757f20)
+**Important 1: one executor per run.**
+- `launch()` returns the live task when the run already has one: `if (task := running_tasks.get(run_id)) and not task.done(): return task`.
+- The done-callback still pops by identity. A finished task's callback can fire after a new launch, and a plain pop would drop the new task.
+
+**Important 2: cancel-safe teardown.**
+- Provision runs as `prov = ensure_future(...)` and is awaited through `shield`.
+- The try/finally now starts right after provision, so the commit that records the pod is covered.
+- Every terminate runs as its own task, referenced in `_background` and awaited through `shield`. A second cancel cannot interrupt the 30 s grace. The startup sweep uses the same helper.
+- **Deviation from the suggested fix:** on a cancel during provision I attach `prov.add_done_callback(... _terminate(provider, f.result()))` instead of awaiting `prov` in the handler.
+  - Awaiting there can itself be cancelled, by a second click during an image pull, which would orphan the container.
+  - Awaiting there also holds the cancel response until the pull finishes.
+  - The callback terminates the pod as soon as it exists, whatever happens to the task.
+
+**Minors:**
+- **3:** one try covers the node loop. `_stop` fails the first unfinished row and accepts None.
+- **4:** `cancel_run` always refreshes the run before deciding.
+- **5:** `/internal/log` stores an ERROR line only while the node is RUNNING.
+- **6:** `cost_json` increments the run cost atomically: `UPDATE run SET cost_usd = coalesce(cost_usd, 0) + usd … RETURNING cost_usd`. This works on SQLite and Postgres.
+- **7:** `cost.add` and `cost.summary` hold a module-level `threading.Lock`.
+- **Ponytail cuts:** the redundant `except CancelledError: raise` is gone, and `contextlib.nullcontext()` replaces the `_Resp` class.
+- Not done, as instructed: retry 402/503 and alembic.
+
+**Tests:** 6 new, 1 extended. All 7 failed before the fix.
+- `test_concurrent_retries_launch_one_executor`:
+  - It gathers two retry POSTs, with one DB session per request as in production.
+  - Before the fix both got through and `b` was provisioned twice (`a,b,b,b`). Now it is `a,b,b,c`.
+  - `launch(id) is launch(id)`.
+- `test_cancel_during_provision_terminates_the_pod_once_it_exists`: provision blocks, then cancel; the pod is terminated once it exists.
+- `test_a_second_cancel_cannot_interrupt_teardown`: terminate blocks inside the grace, then a second cancel; terminate still completes, and the node is `failed` "cancelled".
+- `test_pod_is_terminated_even_if_recording_it_fails`: the commit after provision raises, and the pod is still terminated.
+- `test_an_error_between_nodes_still_leaves_one_failed_node`: a broadcast fails after node a succeeds. The run ends `failed` with `b` failed "internal: redis down" and `c` pending.
+- `test_cancel_rereads_the_run_before_deciding`: the run is finished in another session, and cancel does not overwrite it.
+- `test_error_log_line_is_kept_for_the_node_error` (extended): a late ERROR line does not replace "cancelled".
+
+**Output:**
+- The covering tests (`tests/api/test_executor.py` and `tests/sdk`): **34 passed**.
+- `make check`: exit 0. ruff reports "All checks passed!". pytest: **187 passed, 66 warnings**, stable over 5 runs.
+  - The extra warnings are sqlmodel's test-session deprecation (`scalars` → `execute`), which scales with the new `run_workflow` calls. With DeprecationWarnings ignored, only the existing RuntimeWarning is left.
+- `python -m pytest tests -q 2>&1 | grep -c "never awaited"` → **1**, the existing `_terminate_after_ttl` warning.
+- Real-container e2es, rerun on f757f20:
+  - SQLite: ok, fail and cancel pass; cancel took 0.4 s.
+  - Postgres with an API kill and restart: the sweep took 1.5 s, the orphan is `failed` "control plane restarted", `cleanup` and `cost_json` landed, and no containers are left.

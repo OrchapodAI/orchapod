@@ -34,7 +34,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D2 Dockerfiles build from the repo root (synth-distilabel, data-prep: `COPY packages/sdk-py/orchapod`, `COPY containers/<node>/…`); delete synth-distilabel's byte-identical SDK copy — TODO
 - [ ] P0 D2 data-engineering reviews the R19 diffs of its two Dockerfiles (synth-distilabel, data-prep) — TODO (wave 2)
 - [ ] P0 D2 synth-distilabel: remove the Anthropic/OpenAI teacher branches and the openai/anthropic pip deps from its image (Nemotron via packages/providers only) — TODO (wave 2)
-- [ ] P0 D3 data-prep: exact + near dedupe, train/val/test, TF dataset rules (quality filter → wave 2) — APPROVED, waits for backend-w1 (hack/data-w1 @ a623fe6)
+- [ ] P0 D3 data-prep: exact + near dedupe, train/val/test, TF dataset rules (quality filter → wave 2) — DONE (merged after bc5c59f; rebuild orchapod/data-prep:dev before e2e)
 - [ ] P1 data-prep minors (review of data-w1): unhashable role crashes instead of dropping (move tf_valid inside the try); CSV keep_default_na=False; small-n test split can be empty; log before near-dedupe; tests for missing dataset, CSV, eval/test composition — TODO (with quality_filter, wave 2)
 ### ml-engineering
 - [ ] P1 D1 spike 4: Unsloth 16-bit LoRA on nvidia/Llama-3.1-Nemotron-Nano-8B-v1, vast.ai A100 (≤ $6 / 3 h) — DONE ($1.29, 48 min; containers/unsloth-train/spike/RESULTS.md)
@@ -51,13 +51,13 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P1 D5 after G2: real Serverless Job + Endpoint; D6 eval vs base; D7 judging-window plan — TODO
 ### backend
 - [ ] P0 D1 spike 2: Nemotron 3 Super guided-JSON plan for intent #2 — BLOCKED(NEBIUS_API_KEY)
-- [ ] P0 D1 run/node state machine for long-polling nodes: cancel, timeouts, retry-node — REVIEW(hack/backend-w1)
-- [ ] P0 D1 SDK: cost_json + metrics_json, progress, internal secret — REVIEW(hack/backend-w1)
+- [x] P0 D1 run/node state machine for long-polling nodes: cancel, timeouts, retry-node — DONE (bc5c59f)
+- [x] P0 D1 SDK: cost_json + metrics_json, progress, internal secret — DONE (bc5c59f)
 - [ ] P0 D2 Orchapod Agent planner on Nemotron (Claude out of agent/workflow_builder.py) + POST /agent/plan — TODO
 - [ ] P0 D2 executor forwards only Nebius/Tavily/HF keys to containers (no ANTHROPIC/OPENAI); default provider_pref not vastai — TODO
 - [ ] P1 D3 checkpoint-resume never fires (looks in a fresh NodeRun's empty outputs); drop the 19 debug log.warning lines in the executor — TODO
 - [ ] P0 D2 remote logs: public ORCHAPOD_CONTROL_URL, WebSocket fan-out verified — TODO
-- [ ] P0 D2 lineage + cost roll-up; GET /runs/{id}/summary — TODO
+- [x] P0 D2 lineage + cost roll-up; GET /runs/{id}/summary — DONE (bc5c59f)
 - [ ] P0 D3 budget guard: per-run, per-day, anonymous scale, ORCHAPOD_KILL_SWITCH — TODO
 - [ ] P0 D3 agent validate → run → monitor → report; POST /agent/run, GET /agent/runs/{id}/report — TODO
 - [ ] P0 D4 compare playground API; templates + golden-run fixture — TODO
@@ -81,7 +81,7 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D4 Playwright smoke: template → run → eval → playground; /agent intent #2 — TODO
 - [ ] P0 D5 failure drills · D7 fresh-clone test < 20 min · D8 three rehearsals — TODO
 ### devrel
-- [ ] P0 D2 README skeleton: what, why, how, sponsor usage, setup, demo, costs, what changed, license — APPROVED after fix round 1; merges after platform-w1, same push as qa-w1 (hack/devrel-w1)
+- [ ] P0 D2 README skeleton: what, why, how, sponsor usage, setup, demo, costs, what changed, license — DONE (merged; README conflict resolved with devrel's file + frontend's pnpm test line)
 - [ ] P1 devrel next README pass: put ANTHROPIC_API_KEY and OPENAI_API_KEY back in the test's STALE list (sponsor-compliance guard); README:140 hosted golden run and README:181 make e2e/agent-e2e/demo need TODO(D8) until real — TODO
 - [ ] P0 D4 Devpost draft + Token Factory / AI Cloud / NVIDIA feedback doc — TODO
 - [ ] P0 D6 video script + shot list · D8 record and upload · final README pass — TODO

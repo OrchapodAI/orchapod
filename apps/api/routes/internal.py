@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import secrets
 import uuid
 from asyncio import sleep
@@ -45,6 +46,8 @@ from api.services.redact import redact
 # endpoint_url artifact id (str) → the task that deletes its endpoint at expiry; asyncio keeps only weak references.
 _ttl_tasks: dict[str, asyncio.Task] = {}
 DELETE_RETRY_S = 300  # a failed delete is tried again: the endpoint bills until it is gone
+# A Nebius resource id; it becomes a REST path segment, so /endpoints/../jobs/x could otherwise delete any job.
+ENDPOINT_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 log = logging.getLogger("api.internal")
 
 router = APIRouter()
@@ -94,7 +97,7 @@ class RegisterTTLRequest(BaseModel):
     action:         str          # "register_ttl"
     keep_alive_min: int = Field(ge=1, le=120)  # vllm-serve's bounds: no endpoint outlives 2 h of GPU time
     endpoint_url:   str
-    endpoint_id:    str          # the Serverless Endpoint deleted at expiry
+    endpoint_id:    str = Field(pattern=ENDPOINT_ID.pattern)  # the Serverless Endpoint deleted at expiry
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +263,12 @@ async def register_ttl(body: RegisterTTLRequest, db: Session):
     now        = datetime.now(timezone.utc)
     expires_at = now + timedelta(minutes=body.keep_alive_min)
 
+    for earlier in await db.scalars(select(Artifact).where(Artifact.kind == ArtifactKind.ENDPOINT)):
+        if _live(earlier.meta) and earlier.meta["endpoint_id"] == body.endpoint_id:  # one endpoint, one live expiry
+            earlier.meta = {**earlier.meta, "superseded_at": now.isoformat()}
+            if task := _ttl_tasks.pop(str(earlier.id), None):
+                task.cancel()
+
     outputs = dict(node_run.outputs or {})
     outputs["endpoint_url"] = body.endpoint_url
     outputs["expires_at"]   = expires_at.isoformat()
@@ -293,8 +302,19 @@ async def register_ttl(body: RegisterTTLRequest, db: Session):
     return {"status": "ttl_registered", "keep_alive_min": body.keep_alive_min, "expires_at": expires_at.isoformat()}
 
 
+def _live(meta: dict | None) -> bool:
+    """A registered endpoint that is neither deleted nor superseded by a later registration of the same id."""
+    meta = meta or {}
+    return bool(meta.get("endpoint_id") and meta.get("expires_at")) and not (meta.get("deleted_at")
+                                                                              or meta.get("superseded_at"))
+
+
 def _arm(artifact: Artifact, run_id: uuid.UUID) -> None:
-    """Start the expiry task of a registered endpoint; _ttl_tasks holds it until it ends."""
+    """Start the expiry task of a registered endpoint; _ttl_tasks holds it until it ends. A stored endpoint_id that is
+    not an id (it would walk the REST path) is never sent."""
+    if not ENDPOINT_ID.fullmatch(artifact.meta["endpoint_id"]):
+        log.error("endpoint_url %s: %r is not an endpoint id, so nothing deletes it", artifact.id, artifact.meta["endpoint_id"])
+        return
     key = str(artifact.id)
     _ttl_tasks[key] = task = asyncio.create_task(_expire(artifact.id, artifact.meta["endpoint_id"],
                                                          datetime.fromisoformat(artifact.meta["expires_at"]),
@@ -309,8 +329,7 @@ async def resume_ttls() -> None:
         rows = await db.execute(select(Artifact, NodeRun.run_id).join(NodeRun, NodeRun.id == Artifact.node_run_id)
                                 .where(Artifact.kind == ArtifactKind.ENDPOINT))
         for artifact, run_id in rows:
-            meta = artifact.meta or {}
-            if meta.get("endpoint_id") and meta.get("expires_at") and not meta.get("deleted_at"):
+            if _live(artifact.meta):
                 _arm(artifact, run_id)
 
 
@@ -335,14 +354,18 @@ async def _expire(artifact_id: uuid.UUID, endpoint_id: str, expires_at: datetime
             await asyncio.to_thread(_endpoints().delete, endpoint_id)
             break
         except Exception as e:
-            if getattr(e, "status", None) == 404:
+            status = getattr(e, "status", None)
+            if status == 404:
                 break
+            if status is not None and 400 <= status < 500 and status != 429:  # refused for good: trying again won't help
+                log.error("endpoint %s not deleted: %s; it bills until the next API start tries again, or the console", endpoint_id, e)
+                return
             log.error("endpoint %s not deleted (it bills until it is); retrying in %s s: %s", endpoint_id, DELETE_RETRY_S, e)
             await sleep(DELETE_RETRY_S)
     async with AsyncSessionLocal() as db:
-        artifact = await db.get(Artifact, artifact_id)
-        artifact.meta = {**artifact.meta, "deleted_at": datetime.now(timezone.utc).isoformat()}
-        await db.commit()
+        if artifact := await db.get(Artifact, artifact_id):
+            artifact.meta = {**artifact.meta, "deleted_at": datetime.now(timezone.utc).isoformat()}
+            await db.commit()
 
 
 async def _warn(run_id: uuid.UUID, node_run_id: uuid.UUID) -> None:

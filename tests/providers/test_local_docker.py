@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import shutil
 import subprocess
+import uuid
 from unittest.mock import AsyncMock
 
 import pytest
@@ -58,7 +59,7 @@ async def test_a_container_that_fails_at_once_keeps_its_exit_code_until_terminat
     """With auto-remove, such a container was gone before `docker wait` and the node read as succeeded."""
     if not shutil.which("docker") or subprocess.run(["docker", "info"], capture_output=True).returncode:
         pytest.skip("needs a docker daemon")
-    tag = "orchapod-test/exit1:latest"  # throwaway: alpine whose command exits 1
+    tag = f"orchapod-test/exit1:{uuid.uuid4().hex[:8]}"  # throwaway: alpine whose command exits 1; unique, because other runs share the daemon
     try:
         subprocess.run(["docker", "build", "-q", "-t", tag, "-"], input=b'FROM alpine:latest\nCMD ["false"]\n',
                        check=True, capture_output=True)

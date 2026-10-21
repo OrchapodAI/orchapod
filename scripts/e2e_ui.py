@@ -8,9 +8,9 @@ headless Chromium) against them. The tests: /agent intent #2 to a finished repor
 intent #2 with its dataset card; the eval view and the compare playground on a run served from a fixture; the golden path
 (intent #1: one click, the run, its eval view, the playground).
 
-A step whose piece is not merged yet (judge-eval and vllm-serve for intent #1: see e2e_agent.PENDING; POST /compare: backend-w3)
-prints SKIP with its reason and does not fail; --strict fails it. The pieces the API still lacks are found here, from the
-planner's own errors, and passed on in E2E_PENDING. The UI is on NebiusHackathon: a missing UI piece fails.
+A step whose piece is not merged yet (vllm-serve for intent #1: see e2e_agent.PENDING) prints SKIP with its reason and does not
+fail; --strict fails it. The pieces the API still lacks are found here, from the planner's own errors, and passed on in
+E2E_PENDING. The UI, judge-eval and POST /compare are on NebiusHackathon: a missing one fails.
 """
 
 import argparse

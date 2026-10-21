@@ -14,11 +14,11 @@ SHIPPED = [json.loads(f.read_text()) for f in sorted((ROOT / "apps/api/agent/tem
 TEMPLATES = [{**t, "estimate": planner.estimate(t["plan"])[0]} for t in SHIPPED]  # what GET /agent/templates serves
 I1, I2, I3 = (agent.canonical(TEMPLATES, n) for n in "123")
 
-# What the planner says about templates #1 and #3 on the wave-2 tree (backend-w2's report).
+# What the planner says about template #1 with ml-w3 merged and vllm-serve not yet to contract (ml-w4); template #3 has no errors.
 ERRORS_1 = ["serve: unknown input 'lora_adapter'",
             "serve: no GPU provider in provider_pref ['nebius'] is configured (nebius needs NEBIUS_PROJECT_ID)",
-            "evaluate: unknown node type 'judge-eval'"]
-ERRORS_3 = ["quantize: unknown input 'keep_f16'", "evaluate: unknown node type 'judge-eval'"]
+            "evaluate: base_model_ref: serve (vllm-serve) has no output 'base_model_ref'",
+            "evaluate: tuned_model_ref: serve (vllm-serve) has no output 'model_ref'"]
 
 
 def fake_api(errors_by_intent=None, plan_for=None, status=200):
@@ -50,17 +50,9 @@ def test_canonical_intents_are_found_by_what_their_plan_contains():
 
 # --- SKIP: only the named gaps -------------------------------------------------------------------------------------------
 
-def test_skip_reasons_name_each_missing_piece_once():
-    r1 = agent.skip_reasons(ERRORS_1, I1["plan"])
-    assert r1 == [agent.VLLM, "ml-w3: judge-eval is not in NODE_REGISTRY"]  # two vllm-serve errors, one reason
-    r3 = agent.skip_reasons(ERRORS_3, I3["plan"])
-    assert r3 == ["ml-w3: quantize has no keep_f16 (R11)", "ml-w3: judge-eval is not in NODE_REGISTRY"]
-    after_judge_eval = ["serve: unknown input 'lora_adapter'", "serve: no GPU provider in provider_pref ['nebius'] is configured",
-                        "evaluate: base_model_ref: serve (vllm-serve) has no output 'base_model_ref'",
-                        "evaluate: tuned_model_ref: serve (vllm-serve) has no output 'model_ref'"]
-    assert agent.skip_reasons(after_judge_eval, I1["plan"]) == [agent.VLLM]
-    assert agent.skip_reasons(["evaluate: base_model_ref: quantize (quantize) has no output 'gguf_f16'"], I3["plan"]) == [
-        "ml-w3: quantize has no gguf_f16 (R11)"]
+def test_skip_reasons_name_the_missing_piece_once():
+    assert agent.skip_reasons(ERRORS_1, I1["plan"]) == [agent.VLLM]  # four vllm-serve errors, one reason
+    assert "ml-w4" in agent.VLLM
 
 
 def test_anything_else_is_not_a_skip():
@@ -70,34 +62,45 @@ def test_anything_else_is_not_a_skip():
     # "no GPU provider" excuses vllm-serve only; for another node it is a real problem
     assert agent.skip_reasons(["research: no GPU provider in provider_pref ['nebius'] is configured"], I1["plan"]) is None
     assert agent.skip_reasons(["nope: unknown input 'lora_adapter'"], I1["plan"]) is None  # not even a node of the plan
+    # ml-w3 and backend-w3 are merged: a plan that lacks judge-eval or quantize's keep_f16 is a regression, not a gap
+    assert agent.skip_reasons(["evaluate: unknown node type 'judge-eval'"], I3["plan"]) is None
+    assert agent.skip_reasons(["quantize: unknown input 'keep_f16'"], I3["plan"]) is None
+    assert agent.skip_reasons(["evaluate: base_model_ref: quantize (quantize) has no output 'gguf_f16'"], I3["plan"]) is None
 
 
-def test_every_planner_error_on_a_shipped_template_is_a_named_gap_or_gone():
-    """If the planner's wording drifts, the SKIP stops matching and the e2e fails loudly, so catch it here first."""
+def test_every_planner_error_about_vllm_serve_on_a_shipped_template_is_a_named_gap_or_gone():
+    """If the planner's wording drifts, the SKIP stops matching and the e2e fails loudly, so catch it here first. Only the
+    vllm-serve errors: the rest of a tree that lacks ml-w3 (judge-eval) is not a named gap, and must not become one."""
     for t in SHIPPED:
         errors, _, _ = planner.review(t["plan"])
-        assert not errors or agent.skip_reasons(errors, t["plan"]), (t["slug"], errors)
+        serve = {n["id"] for n in t["plan"]["nodes"] if n["type"] == "vllm-serve"}
+        gaps = [e for e in errors if e.partition(": ")[0] in serve or "(vllm-serve)" in e]
+        assert not gaps or agent.skip_reasons(gaps, t["plan"]), (t["slug"], gaps)
 
 
 # --- exit codes: a SKIP is not a pass --------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("number, errors", [("1", ERRORS_1), ("3", ERRORS_3)])
-def test_a_skip_exits_0_and_strict_makes_it_3(number, errors, capsys):
-    template = agent.canonical(TEMPLATES, number)
-    api = fake_api({template["intent"]: errors})
-    assert agent.run_all(api, number, strict=False) == 0
+def test_a_skip_exits_0_and_strict_makes_it_3(capsys):
+    api = fake_api({I1["intent"]: ERRORS_1})
+    assert agent.run_all(api, "1", strict=False) == 0
     out = capsys.readouterr().out
-    assert f"e2e SKIP intent #{number} (this is NOT a pass" in out and "1 SKIP (not passes)" in out
-    assert all(reason in out for reason in agent.skip_reasons(errors, template["plan"])), "the missing pieces are named"
-    assert agent.run_all(api, number, strict=True) == 3
+    assert "e2e SKIP intent #1 (this is NOT a pass" in out and "1 SKIP (not passes)" in out
+    assert agent.VLLM in out, "the missing piece is named"
+    assert agent.run_all(api, "1", strict=True) == 3
     assert "--strict turns it into a failure" in out
 
 
 def test_an_unexpected_plan_error_fails_and_a_skip_never_hides_it(capsys):
-    errors = ERRORS_3 + ["gsm8k: hf_split: Input should be a valid string"]
-    assert agent.run_all(fake_api({I3["intent"]: errors}), "3", strict=False) == 1
+    errors = ERRORS_1 + ["synth: unknown input 'bogus'"]
+    assert agent.run_all(fake_api({I1["intent"]: errors}), "1", strict=False) == 1
     out = capsys.readouterr().out
-    assert "e2e FAIL intent #3" in out and "hf_split" in out and "SKIP" not in out.replace("0 SKIP", "")
+    assert "e2e FAIL intent #1" in out and "bogus" in out and "SKIP" not in out.replace("0 SKIP", "")
+
+
+def test_a_merged_piece_that_goes_missing_fails_instead_of_skipping(capsys):
+    api = fake_api({I3["intent"]: ["evaluate: unknown node type 'judge-eval'"]})
+    assert agent.run_all(api, "3", strict=False) == 1
+    assert "e2e FAIL intent #3" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("errors", [[], ERRORS_1])  # ERRORS_1 are named gaps of the plan it answered with: still no SKIP

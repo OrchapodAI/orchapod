@@ -8,6 +8,7 @@ import subprocess
 import time
 from pathlib import Path
 
+import e2e_agent as agent
 import e2e_ui as ui
 import pytest
 
@@ -25,9 +26,9 @@ def test_web_env_points_at_the_api_and_carries_no_paid_key():
 
 
 def test_playwright_env_says_where_the_app_is_what_cannot_run_and_whether_that_fails():
-    env = ui.playwright_env("http://127.0.0.1:3100", "http://127.0.0.1:8003", {"1": ["ml-w3: judge-eval"]}, True, SHELL)
+    env = ui.playwright_env("http://127.0.0.1:3100", "http://127.0.0.1:8003", {"1": ["ml-w4: vllm-serve"]}, True, SHELL)
     assert env["E2E_WEB_URL"] == "http://127.0.0.1:3100" and env["E2E_API_URL"] == "http://127.0.0.1:8003"
-    assert json.loads(env["E2E_PENDING"]) == {"1": ["ml-w3: judge-eval"]} and env["E2E_STRICT"] == "1"
+    assert json.loads(env["E2E_PENDING"]) == {"1": ["ml-w4: vllm-serve"]} and env["E2E_STRICT"] == "1"
     assert ui.playwright_env("w", "a", {}, False, SHELL)["E2E_STRICT"] == ""  # blank, so `=== "1"` is false
     assert not {"NEBIUS_API_KEY", "TAVILY_API_KEY", "HF_TOKEN", "VASTAI_API_KEY"} & set(env)
 
@@ -63,7 +64,7 @@ def test_deps_missing_names_each_install(monkeypatch, tmp_path):
 def test_ui_pending_names_the_gaps_and_the_node_types_that_will_run():
     api = fake_api({I1["intent"]: ERRORS_1})
     pending, types = ui.ui_pending(api)
-    assert list(pending) == ["1"] and "ml-w3: judge-eval is not in NODE_REGISTRY" in pending["1"]
+    assert pending == {"1": [agent.VLLM]}
     assert types == {n["type"] for n in I2["plan"]["nodes"]}  # only the intent that runs needs its images
     pending, types = ui.ui_pending(fake_api())  # nothing missing: both run
     assert pending == {} and {n["type"] for n in I1["plan"]["nodes"]} <= types

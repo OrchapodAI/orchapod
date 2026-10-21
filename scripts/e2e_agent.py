@@ -12,8 +12,8 @@ with every node's contract artifacts and a cost_json, cost $0, the report names 
 keep_f16 registers the f16 baseline. It reuses e2e_demo.py: its stack (own API, STUB=1, throwaway DB, no paid key), image
 builds and run checks; the images it builds are the shared orchapod/<node>:dev, so it is opt-in like e2e_demo.py.
 
-Intents #1 and #3 need judge-eval, quantize's keep_f16 and vllm-serve to contract (PENDING below). While a plan's errors are
-exactly those named gaps the intent is SKIPped, loudly: exit 0, and --strict makes it 3. Any other plan error is a FAIL.
+Intent #1 needs vllm-serve to contract (ml-w4; PENDING below). While a plan's errors are exactly that named gap the intent is
+SKIPped, loudly: exit 0, and --strict makes it 3. Any other plan error is a FAIL, and so is a gap whose piece has merged.
 
 The real run is not written: it needs the keys (spike 3). Without --max-cost it refuses, whatever else it is asked.
 """
@@ -33,13 +33,11 @@ INTENTS = {"1": "tf-finetune", "2": "structured", "3": "quantize"}  # what each 
 
 VLLM = ("ml-w4: vllm-serve is not to contract yet (lora_adapter input, model_ref and base_model_ref outputs, runtime api; "
         "contracts \"vllm-serve\")")
-# ponytail: wave-3 SKIP scaffolding. (node type or None, regex over the plan error "<node_id>: <problem>", the missing piece.)
-# Once ml-w3 and ml-w4 (vllm-serve) merge, delete PENDING, skip_reasons, the SKIP branch of run_one and --strict, and drop the
-# Makefile's --strict from this script's line (nothing can SKIP then).
+# ponytail: SKIP scaffolding for the one piece not merged yet. (node type or None, regex over the plan error "<node_id>: <problem>",
+# the missing piece.) Once ml-w4 (vllm-serve) merges, delete PENDING, skip_reasons, the SKIP branch of run_one and --strict, and
+# drop the Makefile's --strict from this script's line (nothing can SKIP then). Entries for merged pieces (ml-w3: judge-eval,
+# quantize keep_f16) are already gone: a plan that still lacks them is a failure.
 PENDING = (
-    (None, r"unknown node type 'judge-eval'", "ml-w3: judge-eval is not in NODE_REGISTRY"),
-    ("quantize", r"unknown input 'keep_f16'", "ml-w3: quantize has no keep_f16 (R11)"),
-    (None, r"\(quantize\) has no output 'gguf_f16'", "ml-w3: quantize has no gguf_f16 (R11)"),
     ("vllm-serve", r"unknown input 'lora_adapter'|no GPU provider", VLLM),
     (None, r"\(vllm-serve\) has no output '(base_)?model_ref'", VLLM),
 )
@@ -209,7 +207,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--stub", action="store_true", help="STUB=1: $0, no keys, no network beyond the local stack")
     ap.add_argument("--intent", help="1, 2 or 3 (a canonical intent), or any text; stub default: all three; a real run needs one")
     ap.add_argument("--max-cost", type=float, help="USD cap of a real run; a real run is refused without it")
-    ap.add_argument("--strict", action="store_true", help="a SKIP (a wave-3 piece not merged yet) exits 3 instead of 0")
+    ap.add_argument("--strict", action="store_true", help="a SKIP (vllm-serve not merged yet) exits 3 instead of 0")
     args = ap.parse_args(argv)
     if not args.stub:
         if args.max_cost is None or args.max_cost <= 0:

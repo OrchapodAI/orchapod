@@ -73,7 +73,7 @@ test("/agent: intent #2 is planned, run and reported", async ({ page }, testInfo
 
 // ---------------------------------------------------------------------------------------------------------------------
 // The template gallery, the dataset card, the eval view and the compare playground (frontend-w3, merged: a missing piece is a
-// regression and fails), and the golden path, which SKIPs only for what is not merged yet (judge-eval, vllm-serve, POST /compare).
+// regression and fails), and the golden path, which SKIPs only for what is not merged yet (vllm-serve, ml-w4).
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** One click on a template card of the gallery (under the chat box on /agent; its button is named "Run template: <title>"). */
@@ -172,9 +172,6 @@ test("golden path: template, run, eval view, compare playground", async ({ page 
   const problems = watch(page);
   const t = await template(1);
   if (PENDING["1"]) pending(PENDING["1"]);
-  // POST /compare (backend-w3): a 404 or 405 is a route that does not exist, anything else is the route answering
-  const probe = await fetch(`${API}/compare`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
-  if (probe.status === 404 || probe.status === 405) pending(`backend-w3 is not merged: POST /compare answers ${probe.status}`);
   await runFromGallery(page, t);
 
   await checkEvalView(page); // the eval view on the judge-eval node's real STUB result

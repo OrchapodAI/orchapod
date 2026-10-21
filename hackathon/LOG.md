@@ -281,3 +281,10 @@ worktrees:
   - Minors done.
   - Open: (a) at defaults vllm-serve needs $1.16 left vs R14's $1.125 after 25 min of H100, so Lane B needs keep_alive_min ≤ 28 → R14 amendment at merge; (b) the pre-create find() runs the 0/15/45 s recovery loop on the normal path (+45 s); a single lookup suffices (asked of the review).
   - Review dispatched (opus, spend-safety).
+- 2026-10-21T15:26Z backend-w5 reported DONE: 17 commits 48a7de5..04f999f on 23b0a57; make check 725; dry merge 761 (conflict only in internal.py — take backend-w5's side); $0.
+  - Delivered: all brief + mid-task items except the optional orphan-by-name sweep (skipped).
+  - New contract item cancel_token: returned once by start and /agent/run; anonymous cancel sends X-Orchapod-Cancel-Token; stored SHA-256 → frontend-w5 consumes it; until then the run page's Cancel returns 403 for non-admins.
+  - Real-estate estimate $1.62 → $1.75 full, $0.83 → $0.96 reduced (vllm-serve start time); `fits` unchanged.
+  - deleted_at goes on the endpoint_url artifact.
+  - For qa: e2e_demo's cancel-after-timeout now gets 403 silently; it must send the token.
+  - Review dispatched (opus; security + accounting gate).

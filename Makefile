@@ -7,10 +7,10 @@ PNPM ?= pnpm --config.verify-deps-before-run=false
 
 up:        ; $(COMPOSE) up -d postgres redis minio
 down:      ; $(COMPOSE) down
-# check = lint + unit tests + web tests. `make check E2E=1` adds the stub e2e of intent #2, strict (a missing prerequisite fails): it needs
-# Docker and `make up` and builds and retags the shared orchapod/<node>:dev images, so only the orchestrator runs it, after merges.
+# check = lint + unit tests + web tests. `make check E2E=1` adds the stub e2e of intent #2: it needs Docker and `make up` and builds and
+# retags the shared orchapod/<node>:dev images, so only the orchestrator runs it, after merges.
 ifeq ($(E2E),1)
-E2E_STEP = $(PY) scripts/e2e_demo.py --stub --strict
+E2E_STEP = $(PY) scripts/e2e_demo.py --stub
 else
 E2E_STEP = echo "SKIP stub e2e: set E2E=1 (orchestrator/integration only)"
 endif

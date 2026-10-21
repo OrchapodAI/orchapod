@@ -1,23 +1,19 @@
 """scripts/e2e_demo.py: the logic around the stub e2e. The run itself is `make check E2E=1` (needs Docker and `make up`)."""
 
 import copy
-import importlib.util
 import json
 import socket
+import subprocess
 from pathlib import Path
-from typing import Literal
 
+import e2e_demo as e2e  # scripts/ is on pytest's import path (pytest.ini)
 import httpx
 import pytest
 import yaml
-from pydantic import BaseModel, model_validator
 
 from api.executor.dag import compile_dag
 
 ROOT = Path(__file__).resolve().parents[2]
-_spec = importlib.util.spec_from_file_location("e2e_demo", ROOT / "scripts" / "e2e_demo.py")
-e2e = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(e2e)
 
 ROW_SCHEMA = {  # contracts "Data nodes": the intent #2 schema
     "type": "object", "additionalProperties": False,
@@ -101,18 +97,14 @@ def test_find_intent2_is_the_template_with_a_structured_synth_node():
     assert e2e.find_intent2([GROUNDED]) is None and e2e.find_intent2([]) is None
 
 
-def test_get_templates_prefers_the_api_then_the_files_and_names_a_broken_route(tmp_path, monkeypatch):
+def test_get_templates_reads_the_route_and_names_a_broken_one():
     def client(status, body=None):
         return httpx.Client(base_url="http://api", transport=httpx.MockTransport(lambda r: httpx.Response(status, json=body)))
 
-    monkeypatch.setattr(e2e, "TEMPLATES", tmp_path)
-    (tmp_path / "disk.json").write_text(json.dumps(GROUNDED))
-    assert e2e.get_templates(client(200, [INTENT2])) == [INTENT2]  # the route wins over the files
-    assert e2e.get_templates(client(404)) == [GROUNDED]  # no route yet: the JSON it is built from
-    (tmp_path / "disk.json").unlink()
-    assert e2e.get_templates(client(404)) is None  # neither: backend-w2 is not merged
-    with pytest.raises(RuntimeError, match="HTTP 500"):  # a route that exists and breaks is a failure, not a SKIP
-        e2e.get_templates(client(500, {"detail": "boom"}))
+    assert e2e.get_templates(client(200, [INTENT2])) == [INTENT2]
+    for status in (404, 500):  # a route that is missing or broken is a failure naming its status: nothing is left to SKIP
+        with pytest.raises(RuntimeError, match=f"GET /agent/templates -> HTTP {status}"):
+            e2e.get_templates(client(status, {"detail": "boom"}))
 
 
 def test_plan_yaml_is_a_workflow_the_api_compiles():
@@ -120,37 +112,6 @@ def test_plan_yaml_is_a_workflow_the_api_compiles():
     assert [n.id for n in dag.topological_order()] == ["synth", "prep"]
     assert dag.nodes["synth"].inputs["row_schema"] == ROW_SCHEMA
     assert dag.nodes["prep"].inputs["dataset"] == "${{ nodes.synth.outputs.dataset }}"
-
-
-def test_structured_supported_follows_the_synth_schema(monkeypatch):
-    from packages.workflow_schema import models
-
-    class Merged(BaseModel):
-        pipeline_template: Literal["self-instruct", "structured"] = "self-instruct"
-        row_schema: dict | str | None = None
-        n_samples: int = 10
-
-        @model_validator(mode="after")
-        def _needs_schema(self):
-            if self.pipeline_template == "structured" and not self.row_schema:
-                raise ValueError("structured needs row_schema")
-            return self
-
-    class Old(BaseModel):
-        pipeline_template: Literal["self-instruct", "magpie"] = "self-instruct"
-
-    monkeypatch.setattr(models, "SynthDistilabelInputs", Old)
-    assert not e2e.structured_supported()
-    monkeypatch.setattr(models, "SynthDistilabelInputs", Merged)
-    assert e2e.structured_supported()  # the probe brings its own row_schema
-    assert e2e.structured_supported({"pipeline_template": "structured", "n_samples": "x"})  # a bad input is not "unmerged"
-
-
-def test_skip_reasons_name_each_missing_prerequisite():
-    assert e2e.skip_reasons(True, True) == []
-    assert "backend-w2" in e2e.skip_reasons(False, True)[0] and "/agent/templates" in e2e.skip_reasons(False, True)[0]
-    assert "data-w2" in e2e.skip_reasons(True, False)[0] and "structured" in e2e.skip_reasons(True, False)[0]
-    assert len(e2e.skip_reasons(False, False)) == 2
 
 
 def test_check_run_accepts_a_good_stub_run():
@@ -200,23 +161,127 @@ def test_check_rows_wants_rows_with_exactly_the_schema_fields():
     assert any("device" in p for p in e2e.check_rows(json.dumps({k: v for k, v in ROW.items() if k != "device"}), ROW_SCHEMA))
 
 
-TEMPLATE_FILES = sorted((ROOT / "apps/api/agent/templates").glob("*.json"))
-NO_TEMPLATES = "backend-w2 has not merged apps/api/agent/templates/*.json yet; this guard switches on when it does"
+def templates_on_disk() -> list[dict]:
+    return [json.loads(f.read_text()) for f in sorted((ROOT / "apps/api/agent/templates").glob("*.json"))]
 
 
-@pytest.mark.skipif(not TEMPLATE_FILES, reason=NO_TEMPLATES)
 def test_exactly_one_shipped_template_is_intent2():
-    found = [t for t in e2e.templates_on_disk() if e2e.find_intent2([t])]
-    assert len(found) == 1, "the e2e would SKIP or pick the wrong plan"
+    found = [t for t in templates_on_disk() if e2e.find_intent2([t])]
+    assert len(found) == 1, "the e2e would fail or pick the wrong plan"
 
 
-@pytest.mark.skipif(not TEMPLATE_FILES, reason=NO_TEMPLATES)
 def test_the_intent2_template_runs_on_the_nodes_that_exist():
     from packages.workflow_schema.models import NODE_REGISTRY, NodeType
 
-    plan = e2e.plan_of(e2e.find_intent2(e2e.templates_on_disk()))
+    plan = e2e.plan_of(e2e.find_intent2(templates_on_disk()))
     compile_dag(e2e.plan_yaml(plan), {})
     for node in plan["nodes"]:
         assert (ROOT / "containers" / node["type"] / "Dockerfile").exists(), node
         assert NODE_REGISTRY[NodeType(node["type"])]["runtime"] in ("cpu", "api"), node  # LocalDocker runs these
     assert yaml.safe_load(e2e.plan_yaml(plan)) == copy.deepcopy(plan)
+
+
+# --- qa-w2 review carry-overs ---------------------------------------------------------------------------------------------
+
+def test_paid_names_every_key_and_token_the_executor_forwards_to_containers():
+    """A new secret in _FORWARD that PAID misses would reach a stub run's API through the shell."""
+    from api.executor.run_workflow import _FORWARD
+
+    secrets = {k for k in _FORWARD if k.endswith(("_KEY", "_TOKEN"))} - {"ORCHAPOD_R2_ACCESS_KEY", "ORCHAPOD_R2_SECRET_KEY"}
+    assert {"NEBIUS_API_KEY", "TAVILY_API_KEY", "HF_TOKEN"} <= secrets  # the filter still finds the real ones
+    assert secrets <= set(e2e.PAID), f"add to PAID in scripts/e2e_demo.py: {sorted(secrets - set(e2e.PAID))}"
+
+
+class FakeApi:
+    """A Popen stand-in: terminate() is fine, wait() times out for the first `hangs` calls."""
+
+    def __init__(self, hangs=0):
+        self.hangs, self.calls = hangs, []
+
+    def terminate(self):
+        self.calls.append("terminate")
+
+    def kill(self):
+        self.calls.append("kill")
+
+    def wait(self, timeout):
+        self.calls.append(("wait", timeout))
+        if self.hangs:
+            self.hangs -= 1
+            raise subprocess.TimeoutExpired("api", timeout)
+
+
+def test_stop_gives_the_api_45_s_to_stop_its_node_before_it_kills_it():
+    """The API's own shutdown stops a running node (docker stop -t 30); killing it sooner orphans that container."""
+    api = FakeApi()
+    e2e.stop(api)
+    assert api.calls == ["terminate", ("wait", 45)]  # a clean exit is never killed
+    api = FakeApi(hangs=1)
+    e2e.stop(api)
+    assert api.calls == ["terminate", ("wait", 45), "kill"]
+
+
+def test_a_stack_that_cannot_start_is_reported_not_a_traceback(monkeypatch, capsys):
+    def no_port(tmp, extra=None):
+        raise RuntimeError("no free port in 8002..8051")
+
+    stopped = []
+    monkeypatch.setattr(e2e, "start_api", no_port)
+    monkeypatch.setattr(e2e, "stop", stopped.append)
+    assert e2e.with_stack(lambda c: pytest.fail("no stack, no run")) == 1
+    assert "e2e FAIL: no free port" in capsys.readouterr().out
+    assert stopped == []  # there is no API to stop
+
+
+def test_the_api_stops_however_the_run_ends(monkeypatch):
+    api, stopped = FakeApi(), []
+    monkeypatch.setattr(e2e, "start_api", lambda tmp, extra=None: (api, "http://127.0.0.1:1"))
+    monkeypatch.setattr(e2e, "wait_healthy", lambda *a: None)
+    monkeypatch.setattr(e2e, "stop", stopped.append)
+
+    def interrupted(client):
+        raise KeyboardInterrupt  # Ctrl-C and SIGTERM (SystemExit) both unwind through the same finally
+
+    with pytest.raises(KeyboardInterrupt):
+        e2e.with_stack(interrupted)
+    assert e2e.with_stack(lambda c: 3) == 3  # fn's exit code is the stack's
+    assert stopped == [api, api]
+
+
+def test_extra_env_lands_last_but_the_stub_basics_stay(tmp_path):
+    env = e2e.api_env(8123, tmp_path / "e2e.db", {"PATH": "/usr/bin"}, {"ORCHAPOD_ANON_SCALE": "1"})
+    assert env["ORCHAPOD_ANON_SCALE"] == "1" and env["STUB"] == "1" and env["ORCHAPOD_KILL_SWITCH"] == "0"
+
+
+def test_poll_run_cancels_a_run_that_outlives_the_limit(monkeypatch):
+    seen = []
+
+    def api(request):
+        seen.append((request.method, request.url.path))
+        return httpx.Response(200, json={"status": "running", "nodes": [{"node_id": "a", "status": "running"}]})
+
+    monkeypatch.setattr(e2e, "LIMIT_S", 0)
+    reply, _ = e2e.poll_run(httpx.Client(base_url="http://api", transport=httpx.MockTransport(api)), "r1", "/runs/r1/summary")
+    assert reply["status"] == "running"
+    assert seen == [("GET", "/runs/r1/summary"), ("POST", "/runs/r1/cancel")]
+
+
+def test_poll_run_ends_when_the_done_test_says_so(monkeypatch):
+    replies = iter([{"status": "succeeded", "ready": False, "nodes": []}, {"status": "succeeded", "ready": True, "nodes": []}])
+    monkeypatch.setattr(e2e.time, "sleep", lambda s: None)
+    c = httpx.Client(base_url="http://api", transport=httpx.MockTransport(lambda r: httpx.Response(200, json=next(replies))))
+    reply, _ = e2e.poll_run(c, "r1", "/agent/runs/r1/report", done=lambda r: r["ready"])  # terminal is not enough
+    assert reply["ready"] is True
+
+
+def test_check_run_wants_what_each_node_type_promises():
+    """The agent e2e runs plans with more node types than intent #2's (contracts "Data nodes", "ML nodes")."""
+    s = good_summary()
+    s["nodes"] += [{"node_id": "ft", "type": "tf-finetune", "status": "succeeded", "usd": 0.0, "error": None},
+                   {"node_id": "ev", "type": "judge-eval", "status": "succeeded", "usd": 0.0, "error": None}]
+    s["artifacts"] += [{"id": f"{i}-{n}", "node_id": i, "name": n, "kind": "metrics", "uri": "r2://b/x", "download_url": "/d", "meta": {}}
+                       for i, n in (("ft", "job"), ("ft", "lora_adapter"), ("ft", "cost_json"), ("ev", "cost_json"))]
+    problems = e2e.check_run(s)
+    assert len(problems) == 1 and "judge-eval 'ev'" in problems[0] and "eval_summary" in problems[0], problems
+    s["artifacts"] = [a for a in s["artifacts"] if a["name"] != "lora_adapter"]
+    assert any("tf-finetune 'ft'" in p and "lora_adapter" in p for p in e2e.check_run(s))

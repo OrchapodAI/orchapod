@@ -123,6 +123,7 @@ jobs:
           - synth-distilabel
           - tf-finetune
           - tf-deploy
+          - judge-eval
 
     steps:
       - uses: actions/checkout@v4

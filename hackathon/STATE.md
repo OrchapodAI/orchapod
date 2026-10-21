@@ -63,8 +63,8 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D4 compare playground API; templates + golden-run fixture — TODO
 - [ ] P1 D5 Serverless Job runtime · P0 D6 public-demo hardening (anon read, rate limits, CORS, health) — TODO
 ### frontend
-- [ ] P0 D2 palette: hide hf-import, file-upload, s3-import, auto-label-cleanlab; Research/Fine-tune/Deploy/Evaluate forms; buildYamlFromGraph JSON.stringifies object inputs (R13) — APPROVED, merges after backend-w1 (hack/frontend-w1)
-- [ ] P0 D2 /agent page: chat box, plan card (Edit/Run), live run view, report card — APPROVED, merges after backend-w1 (hack/frontend-w1)
+- [ ] P0 D2 palette: hide hf-import, file-upload, s3-import, auto-label-cleanlab; Research/Fine-tune/Deploy/Evaluate forms; buildYamlFromGraph JSON.stringifies object inputs (R13) — DONE (merged)
+- [ ] P0 D2 /agent page: chat box, plan card (Edit/Run), live run view, report card — DONE (merged; live once backend-w2's Agent API lands)
 - [ ] P0 wave-2 frontend first: YAML quoting hole (strings starting with [ { " ' , must be quoted — LLM text flows through planYaml); RunView fetches need a .catch (stuck on Loading… after /agent/run); vllm-serve badge gpu → api; key by index for warnings/errors; a11y (aria-describedby, IME isComposing, live region); defaultInputs: drop teacher_kind, keep_alive_min 30 — TODO
 - [ ] P1 sidebar shows numbers that look hardcoded (Runs 348, Base Models 47, Datasets 23, "$0 used / $250", team "orbital-research") — confirm, then feed from the API or remove; Deploy palette text promises per-token serving (unverified until spike 1); web tests into make check + CI (qa); pnpm 9 vs 11 (CI uses 9) — TODO
 - [ ] P0 D3 template gallery (3 templates, one-click Run); run page cost meter + retry node — TODO

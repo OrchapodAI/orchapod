@@ -234,3 +234,8 @@ worktrees:
   - G2 BLOCKER found: vllm-serve's container gets neither the nebius CLI nor a token on the hosted VM → sent to backend-w5: executor injects a fresh NEBIUS_IAM_TOKEN into gpu/rents_gpu nodes only; also record GPU hours when a cancelled Job writes no cost_json.
   - Open for ml (follow-up): endpoint names are unique per project, so vllm-serve's retry needs endpoints.list() recovery.
   - Review dispatched (opus; spend-safety + secrets).
+- 2026-10-21T14:36Z qa-w4 reported DONE: 421c63a drills, fdfbd17 CI, 90b95a0 Playwright; make check 685 + 3 skipped, 715 merged; $0.
+  - 13 drills assert the exact summary error, and each of 13 code breaks is caught. Not readable: a preempted Serverless Job shows only 'exit 1' (→ backend/platform: surface the Job's state/code/message as the node error).
+  - README AUDIT (16 gaps for devrel): non-Docker steps ~40 s and make check 16.9 s, but a fresh visitor cannot reach a first run. Causes: the clone URL needs GitHub credentials (repo private); pnpm 11 install/dev/test exit 1 without the flag; all 12 node images refuse anonymous pulls (GHCR private → Purva); the shipped .env (no STUB, scale 0.1) blocks keyless and golden-path runs.
+  - Run by the orchestrator: `make ui-smoke UI_ARGS="-g ANON_SCALE"` (expect real-estate + docs disabled, movie + maths enabled).
+  - Review dispatched (sonnet).

@@ -7,6 +7,7 @@ an f16 GGUF and quantized to `precision` (q4_k_m, q5_k_m, q8_0) → `gguf_file`.
 STUB=1 writes 4-byte GGUF files with no download.
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -58,18 +59,21 @@ def main():
         fail(f"method {method!r} / precision {precision!r}: use gguf with one of {', '.join(PRECISIONS)}")
 
     WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
+    base_model = model  # as given: an HF id, or an r2 dir from elsewhere
     f16, out = WORKSPACE_DIR / "model-f16.gguf", WORKSPACE_DIR / f"model-{precision}.gguf"
     if os.environ.get("STUB") == "1":
         f16.write_bytes(b"GGUF")
         out.write_bytes(b"GGUF")
     else:
         src = resolve_model(model)
+        if (src / "orchapod_source.json").is_file():  # hf-download's hf_model names its Hub id
+            base_model = json.loads((src / "orchapod_source.json").read_text())["model_id"]
         run("convert", [sys.executable, str(LLAMA_CPP_DIR / "convert_hf_to_gguf.py"), str(src),
                         "--outfile", str(f16), "--outtype", "f16"])
         run("quantize", [str(LLAMA_CPP_DIR / "llama-quantize"), str(f16), str(out), precision.upper()])
 
     size, f16_size = out.stat().st_size, f16.stat().st_size
-    meta = {"format": "gguf", "base_model": model}
+    meta = {"format": "gguf", "base_model": base_model}
     io.write_output("gguf_file", out, kind="model", metadata={**meta, "precision": precision, "size_bytes": size})
     if keep_f16:
         io.write_output("gguf_f16", f16, kind="model", metadata={**meta, "precision": "f16", "size_bytes": f16_size})

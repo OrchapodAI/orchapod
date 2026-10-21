@@ -17,6 +17,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -28,8 +29,7 @@ from orchapod import cost, io, log
 from packages.providers.base import ProviderError
 from packages.providers.tokenfactory import TF_BASE, ULTRA, TokenFactory
 
-WORKERS = 8  # rows in flight; llama-server queues what its slots cannot take
-SLOTS = 4  # llama-server parallel sequences
+WORKERS = 4  # rows in flight = llama-server's slots (-np): a request queued behind a slot would time out, be re-sent
 LLAMA_PORTS = {"base": 8081, "tuned": 8082}
 LOAD_TIMEOUT_S = 300
 LLAMA_READ_TIMEOUT_S = 1800  # a CPU answer can outlast the client's 120 s; a timeout would re-send it and restart the work
@@ -47,6 +47,7 @@ SYSTEM = ("You are an impartial judge. Two AI assistants answered the same quest
 ASK = 'Which answer is better? Reply with JSON: "reasoning" (at most three sentences), then "winner": "A", "B" or "tie".'
 REF_ARTIFACT = re.compile(r"r2://[^/]+/runs/[^/]+/[^/]+/(?:model_ref|base_model_ref)")  # vllm-serve / tf-deploy outputs
 NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
+STOP = threading.Event()  # set when a phase unwinds (cancel, budget): a row in flight starts no further paid call
 
 
 def fail(reason: str):
@@ -81,8 +82,12 @@ def model_ref(name: str, value) -> dict:
         with path.open("rb") as f:
             if f.read(4) == b"GGUF":
                 return {"base_url": None, "model": value, "api_key_env": "", "base_model": None, "gguf": str(path)}
-        artifact, value = bool(REF_ARTIFACT.fullmatch(value)), path.read_text(errors="replace")
-    if isinstance(value, str) and (artifact or value.lstrip().startswith("{")):
+        artifact = bool(REF_ARTIFACT.fullmatch(value))
+        try:
+            value = json.loads(path.read_text(errors="replace"))
+        except ValueError:
+            fail(f"refused ModelRef {name}: {value} is neither a GGUF file nor a model_ref JSON")
+    elif isinstance(value, str) and value.lstrip().startswith("{"):
         try:
             value = json.loads(value)
         except ValueError:
@@ -91,7 +96,8 @@ def model_ref(name: str, value) -> dict:
         value = {"base_url": tf_base, "model": value.strip(), "api_key_env": "NEBIUS_API_KEY", "base_model": None}
     ref = value if isinstance(value, dict) else {}
     url, env, model = str(ref.get("base_url") or "").strip().rstrip("/"), ref.get("api_key_env"), ref.get("model")
-    paired = (env == "NEBIUS_API_KEY" and url == tf_base) or (env == "ORCHAPOD_ENDPOINT_TOKEN" and artifact and url)
+    paired = (env == "NEBIUS_API_KEY" and url == tf_base) or (
+        env == "ORCHAPOD_ENDPOINT_TOKEN" and artifact and url and url != tf_base)
     if not (paired and isinstance(model, str) and model.strip()):
         fail(f"refused ModelRef {name}: NEBIUS_API_KEY goes only to {tf_base}, ORCHAPOD_ENDPOINT_TOKEN only in a "
              "vllm-serve model_ref artifact, and no other key is sent")
@@ -119,8 +125,8 @@ def serving(side: str, ref: dict, max_tokens: int):
     server_log = Path(f"{ref['gguf']}.server.log")
     with server_log.open("w") as out:
         proc = subprocess.Popen(["llama-server", "-m", ref["gguf"], "--host", "127.0.0.1", "--port", str(port),
-                                 "--alias", ref["model"], "--jinja", "-np", str(SLOTS),
-                                 "-c", str(SLOTS * (max_tokens + 2048))], stdout=out, stderr=subprocess.STDOUT)
+                                 "--alias", ref["model"], "--jinja", "-np", str(WORKERS),
+                                 "-c", str(WORKERS * (max_tokens + 2048))], stdout=out, stderr=subprocess.STDOUT)
     try:
         deadline = time.monotonic() + LOAD_TIMEOUT_S
         while True:
@@ -176,6 +182,9 @@ def each(phase: str, samples: list[dict], work) -> None:
     try:
         for done, _ in enumerate(pool.map(one, todo), 1):
             log.progress(done, len(todo), extra={"phase": phase})
+    except BaseException:
+        STOP.set()
+        raise
     finally:  # on a cancel (SIGTERM) return at once: serving() then stops llama-server, ending the calls in flight
         pool.shutdown(wait=False, cancel_futures=True)
 
@@ -189,6 +198,8 @@ def ask(tf: TokenFactory, ref: dict, messages: list, decoding: dict) -> str:
 def judge(tf: TokenFactory, model: str, s: dict) -> None:
     """Both orders through guided JSON; the verdict is from the tuned side."""
     for order, a, b in (("tuned_first", "tuned", "base"), ("base_first", "base", "tuned")):
+        if STOP.is_set():  # cancelled while this row was in flight: no second paid order
+            return
         user = (fence("question", s["question"]) + fence("reference", s["reference"])
                 + (fence("context", s["context"]) if s["context"] else "")
                 + fence("answer_a", s[a]) + fence("answer_b", s[b]) + f"{UNTRUSTED}\n{ASK}")
@@ -214,10 +225,10 @@ def main():
     decoding = {"temperature": float(inputs.get("temperature") or 0.0), "max_tokens": int(inputs.get("max_tokens") or 512)}
     exact = str(inputs.get("exact_match")).lower() in ("true", "1")
     judge_model = inputs.get("judge_model") or ULTRA
-    refs = {side: model_ref(f"{side}_model_ref", inputs.get(f"{side}_model_ref")) for side in ("base", "tuned")}
-    rows = read_rows(inputs.get("test_data"))[:max_samples]
+    rows = read_rows(inputs.get("test_data"))[:max_samples]  # before the refs: a GGUF pair is about 4 GB to fetch
     if not rows:
         fail("no test rows")
+    refs = {side: model_ref(f"{side}_model_ref", inputs.get(f"{side}_model_ref")) for side in ("base", "tuned")}
     samples, prompts = zip(*(sample(i, r) for i, r in enumerate(rows)))
     tf = TokenFactory(on_usage=cost.add)
 
@@ -249,7 +260,7 @@ def main():
     log.info(f"judge-eval: {summary['judged']} judged ({summary['wins']} wins, {summary['ties']} ties, "
              f"{summary['losses']} losses), win_rate {summary['win_rate']}, consistency {summary['consistency']}, "
              f"exact_match {summary['exact_match']}, {len(errors)} of {len(samples)} rows failed")
-    if len(errors) > 0.1 * len(samples):
+    if 10 * len(errors) > len(samples):
         fail(f"{len(errors)} of {len(samples)} rows failed (more than 10%); first: {errors[0]['error']}")
 
 

@@ -4,7 +4,7 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 ## Next actions (in order)
 1. Hari: NEBIUS_API_KEY and TAVILY_API_KEY into ~/src/orchapod-hack/.env — both lines still empty on disk (2026-10-21T02:37Z); the hidden-input command is in chat. Unblocks spikes 1–3 and every live check.
 2. Spikes 1–3 (hackathon/briefs/2026-10-22-spikes.md; worktrees spike1–3 at c164e4e) — dispatch the moment the key lands.
-3. Wave 3: ALL MERGED except qa-w3 (IN_PROGRESS). Wave 4 (hackathon/briefs/2026-10-23-wave4.md): REVIEW frontend-w4; IN_PROGRESS platform-w4, backend-w4, ml-w4, data-w4; queued qa-w4 (after qa-w3).
+3. Wave 3: ALL MERGED except qa-w3 (IN_PROGRESS). Wave 4 (hackathon/briefs/2026-10-23-wave4.md): MERGED frontend-w4; FIX ROUND platform-w4; REVIEW data-w4; IN_PROGRESS backend-w4, ml-w4; queued qa-w4 (after qa-w3).
 4. After wave 3: shared fence() (platform), apps/api/config.py (platform), vllm-serve rewrite (ml), `make check E2E=1` + Playwright smoke on the merged branch, D6 hardening (anonymous budget ceiling).
 5. G1 Oct 24: golden path green from the UI (needs spike 1's deploy answer) + intent #2 from the agent chat (STUB green 2026-10-21; live waits on the key).
 
@@ -71,8 +71,8 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P1 Deploy palette text promises per-token serving — align with spike 1's answer — TODO (sidebar counts: DONE frontend-w2; web tests in make check + CI: DONE qa-w2)
 - [x] P0 D3 run page cost meter + retry node (frontend-w2); template gallery with one-click Run (frontend-w3) — DONE (3d250c5)
 - [x] P0 D4 eval view, dataset card, compare playground (STUB pills) — DONE (frontend-w3, 3d250c5); P2: the STUB pill reads metrics meta, dropped above 16 KB
-- [ ] P1 D3 loss chart never receives data — wire it to loss_curve.json — TODO (Vast.ai/RunPod surfaces hidden: DONE frontend-w2)
-- [ ] P0 D6 polish (empty, error, loading states; demo banner) · D7 screenshots — TODO
+- [x] P1 D3 loss chart fills from the fine-tune node's loss_curve on load; live events append — DONE (frontend-w4)
+- [x] P0 D6 polish: toasts, honest error/empty/loading states, OG image, demo banner, `fits` on template cards, loss chart from loss_curve — DONE (frontend-w4); D7 screenshots — TODO
 ### qa
 - [x] P0 D1 CI on NebiusHackathon + repo ruff config so `make check` is green; synth-distilabel in the image matrix — DONE (e11757e)
 - [x] P0 D2 CI pushes `:latest` on NebiusHackathon (R4); pins in requirements-dev.txt — DONE

@@ -145,3 +145,4 @@ worktrees:
   - Minors: kill switch leaves nodes/endpoints; rehearsal `dc` collides with the prod alias (could delete prod volumes); safe restore; ssh_pwauth false; root + checksum in the API Dockerfile; oneoff label filter; dirty-deploy check; HSTS + restart caddy; backups share the bucket; reboot-required; ponytail -10.
   - Fix round 1 sent to a3ad884e5c603d961.
   - Merge note: backend-w4's ORCHAPOD_CORS_ORIGINS must be in .env.example.
+- 2026-10-21T12:55Z frontend-w4 re-review (sonnet): all 8 ADDRESSED; the reviewer also verified the timer/live-region logic and ran Next's own accumulateMetadata. One Minor (the focus pause could stick when a focused toast is evicted) and two out-of-scope nits ('failed in last 7d' had no date filter; the LossChart note was wrong about deleting the file fallback) fixed by the orchestrator in 2ec5b5e (web 27/27, tsc clean). Ledger: frontend-w4 fix rounds 1/5, 0 open. Merged; make check green (598 + web 27).

@@ -1,157 +1,106 @@
-"""
-Unit tests for containers/quantize/run.py
-"""
+"""Unit tests for containers/quantize/run.py (docs/contracts.md "ML nodes → quantize")."""
 
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import patch
 
 import pytest
+
+from packages.workflow_schema.models import QuantizeInputs, QuantizeOutputs
 
 from .conftest import load_container
 
 q = load_container("quantize")
 
-
-# ---------------------------------------------------------------------------
-# resolve_model
-# ---------------------------------------------------------------------------
-
-def test_resolve_model_r2_uri_calls_download(mock_orchapod_io):
-    mock_orchapod_io.download_input.return_value = Path("/workspace/model")
-    result = q.resolve_model("r2://orchapod-artifacts/runs/abc/model", hf_token=None)
-    mock_orchapod_io.download_input.assert_called_once()
-    assert result == Path("/workspace/model")
+HF_MODEL = "r2://orchapod-artifacts/runs/r1/download/hf_model"
 
 
-def test_resolve_model_hf_id_uses_snapshot_download():
-    with patch("huggingface_hub.snapshot_download") as mock_dl:
-        q.resolve_model("Qwen/Qwen3-4B-Instruct", hf_token=None)
-    mock_dl.assert_called_once()
-    call_kwargs = mock_dl.call_args
-    assert call_kwargs.kwargs["repo_id"] == "Qwen/Qwen3-4B-Instruct"
-    assert call_kwargs.kwargs["token"] is None
+@pytest.fixture
+def node(mock_orchapod_io, monkeypatch, tmp_path):
+    """node(**inputs) runs main(); returns ({name: (path, kind, metadata)}, metrics). Subprocesses are recorded in
+    node.argv; the fake convert/quantize write files of 300 and 100 bytes."""
+    monkeypatch.setattr(q, "WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(q, "LLAMA_CPP_DIR", Path("/llama"))
+    monkeypatch.delenv("STUB", raising=False)
+    mock_orchapod_io.download_directory.side_effect = lambda uri, dest: Path(dest)
+    argv, codes = [], []
 
+    def subprocess_run(cmd):
+        argv.append(cmd)
+        out = cmd[cmd.index("--outfile") + 1] if "--outfile" in cmd else cmd[-2]
+        Path(out).write_bytes(b"GGUF" + b"\0" * (296 if "--outfile" in cmd else 96))
+        return type("Done", (), {"returncode": codes.pop(0) if codes else 0})
 
-def test_resolve_model_strips_hf_prefix():
-    with patch("huggingface_hub.snapshot_download") as mock_dl:
-        q.resolve_model("hf://Qwen/Qwen3-4B-Instruct", hf_token="tok")
-    call_kwargs = mock_dl.call_args
-    assert call_kwargs.kwargs["repo_id"] == "Qwen/Qwen3-4B-Instruct"
-    assert call_kwargs.kwargs["token"] == "tok"
+    monkeypatch.setattr(q.subprocess, "run", subprocess_run)
 
-
-# ---------------------------------------------------------------------------
-# quantize_gguf
-# ---------------------------------------------------------------------------
-
-def test_quantize_gguf_raises_if_convert_script_missing(tmp_path):
-    fake_llama = tmp_path / "llama.cpp"
-    fake_llama.mkdir()
-    # Do not create convert_hf_to_gguf.py
-    with patch.object(q, "LLAMA_CPP_DIR", fake_llama):
-        with pytest.raises(RuntimeError, match="convert script not found"):
-            q.quantize_gguf(tmp_path / "model", "q4_k_m")
-
-
-def test_quantize_gguf_raises_if_quantize_bin_missing(tmp_path):
-    fake_llama = tmp_path / "llama.cpp"
-    fake_llama.mkdir()
-    (fake_llama / "convert_hf_to_gguf.py").touch()
-    # Do not create build/bin/llama-quantize
-    with patch.object(q, "LLAMA_CPP_DIR", fake_llama):
-        with pytest.raises(RuntimeError, match="llama-quantize binary not found"):
-            q.quantize_gguf(tmp_path / "model", "q4_k_m")
-
-
-def test_quantize_gguf_calls_correct_subprocesses(tmp_path):
-    fake_llama   = tmp_path / "llama.cpp"
-    fake_ws      = tmp_path / "workspace"
-    fake_ws.mkdir()
-    (fake_llama / "build" / "bin").mkdir(parents=True)
-    (fake_llama / "convert_hf_to_gguf.py").touch()
-    quantize_bin = fake_llama / "build" / "bin" / "llama-quantize"
-    quantize_bin.touch()
-
-    calls = []
-    def fake_run(cmd, check):
-        calls.append(cmd)
-        if "--outfile" in cmd:
-            # Touch the fp16 intermediate so the next step can reference it
-            Path(cmd[cmd.index("--outfile") + 1]).touch()
-        else:
-            # Touch the final quantized file so stat() succeeds
-            (fake_ws / "model_q4_k_m.gguf").touch()
-
-    with patch.object(q, "LLAMA_CPP_DIR", fake_llama), \
-         patch.object(q, "WORKSPACE_DIR",  fake_ws), \
-         patch("subprocess.run", side_effect=fake_run):
-        q.quantize_gguf(tmp_path / "model", "q4_k_m")
-
-    assert len(calls) == 2
-    assert "--outtype" in calls[0]
-    assert "Q4_K_M" in calls[1]
-
-
-# ---------------------------------------------------------------------------
-# quantize_awq
-# ---------------------------------------------------------------------------
-
-def test_quantize_awq_delegates_to_autoawq(tmp_path):
-    mock_model = MagicMock()
-    mock_tokenizer = MagicMock()
-    with patch.dict("sys.modules", {
-        "awq": MagicMock(AutoAWQForCausalLM=MagicMock(
-            from_pretrained=MagicMock(return_value=mock_model)
-        )),
-        "transformers": MagicMock(AutoTokenizer=MagicMock(
-            from_pretrained=MagicMock(return_value=mock_tokenizer)
-        )),
-    }):
-        result = q.quantize_awq(tmp_path / "model", bits=4)
-
-    mock_model.quantize.assert_called_once()
-    mock_model.save_quantized.assert_called_once()
-    assert result == Path("/workspace/awq_model")
-
-
-# ---------------------------------------------------------------------------
-# main()
-# ---------------------------------------------------------------------------
-
-def test_main_gguf_flow(mock_orchapod_io):
-    mock_orchapod_io.read_inputs.return_value = {
-        "model": "Qwen/Qwen3-4B-Instruct",
-        "method": "gguf",
-        "precision": "q4_k_m",
-    }
-    with patch.object(q, "resolve_model", return_value=Path("/workspace/model")), \
-         patch.object(q, "quantize_gguf", return_value=Path("/workspace/model_q4_k_m.gguf")):
+    def run(**inputs):
+        mock_orchapod_io.read_inputs.return_value = {"model": HF_MODEL, "method": "gguf", **inputs}
         q.main()
+        outs = {c.args[0]: (Path(c.args[1]), c.kwargs["kind"], c.kwargs["metadata"])
+                for c in mock_orchapod_io.write_output.call_args_list}
+        return outs, mock_orchapod_io.write_metrics.call_args.args[0]
 
-    mock_orchapod_io.write_output.assert_called_once()
-    args = mock_orchapod_io.write_output.call_args
-    assert args.args[0] == "gguf_file"
-
-
-def test_main_awq_flow(mock_orchapod_io):
-    mock_orchapod_io.read_inputs.return_value = {
-        "model": "Qwen/Qwen3-4B-Instruct",
-        "method": "awq",
-        "bits": "4",
-    }
-    with patch.object(q, "resolve_model", return_value=Path("/workspace/model")), \
-         patch.object(q, "quantize_awq", return_value=Path("/workspace/awq_model")):
-        q.main()
-
-    args = mock_orchapod_io.write_output.call_args
-    assert args.args[0] == "awq_model"
+    run.argv, run.codes = argv, codes
+    return run
 
 
-def test_main_unknown_method_raises(mock_orchapod_io):
-    mock_orchapod_io.read_inputs.return_value = {
-        "model": "Qwen/Qwen3-4B-Instruct",
-        "method": "tpu-magic",
-    }
-    with patch.object(q, "resolve_model", return_value=Path("/workspace/model")):
-        with pytest.raises(ValueError, match="Unknown quantize method"):
-            q.main()
+def test_schema_has_keep_f16_and_no_token():
+    assert set(QuantizeInputs.model_fields) == {"model", "method", "precision", "bits", "keep_f16"}
+    assert QuantizeInputs(model="x", method="gguf").keep_f16 is False
+    assert set(QuantizeOutputs.model_fields) == {"gguf_file", "gguf_f16", "awq_model"}
+
+
+def test_gguf_converts_to_f16_then_quantizes_and_keeps_f16(node, mock_orchapod_io, tmp_path):
+    outs, metrics = node(keep_f16=True)
+    mock_orchapod_io.download_directory.assert_called_once_with(HF_MODEL, tmp_path / "model")  # a dir, not one object
+    convert, quantize = node.argv
+    assert convert[1:] == ["/llama/convert_hf_to_gguf.py", str(tmp_path / "model"), "--outfile",
+                           str(tmp_path / "model-f16.gguf"), "--outtype", "f16"]
+    assert quantize == ["/llama/llama-quantize", str(tmp_path / "model-f16.gguf"), str(tmp_path / "model-q4_k_m.gguf"),
+                        "Q4_K_M"]
+    assert outs["gguf_file"][1:] == ("model", {"format": "gguf", "precision": "q4_k_m", "base_model": HF_MODEL,
+                                               "size_bytes": 100})
+    assert outs["gguf_f16"][1:] == ("model", {"format": "gguf", "precision": "f16", "base_model": HF_MODEL,
+                                              "size_bytes": 300})
+    assert metrics == {"method": "gguf", "precision": "q4_k_m", "size_bytes": 100, "f16_size_bytes": 300, "wall_s": 0}
+
+
+def test_without_keep_f16_only_the_quantized_file_is_written(node):
+    outs, _ = node(precision="q8_0")
+    assert set(outs) == {"gguf_file"} and node.argv[1][-1] == "Q8_0"
+
+
+def test_a_hugging_face_id_is_downloaded_from_the_hub(node, tmp_path):
+    with patch("huggingface_hub.snapshot_download") as dl:
+        outs, _ = node(model="hf://Qwen/Qwen2.5-Math-1.5B-Instruct")
+    assert dl.call_args.args == ("Qwen/Qwen2.5-Math-1.5B-Instruct",)
+    assert dl.call_args.kwargs["local_dir"] == tmp_path / "model"
+    assert outs["gguf_file"][2]["base_model"] == "hf://Qwen/Qwen2.5-Math-1.5B-Instruct"
+
+
+def test_a_failed_conversion_exits_1(node):
+    node.codes.append(2)
+    with pytest.raises(SystemExit) as e:
+        node()
+    assert e.value.code == 1 and q.log.error.call_args.args[0].startswith("convert failed (exit 2)")
+    assert len(node.argv) == 1  # nothing is quantized after a failed conversion
+
+
+@pytest.mark.parametrize("inputs, error", [
+    ({"method": "awq"}, "AWQ needs a GPU job; use gguf"),
+    ({"model": "${{ nodes.download.outputs.hf_model }}"}, "unresolved ref model"),
+    ({"precision": "q2_k"}, "precision"),
+])
+def test_refused_before_any_download(node, mock_orchapod_io, inputs, error):
+    with pytest.raises(SystemExit) as e:
+        node(**inputs)
+    assert e.value.code == 1 and error in q.log.error.call_args.args[0]
+    mock_orchapod_io.download_directory.assert_not_called()
+    assert node.argv == []
+
+
+def test_stub_writes_four_byte_gguf_files_offline(node, mock_orchapod_io, monkeypatch):
+    monkeypatch.setenv("STUB", "1")
+    outs, metrics = node(keep_f16=True)
+    assert {n: p.read_bytes() for n, (p, _, _) in outs.items()} == {"gguf_file": b"GGUF", "gguf_f16": b"GGUF"}
+    assert (metrics["size_bytes"], metrics["f16_size_bytes"]) == (4, 4)
+    assert node.argv == [] and not mock_orchapod_io.download_directory.called

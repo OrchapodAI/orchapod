@@ -1,132 +1,81 @@
 """
-containers/quantize/run.py
+containers/quantize/run.py — node quantize (cpu). Contract: docs/contracts.md "ML nodes → quantize".
 
-Node: quantize
-GPU: AWQ needs 1x H100 for calibration; GGUF is CPU-only
-
-Inputs:
-  model     — HF model ID (e.g. Qwen/Qwen3-4B-Instruct) or R2 URI to HF dir
-  method    — "gguf" | "awq"
-  precision — GGUF only: "q4_k_m" | "q5_k_m" | "q8_0" (default: q4_k_m)
-  bits      — AWQ only: int (default: 4)
-  hf_token  — optional HuggingFace token for private models
-
-Outputs:
-  gguf_file  — R2 URI (when method=gguf)
-  awq_model  — R2 URI (when method=awq)
-
-Environment:
-  LLAMA_CPP_DIR — path to llama.cpp checkout (default: /opt/llama.cpp)
-                  Must contain convert_hf_to_gguf.py and build/bin/llama-quantize
+GGUF on CPU with llama.cpp: the HF model (a Hugging Face id, or hf-download's `hf_model` directory) is converted to
+an f16 GGUF and quantized to `precision` (q4_k_m, q5_k_m, q8_0) → `gguf_file`. keep_f16 also writes the f16 file as
+`gguf_f16`, the honest baseline judge-eval compares against (R11). AWQ needs a GPU job, so it exits 1 here.
+STUB=1 writes 4-byte GGUF files with no download.
 """
 
 import os
 import subprocess
+import sys
+import time
 from pathlib import Path
 
 from orchapod import io, log
 
-LLAMA_CPP_DIR  = Path(os.environ.get("LLAMA_CPP_DIR", "/opt/llama.cpp"))
-WORKSPACE_DIR  = Path(os.environ.get("WORKSPACE_DIR", "/workspace"))
+LLAMA_CPP_DIR = Path(os.environ.get("LLAMA_CPP_DIR", "/app"))  # the llama.cpp full image: convert script + binaries
+WORKSPACE_DIR = Path(os.environ.get("WORKSPACE_DIR", "/workspace"))
+PRECISIONS = ("q4_k_m", "q5_k_m", "q8_0")
 
 
-def resolve_model(model_input: str, hf_token: str | None) -> Path:
-    """Download model from R2 or HuggingFace hub to /workspace/model."""
+def fail(reason: str):
+    log.error(reason)
+    sys.exit(1)
+
+
+def resolve_model(model: str) -> Path:
+    """An r2 directory (hf-download's hf_model) or a Hugging Face id → a local HF model directory."""
     dest = WORKSPACE_DIR / "model"
-    if model_input.startswith("r2://"):
-        log.info(f"Downloading model from R2: {model_input}")
-        return io.download_input(model_input, dest)
-
-    model_id = model_input.removeprefix("hf://")
-    log.info(f"Downloading model from HuggingFace: {model_id}")
+    if model.startswith("r2://"):
+        return io.download_directory(model, dest)
     from huggingface_hub import snapshot_download
-    snapshot_download(
-        repo_id=model_id,
-        local_dir=str(dest),
-        token=hf_token or None,
-        ignore_patterns=["*.msgpack", "flax_model*", "tf_model*"],
-    )
+
+    snapshot_download(model.removeprefix("hf://"), local_dir=dest,
+                      ignore_patterns=["*.msgpack", "flax_model*", "tf_model*", "*.h5"])  # HF_TOKEN from the env
     return dest
 
 
-def quantize_gguf(model_path: Path, precision: str) -> Path:
-    """Convert HF model to GGUF using llama.cpp tools."""
-    convert_script = LLAMA_CPP_DIR / "convert_hf_to_gguf.py"
-    quantize_bin   = LLAMA_CPP_DIR / "build" / "bin" / "llama-quantize"
-
-    if not convert_script.exists():
-        raise RuntimeError(
-            f"llama.cpp convert script not found at {convert_script}. "
-            f"Set LLAMA_CPP_DIR or rebuild the Docker image."
-        )
-    if not quantize_bin.exists():
-        raise RuntimeError(
-            f"llama-quantize binary not found at {quantize_bin}. "
-            f"Build llama.cpp with: cmake --build build --target llama-quantize"
-        )
-
-    log.info(f"Converting to GGUF f16 using {convert_script}")
-    gguf_fp16 = WORKSPACE_DIR / "model_fp16.gguf"
-    subprocess.run(
-        ["python", str(convert_script), str(model_path),
-         "--outfile", str(gguf_fp16), "--outtype", "f16"],
-        check=True,
-    )
-
-    log.info(f"Quantizing to {precision.upper()}")
-    gguf_quant = WORKSPACE_DIR / f"model_{precision}.gguf"
-    subprocess.run(
-        [str(quantize_bin), str(gguf_fp16), str(gguf_quant), precision.upper()],
-        check=True,
-    )
-
-    log.info(f"GGUF done: {gguf_quant} ({gguf_quant.stat().st_size / 1e9:.2f} GB)")
-    return gguf_quant
-
-
-def quantize_awq(model_path: Path, bits: int) -> Path:
-    """Quantize to AWQ using AutoAWQ."""
-    log.info(f"Quantizing to AWQ {bits}-bit")
-    from awq import AutoAWQForCausalLM
-    from transformers import AutoTokenizer
-
-    model     = AutoAWQForCausalLM.from_pretrained(str(model_path))
-    tokenizer = AutoTokenizer.from_pretrained(str(model_path))
-
-    quant_config = {"zero_point": True, "q_group_size": 128, "w_bit": bits, "version": "GEMM"}
-    model.quantize(tokenizer, quant_config=quant_config)
-
-    awq_path = Path("/workspace/awq_model")
-    model.save_quantized(str(awq_path))
-    tokenizer.save_pretrained(str(awq_path))
-
-    log.info(f"AWQ done: {awq_path}")
-    return awq_path
+def run(step: str, argv: list[str]) -> None:
+    log.info(f"{step}: {' '.join(argv)}")
+    code = subprocess.run(argv).returncode  # its output goes to the node's stdout
+    if code:
+        fail(f"{step} failed (exit {code}); llama.cpp's output is above")
 
 
 def main():
-    inputs    = io.read_inputs()
-    model_uri = inputs["model"]
-    method    = inputs.get("method", "gguf")
-    precision = inputs.get("precision", "q4_k_m")
-    bits      = int(inputs.get("bits", 4))
-    hf_token  = inputs.get("hf_token") or os.environ.get("HF_TOKEN")
+    inputs = io.read_inputs()
+    start = time.monotonic()
+    model, method = str(inputs.get("model") or ""), inputs.get("method") or "gguf"
+    precision = str(inputs.get("precision") or "q4_k_m").lower()
+    keep_f16 = str(inputs.get("keep_f16")).lower() in ("true", "1")
+    if not model or "${{" in model:
+        fail(f"unresolved ref model: {model!r}")
+    if method == "awq":  # ponytail: no AWQ in this CPU image; a GPU job image adds it once there is GPU quota
+        fail("AWQ needs a GPU job; use gguf")
+    if method != "gguf" or precision not in PRECISIONS:
+        fail(f"method {method!r} / precision {precision!r}: use gguf with one of {', '.join(PRECISIONS)}")
 
-    log.info("quantize starting")
-    model_path = resolve_model(model_uri, hf_token)
-
-    if method == "gguf":
-        output_path = quantize_gguf(model_path, precision)
-        io.write_output("gguf_file", output_path, kind="model",
-                        metadata={"format": "gguf", "precision": precision})
-    elif method == "awq":
-        output_path = quantize_awq(model_path, bits)
-        io.write_output("awq_model", output_path, kind="model",
-                        metadata={"format": "awq", "bits": bits})
+    WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
+    f16, out = WORKSPACE_DIR / "model-f16.gguf", WORKSPACE_DIR / f"model-{precision}.gguf"
+    if os.environ.get("STUB") == "1":
+        f16.write_bytes(b"GGUF")
+        out.write_bytes(b"GGUF")
     else:
-        raise ValueError(f"Unknown quantize method: {method}. Use 'gguf' or 'awq'.")
+        src = resolve_model(model)
+        run("convert", [sys.executable, str(LLAMA_CPP_DIR / "convert_hf_to_gguf.py"), str(src),
+                        "--outfile", str(f16), "--outtype", "f16"])
+        run("quantize", [str(LLAMA_CPP_DIR / "llama-quantize"), str(f16), str(out), precision.upper()])
 
-    log.info("quantize complete")
+    size, f16_size = out.stat().st_size, f16.stat().st_size
+    meta = {"format": "gguf", "base_model": model}
+    io.write_output("gguf_file", out, kind="model", metadata={**meta, "precision": precision, "size_bytes": size})
+    if keep_f16:
+        io.write_output("gguf_f16", f16, kind="model", metadata={**meta, "precision": "f16", "size_bytes": f16_size})
+    io.write_metrics({"method": "gguf", "precision": precision, "size_bytes": size, "f16_size_bytes": f16_size,
+                      "wall_s": round(time.monotonic() - start)})
+    log.info(f"quantize complete: {precision} {size / 1e9:.2f} GB (f16 {f16_size / 1e9:.2f} GB)")
 
 
 if __name__ == "__main__":

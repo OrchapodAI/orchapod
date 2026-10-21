@@ -208,15 +208,16 @@ class HFDownloadOutputs(BaseModel):
 
 
 class QuantizeInputs(BaseModel):
-    model: str = Field(description="HF model ID (e.g. Qwen/Qwen3-4B-Instruct) or R2 URI")
-    method: QuantizeMethod
+    model: str = Field(description="Hugging Face id, or hf-download's hf_model (r2 dir)")
+    method: QuantizeMethod = Field(description="gguf runs on CPU; awq needs a GPU job (exits 1 here)")
     precision: GGUFPrecision = Field(default=GGUFPrecision.Q4_K_M, description="GGUF only")
     bits: int = Field(default=4, description="AWQ only")
-    hf_token: str | None = Field(default=None, description="HuggingFace token for private models")
+    keep_f16: bool = Field(default=False, description="Also write the f16 GGUF as gguf_f16, judge-eval's honest baseline")
 
 class QuantizeOutputs(BaseModel):
-    gguf_file: str | None = None    # set when method=gguf
-    awq_model: str | None = None    # set when method=awq
+    gguf_file: str | None = None    # method=gguf: the quantized file; metadata {format, precision, base_model, size_bytes}
+    gguf_f16: str | None = None     # method=gguf with keep_f16: the f16 file it was quantized from
+    awq_model: str | None = None    # method=awq (a GPU job; not built yet)
 
 
 class LMEvalInputs(BaseModel):

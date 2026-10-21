@@ -1,6 +1,6 @@
 # Devpost entry: Orchapod.ai
 
-Copy each section into the matching Devpost field. The text states the design pinned in `docs/contracts.md` and mirrors `README.md`. TODO(D8) marks every claim or link that still needs a real run; submit only when none is left.
+Copy each section into the matching Devpost field. The text describes the design pinned in `docs/contracts.md`, mirrors `README.md` and reports no result. TODO(D8) marks each link and each claim that waits for a spike or a real run; before submitting, clear them all and re-read the rest against the golden run.
 
 ## Title
 

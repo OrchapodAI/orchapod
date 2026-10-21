@@ -91,6 +91,7 @@ def test_unmeasured_claims_carry_a_todo():
     # Drop each needle when the golden run measures it (D8).
     for needle in ("An evaluation you can trust", "The guard checks the estimate"):
         line = next((ln for ln in README.splitlines() if needle in ln), "")
+        assert line, f"the README line with {needle!r} is missing"
         assert "TODO(D8)" in line, f"nothing measured yet, so the line needs TODO(D8): {needle}"
 
 

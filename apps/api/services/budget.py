@@ -62,7 +62,8 @@ async def left(db: AsyncSession, run: Run | None, scale: float) -> tuple[float, 
     """(budget left, the cap that binds: "run" | "day", that cap in $) for a caller at `scale`: the least of the run cap
     × scale less the run's cost, and of the caller's share of the day (day cap × scale) and the whole day cap, both less
     the day's spend. Other runs' running nodes' grants count against the whole day, and against the share only when
-    granted at this scale or below, so an admin run in flight never blocks anonymous callers (contracts "Budget guard")."""
+    granted at this scale or below: an admin node's grant never blocks anonymous callers, though admin spend does
+    (contracts "Budget guard"; operating rule: no admin runs on the hosted instance)."""
     run_max, day = run_cap(scale), float(config.env("ORCHAPOD_MAX_DAY_USD"))
     granted = dict(_granted)  # a node that ends while spend is read stays counted: its cost commits before release
     if run is not None:

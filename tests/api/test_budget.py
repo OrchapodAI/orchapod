@@ -184,7 +184,7 @@ nodes:
 """
 
 
-async def test_an_admin_run_in_flight_never_blocks_anonymous_callers(client, db, provider, launched):
+async def test_an_admin_nodes_grant_never_blocks_anonymous_callers(client, db, provider, launched):
     provider.script = {"a": {"exit": None}}  # the admin run's first node keeps running; node x exits 0
     admin, anon = await seed(db, status=RunStatus.PENDING), await seed(db, ONE_NODE, status=RunStatus.PENDING)
 

@@ -113,7 +113,7 @@ class TokenFactory:
                 self.on_usage(P, model, in_tokens, out_tokens, usd=usd)
             return usd
 
-        timeout = httpx.Timeout(read_timeout, connect=10.0) if read_timeout else httpx.USE_CLIENT_DEFAULT
+        timeout = httpx.Timeout(120.0, connect=10.0, read=read_timeout) if read_timeout else httpx.USE_CLIENT_DEFAULT
         headers = {"Authorization": f"Bearer {key}"} if key else {}
         return f"{base}/chat/completions", {"json": body, "headers": headers, "timeout": timeout}, bill
 

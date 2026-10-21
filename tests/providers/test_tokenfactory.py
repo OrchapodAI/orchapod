@@ -210,8 +210,9 @@ def test_read_timeout_is_per_call_and_not_in_the_body(replay):
     tf = TokenFactory(http=http)
     tf.chat(MSGS, read_timeout=300)
     tf.chat(MSGS)
-    assert [(r.extensions["timeout"]["connect"], r.extensions["timeout"]["read"]) for r in seen] == [(10, 300), (5, 5)]
-    assert "read_timeout" not in json.loads(seen[0].content)  # (5, 5): this test client's own default
+    assert [r.extensions["timeout"] for r in seen] == [{"connect": 10, "read": 300, "write": 120, "pool": 120},
+                                                       {"connect": 5, "read": 5, "write": 5, "pool": 5}]
+    assert "read_timeout" not in json.loads(seen[0].content)  # the second: this test client's own default
 
 
 def undecodable():  # a gzip body that is not gzip, read only when the client reads it

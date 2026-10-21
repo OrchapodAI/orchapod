@@ -85,15 +85,18 @@ async def pick_provider(resources) -> tuple[GPUProvider, GPUSpec]:
 
 async def get_cost_estimate(resources) -> list[dict]:
     """
-    Return cost quotes from all configured providers for a given resource spec.
-    Used by the frontend to show a cost estimate before the user clicks Run.
+    Return cost quotes from the configured providers in the node's provider_pref (default ["nebius"]),
+    so the frontend never prices a provider the node cannot run on. Shown before the user clicks Run.
     """
     providers = get_providers()
+    pref: list[str] = getattr(resources, "provider_pref", None) or ["nebius"]
     gpu_str: str = getattr(resources, "gpu", "1xH100")
     gpu_spec = _parse_gpu_spec(gpu_str)
 
     quotes = []
     for name, provider in providers.items():
+        if name not in pref:
+            continue
         try:
             q = await provider.quote(gpu_spec)
             quotes.append({

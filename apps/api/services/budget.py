@@ -93,10 +93,11 @@ def release(run_id: uuid.UUID) -> None:
 
 
 def gpu_nodes(types) -> list[str]:
-    """The node types among `types` that rent a GPU, billed by the hour: runtime gpu (a Serverless Job), or a row marked
-    rents_gpu (vllm-serve runs as api, but its endpoint bills GPU hours)."""
+    """The node types among `types` that rent a GPU: runtime gpu (a Serverless Job) or `rents_gpu` (an api node such as
+    vllm-serve that creates a GPU endpoint, billed from creation). Where a node runs still reads `runtime` alone."""
     from packages.workflow_schema.models import NODE_REGISTRY
-    return sorted({t for t in types if (row := NODE_REGISTRY.get(t, {})).get("runtime") == "gpu" or row.get("rents_gpu")})
+    return sorted({t for t in types if NODE_REGISTRY.get(t, {}).get("runtime") == "gpu"
+                   or NODE_REGISTRY.get(t, {}).get("rents_gpu")})
 
 
 def gpu_guard(types, scale: float) -> None:

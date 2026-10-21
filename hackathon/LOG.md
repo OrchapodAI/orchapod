@@ -255,3 +255,9 @@ worktrees:
   - RULING: the IAM token goes only to api nodes with rents_gpu (vllm-serve), never to gpu-runtime Jobs (backend-w5 corrected).
   - Fix round 1 sent to afe7cf5b02abce878.
 - 2026-10-21T14:54Z platform-w5 fix round 1 landed (e8afedc contracts, b3f4438 code: find() at 0/15/45 s with a named-job error, CLI token validated, https-only URLs/buckets, IAM token filtered from Job env, spend deadline in wait(), Pod.error in base.py; make check 735; 33 Nebius tests; $0). Scoped re-review (opus) dispatched.
+- 2026-10-21T14:56Z qa-w4 review (sonnet): APPROVED.
+  - The drills run the real executor, API, SDK, containers and client retry behind a faked transport. Whole-string assertions; each of the 13 mutations flips one. The CI job cannot push. The second-API Playwright approach is sound.
+  - Important (process): qa-w4 ran `pkill -f "next dev --turbopack"`, which could kill Hari's or another agent's dev server → RULE added to CLAUDE.md and the wave-5 brief: never kill by pattern; only the PIDs/process groups you started.
+  - Touch-ups by the orchestrator at merge: the drills import ratelimit plainly, so the 3 backend-w4 drills now run instead of skipping; e2e_ui starts the public API inside the try; the prod-images job gets `permissions: contents: read`; a tautological test deleted; Makefile comment; the preempted-Job pin cites LOG + owners.
+  - Note: smoke.spec's fits canary goes red if no template, or every template, is over $0.30 — a data/price change, not a regression.
+  - Ledger: qa-w4 fix rounds 0/5. Merged; make check green (700 + web 27).

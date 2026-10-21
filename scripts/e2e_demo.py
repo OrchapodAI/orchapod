@@ -5,7 +5,7 @@
 It rebuilds and retags the shared `orchapod/<node>:dev` images, so parallel worktrees must not run it: it is opt-in.
 
 It starts its own API (STUB=1, throwaway SQLite DB, first free port from 8003, no paid key in its env; on Linux it listens
-on 0.0.0.0, because the node containers reach it through the docker0 gateway, see bind_host), builds the images
+on E2E_BIND_HOST, because the node containers reach it through the docker0 gateway, see bind_host), builds the images
 the plan needs (`orchapod/<node>:dev`), creates the workflow from GET /agent/templates, runs it and polls
 GET /runs/{id}/summary. Asserted: the run succeeded in under 5 minutes; data-prep registered dataset, train_jsonl and
 eval_jsonl; cost_usd is 0 with a cost_json on every node; the dataset's download link serves rows with exactly the
@@ -73,13 +73,14 @@ def api_env(port: int, db: Path, environ, extra: dict[str, str] | None = None) -
     } | (extra or {})
 
 
-def bind_host(platform: str = sys.platform) -> str:
-    """Where the stub API listens. A node container reaches it as host.docker.internal: Docker Desktop (macOS, Windows) forwards
-    that name to the host's 127.0.0.1, but on Linux it is the docker0 gateway (LocalDocker's --add-host ...:host-gateway), which a
-    127.0.0.1 listener never answers.
-    ponytail: on Linux the key-less STUB API listens on every interface for the minutes it lives, and a host firewall that
-    drops traffic from docker0 blocks the nodes all the same; bind docker0's gateway if either matters."""
-    return "0.0.0.0" if platform.startswith("linux") else "127.0.0.1"
+def bind_host() -> str:
+    """Where the stub API listens: E2E_BIND_HOST, else 127.0.0.1. A node container reaches it as host.docker.internal: Docker
+    Desktop (macOS, Windows) forwards that name to the host's 127.0.0.1, but on Linux it is the docker0 gateway (LocalDocker's
+    --add-host ...:host-gateway), which a 127.0.0.1 listener never answers. There set E2E_BIND_HOST to docker0's gateway
+    (`docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}'`, usually 172.17.0.1), on a throwaway host only:
+    the key-less STUB API takes runs from anyone who reaches it, and a firewall that drops docker0 traffic needs a rule for
+    ports 8003-8052 (preflight says so; never the hosted VM, docs/HOSTING.md)."""
+    return os.environ.get("E2E_BIND_HOST") or "127.0.0.1"
 
 
 def listen_on_free_port(start: int = 8003, host: str = "127.0.0.1") -> socket.socket:
@@ -218,6 +219,9 @@ def preflight(stack: dict = LOCAL_STACK) -> list[str]:
         httpx.get(f"{stack['ORCHAPOD_R2_ENDPOINT']}/minio/health/live", timeout=3).raise_for_status()
     except httpx.HTTPError as e:
         problems.append(f"MinIO is not reachable at {stack['ORCHAPOD_R2_ENDPOINT']} ({e}): run `make up`")
+    if sys.platform.startswith("linux") and not os.environ.get("E2E_BIND_HOST"):
+        problems.append("on Linux the node containers reach the API through the docker0 gateway: set E2E_BIND_HOST to it "
+                        "(usually 172.17.0.1; see bind_host), on a throwaway host only")
     return problems
 
 
@@ -343,7 +347,7 @@ def with_stack(fn, extra_env: dict[str, str] | None = None) -> int:
             try:
                 proc, base = start_api(Path(tmp), extra_env)
                 wait_healthy(proc, base, Path(tmp) / "api.log")
-                say(f"API up on {base} (STUB=1, throwaway DB)")
+                say(f"API up on {base}, listening on {bind_host()} (STUB=1, throwaway DB)")
                 with httpx.Client(base_url=base, timeout=30) as client:
                     code = fn(client)
             except (RuntimeError, httpx.HTTPError) as e:

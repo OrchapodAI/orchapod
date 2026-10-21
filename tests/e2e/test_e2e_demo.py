@@ -89,24 +89,37 @@ def test_the_stub_api_never_takes_8002_the_dev_api(monkeypatch):
     assert asked == [()], "start_api asks for the default start, not a port of its own"
 
 
-@pytest.mark.parametrize("platform, host", [("linux", "0.0.0.0"), ("darwin", "127.0.0.1"), ("win32", "127.0.0.1")])
-def test_the_stub_api_listens_where_the_node_containers_can_reach_it(platform, host, monkeypatch):
-    """A node container reaches the API as host.docker.internal. Docker Desktop (macOS, Windows) forwards that name to the host's
-    127.0.0.1; on Linux it is the docker0 gateway (LocalDocker's --add-host ...:host-gateway, pinned in
-    tests/providers/test_local_docker.py), which a 127.0.0.1 listener never answers: there the API must listen on every interface."""
-    assert e2e.bind_host(platform) == host
+@pytest.mark.parametrize("env, host", [(None, "127.0.0.1"), ("172.17.0.1", "172.17.0.1")])
+def test_the_stub_api_listens_on_loopback_unless_told(env, host, monkeypatch):
+    """A node container reaches the API as host.docker.internal: Docker Desktop forwards that name to the host's 127.0.0.1; on
+    Linux it is the docker0 gateway, which a 127.0.0.1 listener never answers, so Linux opts in with E2E_BIND_HOST (never
+    every interface by default: the STUB API takes runs from anyone who reaches it)."""
+    if env:
+        monkeypatch.setenv("E2E_BIND_HOST", env)
+    else:
+        monkeypatch.delenv("E2E_BIND_HOST", raising=False)
+    assert e2e.bind_host() == host
     asked = []
 
-    def refuse(*args, **kwargs):  # no real bind on 0.0.0.0: macOS would ask Hari to accept incoming connections
+    def refuse(*args, **kwargs):  # no real bind: macOS would ask Hari to accept incoming connections
         asked.append(kwargs)
         raise RuntimeError("stop here")
 
     monkeypatch.setattr(e2e, "listen_on_free_port", refuse)
-    monkeypatch.setattr(e2e, "bind_host", lambda: host)
     with pytest.raises(RuntimeError, match="stop here"):
         e2e.start_api(Path("/nonexistent"))
     assert asked == [{"host": host}]  # start_api binds what bind_host says
 
+
+def test_preflight_on_linux_asks_for_the_bind_host(monkeypatch):
+    monkeypatch.setattr(e2e.sys, "platform", "linux")
+    monkeypatch.delenv("E2E_BIND_HOST", raising=False)
+    monkeypatch.setattr(e2e.subprocess, "run", lambda *a, **k: type("R", (), {"returncode": 0})())
+    monkeypatch.setattr(e2e.socket, "create_connection", lambda *a, **k: type("C", (), {"close": lambda self: None})())
+    monkeypatch.setattr(e2e.httpx, "get", lambda *a, **k: type("G", (), {"raise_for_status": lambda self: None})())
+    assert any("E2E_BIND_HOST" in p for p in e2e.preflight())
+    monkeypatch.setenv("E2E_BIND_HOST", "172.17.0.1")
+    assert not any("E2E_BIND_HOST" in p for p in e2e.preflight())
 
 def test_the_api_port_is_held_from_choice_to_start():
     """Two `make check` at once must not pick the same port, nor mistake each other's API for their own."""

@@ -69,6 +69,8 @@ Do the proposal's "What needs a human" steps 2–3 first (vCPU quota; GPU quotas
     the golden run's `https://api.<domain>/runs/<id>/summary` (keyword `succeeded`).
 
 ## Deploy
+Rate limits key on the client IP that Caddy passes in X-Forwarded-For (uvicorn runs with `--forwarded-allow-ips "*"`, and only
+Caddy can reach the API). Never give Caddy `trusted_proxies` or put a CDN in front of it: either would let a client pick its own IP.
 From your Mac, at the commit to ship: `ORCHAPOD_DEPLOY_HOST=<user>@<vm> scripts/deploy-hosted.sh`. It copies the checkout
 (minus `.git` and everything `.gitignore` names) and never touches the VM's `.env`, `nebius/` or `deploys.log`. Then it
 rebuilds the images, restarts what changed, and appends `<UTC time> <commit>` to `/opt/orchapod/deploys.log`; `-dirty`

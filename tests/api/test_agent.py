@@ -93,7 +93,7 @@ async def test_templates_are_the_three_canonical_intents_and_the_docs_specialist
         assert {"slug", "title", "intent", "plan", "estimate"} <= set(t)
         assert set(t["estimate"]["by_node"]) == {n["id"] for n in t["plan"]["nodes"]}
     assert 0 < templates[1]["estimate"]["usd"] <= 0.3  # intent #2 fits the anonymous run cap ($3 x 0.1)
-    assert templates[0]["estimate"]["usd"] < 3
+    assert all(t["estimate"]["usd"] < 3 for t in templates)  # the run cap
 
 
 async def test_run_it_yourself_clones_each_template_at_reduced_scale(client, monkeypatch):
@@ -134,7 +134,7 @@ def test_the_docs_specialist_validates_at_both_scales_on_10_to_20_docs_pages():
     seeds = t["plan"]["nodes"][0]["inputs"]["seed_urls"]
     assert 10 <= len(set(seeds)) == len(seeds) <= 20
     assert all(re.fullmatch(r"https://docs\.(tokenfactory\.)?nebius\.com(/[a-z0-9-]+)+", u) for u in seeds), seeds
-    assert all(u in planner._knowledge() for u in seeds)  # the live planner proposes the same seeds
+    assert re.findall(r"https://docs\.[\w./-]*[\w-]", planner._knowledge()) == seeds  # the live planner's list, same order
 
 
 async def test_stub_plans_with_the_closest_template_and_calls_nothing(client, monkeypatch):

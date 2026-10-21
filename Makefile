@@ -17,7 +17,7 @@ else
 E2E_STEP = echo "SKIP stub e2e: set E2E=1 (orchestrator/integration only)"
 endif
 check:     ; ruff check apps packages containers && $(PY) -m pytest tests -q && $(PNPM) -C apps/web test && $(E2E_STEP)
-# The Playwright smoke of the web app, STUB and $0 (Docker, `make up`, node and pnpm): scripts/e2e_ui.py starts the API and `next dev`, and
+# The Playwright smoke of the web app, STUB and $0 (Docker, `make up`, node and pnpm): scripts/e2e_ui.py starts the API, a second API at the public scale and `next dev`, and
 # builds and retags the same shared orchapod/<node>:dev images, so it is orchestrator-only too, like `make check E2E=1`.
 # SKIP-SITE(ml-w4): UI_ARGS=--strict fails the steps whose piece is not merged yet (vllm-serve).
 # pnpm 11 exits 1 on apps/web (ERR_PNPM_IGNORED_BUILDS: sharp, harmless): hence the "-" before its install.

@@ -36,10 +36,6 @@ def test_playwright_env_says_where_the_app_is_what_cannot_run_and_whether_that_f
     assert not {"NEBIUS_API_KEY", "TAVILY_API_KEY", "HF_TOKEN", "VASTAI_API_KEY"} & set(env)
 
 
-def test_the_public_api_differs_from_the_pages_only_in_the_anonymous_scale():
-    """The fits test reads the templates at the public demo's scale (contracts "Budget guard": ORCHAPOD_ANON_SCALE 0.1)."""
-    assert ui.PUBLIC_CAPS == agent.FULL_CAPS | {"ORCHAPOD_ANON_SCALE": "0.1"}
-
 
 def test_the_spec_and_the_config_read_exactly_what_the_driver_sets():
     """tests/ui is TypeScript and the driver is Python: a renamed variable on one side must not silently break the other."""

@@ -9,8 +9,5 @@ from tests.api.conftest import client, db, no_grants  # noqa: F401 (fixtures)
 @pytest.fixture(autouse=True)
 def full_buckets(monkeypatch):
     """backend-w4's per-IP buckets live in the process: one drill must not spend the next one's."""
-    try:
-        from api.services import ratelimit
-    except ImportError:  # backend-w4 not merged
-        return
+    from api.services import ratelimit
     monkeypatch.setattr(ratelimit, "_buckets", {})

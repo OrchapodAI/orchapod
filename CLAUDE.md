@@ -17,6 +17,7 @@ You are part of a multi-agent build led by the Orchestrator. Operating manual: h
 ## Machine notes (Hari's Mac)
 - Checkout ~/src/orchapod-hack (outside iCloud). Shared venv .venv: Python 3.12, third-party deps only (no editable installs, so worktrees import their own code).
 - Host ports 8000 (complychip2) and 8001 (complychip-ED) and the complychip* compose projects belong to other projects: never stop, recreate or `down` them. Our compose project is `orchapod-hack`; on this Mac the orchapod API runs on 8002 (set in .env); the documented default elsewhere is 8001.
+- Never kill by pattern (`pkill -f`, `killall`): this Mac runs Hari's dev servers, other agents' servers and other projects. Kill only the PIDs or process groups you started (`start_new_session=True` + `os.killpg`). Never start or stop Docker Desktop.
 - pnpm here is v11 (CI uses 9): run web commands with `pnpm --config.verify-deps-before-run=false …`.
 
 ## Commands

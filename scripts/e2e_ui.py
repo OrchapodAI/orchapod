@@ -134,8 +134,9 @@ def run(c: httpx.Client, strict: bool, extra: list[str]) -> int:
     api_url = str(c.base_url).rstrip("/")
     with tempfile.TemporaryDirectory(prefix="orchapod-ui-") as tmp:
         web, web_url = start_web(api_url, Path(tmp))
-        public, public_url = demo.start_api(Path(tmp), PUBLIC_CAPS)  # its own port, DB and api.log in this directory
+        public = None
         try:
+            public, public_url = demo.start_api(Path(tmp), PUBLIC_CAPS)  # its own port, DB and api.log in this directory
             demo.wait_healthy(web, web_url, Path(tmp) / "web.log", path="/agent", tries=240)
             demo.wait_healthy(public, public_url, Path(tmp) / "api.log")
             demo.say(f"web up on {web_url} (next dev, API {api_url}; public-scale API {public_url})")
@@ -144,7 +145,8 @@ def run(c: httpx.Client, strict: bool, extra: list[str]) -> int:
             return demo.fail(e)
         finally:
             stop_group(web)
-            demo.stop(public)
+            if public:
+                demo.stop(public)
         if code:
             demo.say(f"web log (last lines):\n{demo.tail(Path(tmp) / 'web.log')}")
     if code:

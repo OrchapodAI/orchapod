@@ -31,11 +31,7 @@ from packages.providers.tavily import Tavily
 from packages.providers.tokenfactory import SUPER, ULTRA, TokenFactory
 from tests.containers.conftest import load_container
 
-try:
-    from api.services import ratelimit
-except ImportError:
-    ratelimit = None
-BACKEND_W4 = pytest.mark.skipif(ratelimit is None, reason="SKIP (not a pass): backend-w4's D6 refusals are not merged")
+from api.services import ratelimit
 
 BUCKET, LLAMA, STUDENT = "orchapod-artifacts", "meta-llama/Llama-3.1-8B-Instruct", "nvidia/Llama-3.1-Nemotron-Nano-8B-v1"
 ADMIN = {"X-Orchapod-Admin": "drill-admin"}
@@ -305,8 +301,8 @@ async def test_a_preempted_serverless_job_fails_the_run_and_retry_resumes_from_t
     nodes = [{"id": "train", "type": "unsloth-train", "inputs": {"model": STUDENT, "train_data": "${{ inputs.train }}"}}]
 
     s = await drill.run(nodes, {"train": f"r2://{BUCKET}/runs/seed/prep/train_jsonl"}, ADMIN)  # gpu nodes: admin only
-    # What the run page shows for a preempted Job today: no reason. The Serverless Jobs provider (platform, not built yet)
-    # has to surface the Job's state, code and message (qa-w4 report, open question 1).
+    # What the run page shows for a preempted Job today: no reason. platform-w5 keeps the Job's state, code and message on
+    # Pod.error and backend-w5 shows it as the node error (hackathon/LOG.md 2026-10-21, qa-w4 + platform-w5 reviews): update this pin then.
     assert (s["status"], s["error"], states(s)) == ("failed", "exit 1", [("train", "failed", "exit 1")])
 
     s = await drill.retry(s["run_id"], "train", ADMIN)
@@ -350,7 +346,6 @@ async def test_a_plan_above_the_run_cap_is_refused_with_what_it_needs(client, mo
     assert (r.status_code, r.json()["detail"]) == (402, f"run cap $0.3: $0.30 left, the plan needs ${need:.2f}")
 
 
-@BACKEND_W4
 async def test_the_sixth_plan_from_one_address_gets_429_with_retry_after(client, monkeypatch):
     monkeypatch.setenv("STUB", "1")  # the planner answers with the canonical template: no model call
     monkeypatch.setattr(ratelimit, "monotonic", lambda: 1000.0)  # the six arrive in the same instant: no refill
@@ -362,7 +357,6 @@ async def test_the_sixth_plan_from_one_address_gets_429_with_retry_after(client,
     assert replies[-1].json()["detail"] == "too many requests from your address; try again in 12 s"
 
 
-@BACKEND_W4
 async def test_a_workflow_with_runs_is_read_only_to_visitors(client):
     workflow_id, _ = await a_run(client, one_node("data-prep", dataset="hf://openai/gsm8k"))
 
@@ -374,7 +368,6 @@ async def test_a_workflow_with_runs_is_read_only_to_visitors(client):
     assert (await client.put(f"/workflows/{workflow_id}", json={"name": "renamed"}, headers=ADMIN)).status_code == 200
 
 
-@BACKEND_W4
 async def test_a_gpu_node_is_refused_to_visitors(client, monkeypatch):
     monkeypatch.setattr(ex, "launch", lambda *_: pytest.fail("a refused run must not launch"))
     _, run_id = await a_run(client, one_node("unsloth-train", model=STUDENT, train_data="r2://b/runs/x/prep/train_jsonl"))

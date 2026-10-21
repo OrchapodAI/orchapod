@@ -12,6 +12,8 @@ their rows still show, their downloads do not.
 
 The committed fixture is a STUB run of the real-estate template (every metric says "stub": true) until the real golden
 run replaces it: TODO(D8) `--export` that run, commit the file, `make demo` on the hosted app.
+TODO(D8): run `gitleaks detect --no-git --source scripts/golden-run.json` before committing an export: it copies the
+objects' text verbatim (artifact meta is redacted, file contents are not).
 """
 
 from __future__ import annotations
@@ -108,14 +110,13 @@ async def _then_dispose(work):
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--export", metavar="RUN_ID", type=uuid.UUID, help="write this finished run to the fixture instead")
-    p.add_argument("--fixture", type=Path, default=FIXTURE)
     args = p.parse_args()
     if args.export:
         fixture = asyncio.run(_then_dispose(export(args.export)))
-        args.fixture.write_text(json.dumps(fixture, indent=1, ensure_ascii=False) + "\n")
-        print(f"run {args.export} → {args.fixture}: {len(fixture['artifacts'])} artifacts, {len(fixture['objects'])} files")
+        FIXTURE.write_text(json.dumps(fixture, indent=1, ensure_ascii=False) + "\n")
+        print(f"run {args.export} → {FIXTURE}: {len(fixture['artifacts'])} artifacts, {len(fixture['objects'])} files")
     else:
-        run_id = asyncio.run(_then_dispose(seed(json.loads(args.fixture.read_text()))))
+        run_id = asyncio.run(_then_dispose(seed(json.loads(FIXTURE.read_text()))))
         print(f"golden run seeded: /runs/{run_id}, /agent/runs/{run_id}/report")
     return 0
 

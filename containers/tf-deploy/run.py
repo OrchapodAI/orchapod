@@ -13,6 +13,7 @@ import sys
 import time
 
 from orchapod import cost, io, log
+from orchapod.prices import PRICES
 from packages.providers.base import ProviderError
 from packages.providers.tokenfactory import TokenFactory
 
@@ -43,14 +44,11 @@ def main():
     name = inputs.get("name") or f"orchapod-{os.environ['ORCHAPOD_RUN_ID'][:8]}"
     base, source = job["model"], f"{job['job_id']}:{job['checkpoint_id']}"
     tf = TokenFactory(on_usage=cost.add)
+    if base not in PRICES["token_factory"] and not tf.stub:  # the proving call would be refused after a 15-min wait
+        fail(f"no price for {base} in orchapod.prices.PRICES, so nothing is deployed")
     served, done = None, False
     try:
-        try:
-            served = tf.lora.deploy(name, base, source)  # the id to chat with; it may differ from `name`
-        except ProviderError as e:
-            if e.kind == "unsupported":
-                fail(f"{e} — serve it with vllm-serve + lora_adapter")
-            raise
+        served = tf.lora.deploy(name, base, source)  # the id to chat with; it may differ from `name`
         log.info(f"deploying {source} on {base} as {served}")
         start = time.monotonic()
         while (status := tf.lora.status(served)) != "active":
@@ -69,8 +67,8 @@ def main():
         io.write_metrics({"model": served, "base_model": base, "source": source, "wait_s": wait_s})
         done = True
         log.info(f"tf-deploy complete: {served} answered {proof!r}")
-    except ProviderError as e:
-        fail(str(e))
+    except ProviderError as e:  # only lora.deploy raises kind `unsupported`
+        fail(f"{e} — serve it with vllm-serve + lora_adapter" if e.kind == "unsupported" else str(e))
     finally:
         if served and not done:
             try:

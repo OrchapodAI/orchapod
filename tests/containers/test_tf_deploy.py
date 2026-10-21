@@ -133,9 +133,18 @@ def test_unusable_job_input_fails_before_any_call(node, tf_routes, job):
     assert e.value.code == 1 and seen == [] and "tf-finetune's job output" in last_error()
 
 
+def test_unpriced_base_fails_before_deploying(node, tf_routes, monkeypatch):
+    monkeypatch.delitem(PRICES["token_factory"], LLAMA)
+    seen = tf_routes(dep, routes())
+    with pytest.raises(SystemExit) as e:
+        node(job=JOB)
+    assert e.value.code == 1 and seen == [] and f"no price for {LLAMA}" in last_error()
+
+
 def test_stub_deploys_offline(node, monkeypatch):
     monkeypatch.setenv("STUB", "1")
     monkeypatch.delenv("NEBIUS_API_KEY")
+    monkeypatch.delitem(PRICES["token_factory"], LLAMA)  # nothing is spent, so STUB needs no price
     outs, _ = node(job=JOB)
     meta = outs["model_ref"][2]
     assert (meta["model"], meta["base_model"]) == ("orchapod-run12345", LLAMA) and meta["proof"].startswith("stub-")

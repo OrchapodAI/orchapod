@@ -129,6 +129,18 @@ def test_token_factory_key_never_sent_off_token_factory(replay):
     assert [r.headers.get("authorization") for r in seen] == [None, None]
 
 
+@pytest.mark.parametrize("call", ["chat", "stream_chat"])
+@pytest.mark.parametrize("client_key,env_key,ref_key", [  # client_key None = NEBIUS_API_KEY
+    (None, "tf-key", "tf-key"), (None, "tf-key", " tf-key\n"), ("own-key", "tf-key\n", "tf-key"), (" tf-key\n", "", "tf-key")])
+def test_token_factory_key_refused_off_token_factory_even_padded(replay, monkeypatch, call, client_key, env_key, ref_key):
+    monkeypatch.setenv("NEBIUS_API_KEY", env_key)
+    http, seen = replay(completion(model="tuned"))
+    tf = TokenFactory(client_key, http=http)
+    with pytest.raises(ProviderError) as e:  # list() drains stream_chat's generator; chat raises before it returns
+        list(getattr(tf, call)(MSGS, "tuned", base_url="https://evil.example/v1", api_key=ref_key))
+    assert e.value.kind == "auth" and seen == []
+
+
 def test_endpoint_model_ref_is_sent_with_its_own_key_and_unbilled(replay, recorder):
     calls, on_usage = recorder
     http, seen = replay(completion(model="tuned"))
@@ -191,6 +203,41 @@ def test_invalid_json_is_bad_output_billed_and_not_retried(replay, recorder):
         TokenFactory(on_usage=on_usage, http=http).chat(MSGS, json_schema=SCORE)
     assert e.value.kind == "bad_output" and "length" in str(e.value)
     assert len(seen) == 1 and len(calls) == 1  # the tokens were spent
+
+
+def test_read_timeout_is_per_call_and_not_in_the_body(replay):
+    http, seen = replay(completion(), completion())
+    tf = TokenFactory(http=http)
+    tf.chat(MSGS, read_timeout=300)
+    tf.chat(MSGS)
+    assert [(r.extensions["timeout"]["connect"], r.extensions["timeout"]["read"]) for r in seen] == [(10, 300), (5, 5)]
+    assert "read_timeout" not in json.loads(seen[0].content)  # (5, 5): this test client's own default
+
+
+def undecodable():  # a gzip body that is not gzip, read only when the client reads it
+    return httpx.Response(200, headers={"content-encoding": "gzip"}, stream=httpx.ByteStream(b"\x00garbage"))
+
+
+@pytest.mark.parametrize("reply", [lambda: httpx.Response(200, text="<html>gateway</html>"),
+                                   lambda: httpx.Response(200, json=["not", "an", "object"]), undecodable],
+                         ids=["not_json", "not_an_object", "undecodable"])
+@pytest.mark.parametrize("call", [lambda tf: tf.chat(MSGS), lambda tf: tf.fine_tuning.get("ftjob-7f3a")],
+                         ids=["chat", "fine_tuning.get"])
+def test_a_2xx_reply_that_cannot_be_read_is_bad_output_not_retried(replay, reply, call):
+    http, seen = replay(reply())
+    with pytest.raises(ProviderError) as e:
+        call(TokenFactory(http=http))
+    assert (e.value.kind, len(seen)) == ("bad_output", 1)
+
+
+@pytest.mark.parametrize("reply", [lambda: httpx.Response(200, text="data: {not json\n\n"),
+                                   lambda: httpx.Response(200, text='data: "a string"\n\n'), undecodable],
+                         ids=["not_json", "not_an_object", "undecodable"])
+def test_malformed_stream_chunk_is_bad_output(replay, reply):
+    http, seen = replay(reply())
+    with pytest.raises(ProviderError) as e:
+        list(TokenFactory(http=http).stream_chat(MSGS))
+    assert (e.value.kind, len(seen)) == ("bad_output", 1)
 
 
 def test_reply_without_choices_is_billed_then_bad_output(replay, recorder):

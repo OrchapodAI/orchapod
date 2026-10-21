@@ -68,6 +68,14 @@ def test_plan_limits_are_quota_and_not_retried(replay, status):
     assert (e.value.kind, len(seen)) == ("quota", 1)
 
 
+def test_a_2xx_reply_that_is_not_json_is_bad_output_not_retried(replay, recorder):
+    calls, on_usage = recorder
+    http, seen = replay(httpx.Response(200, text="<html>gateway</html>"))
+    with pytest.raises(ProviderError) as e:
+        Tavily(on_usage=on_usage, http=http).search("q")
+    assert (e.value.kind, len(seen), calls) == ("bad_output", 1, [])
+
+
 def test_missing_key_is_auth_error_before_send(replay, monkeypatch):
     monkeypatch.delenv("TAVILY_API_KEY")
     http, seen = replay()

@@ -14,7 +14,7 @@ import os
 import httpx
 
 from orchapod.prices import PRICES
-from packages.providers.base import ProviderError, http_client, request, stub_hash
+from packages.providers.base import ProviderError, http_client, json_of, request, stub_hash
 
 TAVILY_BASE = "https://api.tavily.com"
 P = "tavily"
@@ -50,8 +50,8 @@ class Tavily:
     def _post(self, endpoint: str, body: dict) -> dict:
         if not self.api_key and not self.stub:
             raise ProviderError(P, "auth", None, "TAVILY_API_KEY is not set")
-        data = request(self.http, P, "POST", f"{TAVILY_BASE}/{endpoint}", json={**body, "include_usage": True},
-                       headers={"Authorization": f"Bearer {self.api_key}"}).json()
+        data = json_of(request(self.http, P, "POST", f"{TAVILY_BASE}/{endpoint}", json={**body, "include_usage": True},
+                               headers={"Authorization": f"Bearer {self.api_key}"}), P)
         credits = (data.get("usage") or {}).get("credits")
         if credits is None:  # the contract's rule: 1 (basic) or 2 (advanced) per search, or per 5 extracted URLs
             per = 2 if body.get(f"{endpoint}_depth") == "advanced" else 1

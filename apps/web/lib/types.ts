@@ -310,6 +310,8 @@ export interface AgentTemplate {
   estimate: Estimate;
   /** "Run it yourself": the same plan at reduced scale, sized for the anonymous caps; one-click Run posts it. */
   reduced?: { plan: Plan; estimate: Estimate };
+  /** false: the reduced estimate is above this caller's per-run cap, so Run stays disabled. Undefined = runnable. */
+  fits?: boolean;
 }
 
 export interface AgentRunOut {

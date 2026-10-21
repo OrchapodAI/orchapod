@@ -74,7 +74,10 @@ export default function RunsPage() {
       .finally(() => setLoading(false));
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    setSearch(new URLSearchParams(window.location.search).get("q") ?? ""); // /runs?q=<workflow name>: the golden-run link
+  }, []);
 
   function exportCsv() {
     const wfMap = Object.fromEntries(workflows.map(w => [w.id, w]));

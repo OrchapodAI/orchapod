@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { api, explainError } from "@/lib/api";
+import { api, capNote, demoNote, explainError, usd } from "@/lib/api";
 import type { AgentPlan, AgentReport, AgentTemplate } from "@/lib/types";
 import { planYaml } from "@/lib/workflowYaml";
 import { NODE_META } from "@/components/canvas/OrchaNode";
@@ -12,7 +13,6 @@ import { RunView } from "@/components/runs/RunView";
 
 const MAX_INTENT = 2000; // contracts: POST /agent/plan takes at most 2000 chars
 
-const usd = (n: number | null | undefined) => (n == null ? "–" : `$${n.toFixed(2)}`);
 const mins = (n: number | null | undefined) => (n == null ? "–" : `~${Math.round(n)} min`);
 
 // Literal model ids in a node's inputs; refs resolve at run time, so they are skipped.
@@ -88,6 +88,7 @@ export default function AgentPage() {
   // One-click Run: the template is the plan card, already planned (at reduced scale when the API offers it).
   // The intent box is left alone, so a typed draft survives.
   function runTemplate(t: AgentTemplate) {
+    if (capNote(t)) return; // above this caller's run cap: the API would refuse it (402)
     const { plan, estimate } = t.reduced ?? t;
     const reply: AgentPlan = { plan, rationale: t.rationale, estimate, warnings: [], errors: [] };
     setAsked(t.intent); setReply(reply); setRunId(null);
@@ -104,6 +105,13 @@ export default function AgentPage() {
 
       <div style={{ flex: 1, overflow: "auto", padding: "28px 24px" }}>
         <div style={{ maxWidth: 960, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
+          <p role="note" style={{
+            padding: "8px 12px", borderRadius: 6, fontSize: 12.5, lineHeight: 1.5, fontWeight: 400,
+            background: "var(--sky-soft)", border: "1px solid var(--sky)", color: "var(--sky-ink)",
+          }}>
+            <b>Demo mode.</b> {demoNote(templates)}
+          </p>
+
           <form onSubmit={handlePlan} className="card" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
             <label htmlFor="intent" style={{ fontSize: 13, fontWeight: 500 }}>What should Orchapod build?</label>
             <textarea
@@ -135,7 +143,12 @@ export default function AgentPage() {
           <section aria-label="Templates" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
             {templatesError ? <div style={{ gridColumn: "1 / -1" }}><Callout tone="amber" title="Templates unavailable">{templatesError}</Callout></div>
               : !templates ? <p className="muted" style={{ fontSize: 13 }}>Loading templates…</p>
-              : templates.map((t) => (
+              : templates.length === 0 ? (
+                <p className="muted" style={{ fontSize: 13, gridColumn: "1 / -1" }}>
+                  No templates on this server (apps/api/agent/templates/ is empty). Describe what you want above and press Plan.
+                </p>
+              )
+              : templates.map((t) => { const cap = capNote(t); return (
                 <div key={t.slug} className="card col" style={{ padding: 14, gap: 6 }}>
                   <span style={{ fontWeight: 600, fontSize: 13.5 }}>{t.title}</span>
                   <span className="dim" style={{ fontSize: 12.5, flex: 1 }}>{t.intent}</span>
@@ -144,11 +157,17 @@ export default function AgentPage() {
                       {usd((t.reduced ?? t).estimate?.usd)} · {mins((t.reduced ?? t).estimate?.minutes)}
                     </span>
                     <div className="spacer" />
-                    <button type="button" className="btn btn-sm btn-primary" onClick={() => runTemplate(t)} disabled={busy !== ""}
-                      aria-label={`Run template: ${t.title}`}>▶ Run</button>
+                    <button type="button" className="btn btn-sm btn-primary" onClick={() => runTemplate(t)}
+                      disabled={busy !== "" || cap !== null} aria-label={`Run template: ${t.title}`}
+                      aria-describedby={cap ? `cap-${t.slug}` : undefined}>▶ Run</button>
                   </div>
+                  {cap && (
+                    <p id={`cap-${t.slug}`} style={{ fontSize: 12, fontWeight: 400, color: "var(--amber-ink)" }}>
+                      {cap.text}; <Link href={cap.href}>watch the golden run</Link>
+                    </p>
+                  )}
                 </div>
-              ))}
+              ); })}
           </section>
 
           {asked && (

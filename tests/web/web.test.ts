@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { yamlValue, buildYamlFromGraph, planYaml } from "../../apps/web/lib/workflowYaml.ts";
-import { api, apiDate, explainError, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
+import { api, apiDate, capNote, demoNote, explainError, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
 import { applyCompareEvent, applyRunEvent, canRetry } from "../../apps/web/lib/runEvents.ts";
 import { defaultInputs, NODE_FORMS } from "../../apps/web/lib/nodeForms.ts";
 import { datasetOf, evalOf, lossPoints, lossSources, modelRefsOf } from "../../apps/web/lib/results.ts";
@@ -258,6 +258,28 @@ test("a compare side appends deltas, closes on done and keeps a failed stream's 
     { text: "Hello", done: true, usd: 0.0001, error: undefined },
     { text: "", done: true, usd: null, error: "the model call failed mid-stream" },
   ]);
+});
+
+const template = (usd: number, fits?: boolean) => {
+  const plan = { name: "real-estate-compliance-llama-3b", nodes: [] };
+  return { slug: "re", title: "Llama 3B", intent: "i", rationale: "", plan, estimate: { usd: usd * 2, minutes: 40, by_node: {} },
+           reduced: { plan, estimate: { usd, minutes: 20, by_node: {} } }, ...(fits === undefined ? {} : { fits }) };
+};
+
+test("a template above the caller's run cap (fits: false) says why, from its reduced estimate, and links to the golden run", () => {
+  assert.deepEqual(capNote(template(0.88, false)),
+    { text: "about $0.88 — above the public demo's per-run cap", href: "/runs?q=real-estate-compliance-llama-3b" });
+  assert.equal(capNote(template(0.15, true)), null);
+  assert.equal(capNote(template(0.15)), null); // no `fits` (an API before backend-w3's fix round): runnable
+});
+
+test("the demo banner says what a run costs (the estimates one-click Run uses) and that public runs are capped", () => {
+  assert.equal(demoNote(null), "Every run shows its estimated cost before you press Run. Public runs are capped per run and per day.");
+  assert.equal(demoNote([template(0.15, true), template(0.88, false), template(0.02)]),
+    "Every run shows its estimated cost before you press Run: $0.02 to $0.88 for the templates below. "
+    + "Public runs are capped per run and per day; a template above the per-run cap links to its golden run instead.");
+  assert.equal(demoNote([template(0.15)]),
+    "Every run shows its estimated cost before you press Run: $0.15 for the template below. Public runs are capped per run and per day.");
 });
 
 test("a failed fetch with no error display of its own raises one readable toast", () => {

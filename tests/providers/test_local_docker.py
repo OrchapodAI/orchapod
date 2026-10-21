@@ -1,8 +1,13 @@
-"""LocalDockerProvider: image resolution and graceful terminate (no docker daemon needed)."""
+"""LocalDockerProvider: image resolution and graceful terminate; the exit-code test needs a docker daemon."""
 
 from __future__ import annotations
 
+import asyncio
+import shutil
+import subprocess
 from unittest.mock import AsyncMock
+
+import pytest
 
 from packages.providers import local_docker
 from packages.providers.base import Pod
@@ -36,3 +41,22 @@ async def test_terminate_sends_sigterm_with_30s_grace_then_removes(monkeypatch):
     monkeypatch.setattr(local_docker.asyncio, "create_subprocess_exec", fake_exec)
     await LocalDockerProvider().terminate(Pod(provider="local-docker", pod_id="c0ffee"))
     assert argvs == [("docker", "stop", "-t", "30", "c0ffee"), ("docker", "rm", "-f", "c0ffee")]
+
+
+async def test_a_container_that_fails_at_once_keeps_its_exit_code_until_terminate(monkeypatch):
+    """With auto-remove, such a container was gone before `docker wait` and the node read as succeeded."""
+    if not shutil.which("docker") or subprocess.run(["docker", "info"], capture_output=True).returncode:
+        pytest.skip("needs a docker daemon")
+    tag = "orchapod-test/exit1:latest"  # throwaway: alpine whose command exits 1
+    subprocess.run(["docker", "build", "-q", "-t", tag, "-"], input=b'FROM alpine:latest\nCMD ["false"]\n',
+                   check=True, capture_output=True)
+    monkeypatch.setattr(local_docker, "_resolve_image", lambda image: tag)
+    provider = LocalDockerProvider()
+    pod = await provider.provision(None, "exit1", {})
+    await asyncio.sleep(1)  # the executor commits and starts the log stream before it waits
+    try:
+        assert await provider.wait(pod) == 1
+    finally:
+        await provider.terminate(pod)
+        subprocess.run(["docker", "rmi", "-f", tag], capture_output=True)
+    assert subprocess.run(["docker", "inspect", pod.pod_id], capture_output=True).returncode  # removed

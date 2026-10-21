@@ -98,7 +98,8 @@ class ArtifactOut(BaseModel):
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@router.post("", response_model=RunOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=RunOut, status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(ratelimit.limit("write"))])
 async def create_run(body: RunCreate, db: Session):
     workflow = await db.get(Workflow, body.workflow_id)
     if not workflow:
@@ -130,7 +131,7 @@ async def start_run(run_id: uuid.UUID, db: Session, scale: Scale):
     return _run_out(run)
 
 
-@router.post("/{run_id}/cancel", response_model=RunOut)
+@router.post("/{run_id}/cancel", response_model=RunOut, dependencies=[Depends(ratelimit.limit("write"))])
 async def cancel_run(run_id: uuid.UUID, db: Session):
     run = await db.get(Run, run_id)
     if not run:

@@ -69,7 +69,8 @@ def caller(ip):
 
 
 async def test_each_address_gets_a_burst_then_429_with_retry_after(client, limits):
-    assert RATES == {"plan": (5, 12.0), "run": (5, 12.0), "compare": (3, 60.0)}  # contracts "Run control API"
+    assert RATES == {"plan": (5, 12.0), "run": (5, 12.0), "compare": (3, 60.0),  # contracts "Run control API"
+                     "write": (10, 30.0)}
     plan = {"intent": "synthetic movie likes"}
     async with caller("203.0.113.7") as a, caller("198.51.100.9") as b:
         assert [(await a.post("/agent/plan", json=plan)).status_code for _ in range(5)] == [200] * 5
@@ -220,3 +221,38 @@ async def test_endpoint_extend_is_gone(client, db, seeded_node_run):
     assert (await client.post(f"/inference/extend/{run.id}", json={"extend_min": -60})).status_code == 404
     await db.refresh(run)
     assert run.cost_usd is None
+
+
+
+# --- writes ----------------------------------------------------------------------
+
+DRAFT = "name: w\nnodes:\n  - {id: d, type: data-prep, inputs: {dataset: hf://x}}\n"
+
+
+async def test_a_workflow_with_runs_is_read_only_to_anonymous_callers(client, db, monkeypatch):
+    from api.models.db import Run
+    monkeypatch.setenv("ORCHAPOD_ADMIN_TOKEN", "s3cret")
+    monkeypatch.setenv("ORCHAPOD_ANON_SCALE", "1")  # full caps for the public do not make it the admin
+    ran, draft = [(await client.post("/workflows", json={"name": "w", "yaml": DRAFT})).json()["id"] for _ in range(2)]
+    db.add(Run(workflow_id=uuid.UUID(ran), user_id=uuid.uuid4()))
+    await db.commit()
+
+    for r in (await client.put(f"/workflows/{ran}", json={"yaml": DRAFT}), await client.delete(f"/workflows/{ran}")):
+        assert r.status_code == 409 and "save a copy" in r.json()["detail"]
+    assert (await client.put(f"/workflows/{ran}", json={"name": "golden"}, headers={"X-Orchapod-Admin": "s3cret"})
+            ).status_code == 200
+    assert (await client.put(f"/workflows/{draft}", json={"yaml": DRAFT})).status_code == 200  # no runs: anyone edits
+    assert (await client.delete(f"/workflows/{draft}")).status_code == 204
+
+
+async def test_writes_share_a_bucket(client, limits):
+    run = uuid.uuid4()
+    async with caller("203.0.113.7") as a:
+        made = [(await a.post("/workflows", json={"name": "w", "yaml": DRAFT})).json()["id"] for _ in range(5)]
+        codes = [(await a.put(f"/workflows/{made[0]}", json={"name": "x"})).status_code,
+                 (await a.delete(f"/workflows/{made[1]}")).status_code,
+                 (await a.post("/runs", json={"workflow_id": str(run)})).status_code,
+                 (await a.post(f"/runs/{run}/cancel")).status_code, (await a.post("/models", json={})).status_code]
+        assert codes == [200, 204, 404, 404, 422]  # with the 5 creates, each took a token
+        assert (await a.post("/workflows", json={"name": "w", "yaml": DRAFT})).status_code == 429
+        assert (await a.post("/agent/plan", json={"intent": "x"})).status_code == 200  # the other buckets are apart

@@ -28,13 +28,16 @@ from packages.providers.tokenfactory import TokenFactory
 _granted: dict[uuid.UUID, tuple[float, float]] = {}
 
 
-def scale(x_orchapod_admin: str = Header(default="")) -> float:
-    """FastAPI dependency: 1 for a caller sending X-Orchapod-Admin: $ORCHAPOD_ADMIN_TOKEN, else
-    ORCHAPOD_ANON_SCALE (R7). A blank token is unset, so then everyone is anonymous."""
+def admin(x_orchapod_admin: str = Header(default="")) -> bool:
+    """FastAPI dependency: the caller sent X-Orchapod-Admin: $ORCHAPOD_ADMIN_TOKEN (R7). A blank token is unset, so then
+    nobody is the admin, whatever ORCHAPOD_ANON_SCALE gives the public."""
     token = config.env("ORCHAPOD_ADMIN_TOKEN").strip()
-    if token and secrets.compare_digest(x_orchapod_admin.strip().encode(), token.encode()):
-        return 1.0
-    return float(config.env("ORCHAPOD_ANON_SCALE"))
+    return bool(token) and secrets.compare_digest(x_orchapod_admin.strip().encode(), token.encode())
+
+
+def scale(x_orchapod_admin: str = Header(default="")) -> float:
+    """FastAPI dependency: 1 for the admin, else ORCHAPOD_ANON_SCALE (R7)."""
+    return 1.0 if admin(x_orchapod_admin) else float(config.env("ORCHAPOD_ANON_SCALE"))
 
 
 def kill_switch() -> bool:

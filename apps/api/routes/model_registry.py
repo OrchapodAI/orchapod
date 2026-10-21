@@ -24,6 +24,7 @@ from sqlmodel import select
 
 from api.database import get_db
 from api.models.db import Model, ModelFormat
+from api.services import ratelimit
 
 router = APIRouter()
 
@@ -71,7 +72,8 @@ def _model_out(m: Model) -> ModelOut:
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@router.post("", response_model=ModelOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=ModelOut, status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(ratelimit.limit("write"))])
 async def register_model(body: ModelCreate, db: Session):
     """Manually register a model in the registry."""
     try:

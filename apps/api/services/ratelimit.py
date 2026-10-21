@@ -19,8 +19,9 @@ from fastapi import HTTPException, Request
 
 # bucket → (burst, seconds per token). plan: POST /agent/plan and /workflows/from-prompt (Nemotron Super); run: every
 # way a run starts (/agent/run, start, retry, /inference/deploy); compare: POST /compare (two model calls; at 10 then 1
-# per 6 s one address alone drained the $1.50 anonymous share in about 10 minutes).
-RATES = {"plan": (5, 12.0), "run": (5, 12.0), "compare": (3, 60.0)}
+# per 6 s one address alone drained the $1.50 anonymous share in about 10 minutes); write: POST/PUT/DELETE /workflows,
+# POST /runs and cancel, POST /models (junk rows would push the golden run out of the 500-row lists).
+RATES = {"plan": (5, 12.0), "run": (5, 12.0), "compare": (3, 60.0), "write": (10, 30.0)}
 # (bucket, address) → (tokens left, monotonic() then), in last-use order: the oldest come first
 _buckets: dict[tuple[str, str], tuple[float, float]] = {}
 

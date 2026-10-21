@@ -26,13 +26,15 @@ from sqlmodel import select
 
 from api.agent.planner import Intent, make_plan
 from api.database import get_session
-from api.models.db import Workflow, utcnow
+from api.models.db import Run, Workflow, utcnow
 from api.executor.dag import workflow_to_graph_json
 from api.services import budget, ratelimit
 
 router = APIRouter()
 
 Session = Annotated[AsyncSession, Depends(get_session)]
+Admin = Annotated[bool, Depends(budget.admin)]
+WRITE = [Depends(ratelimit.limit("write"))]
 
 
 # ---------------------------------------------------------------------------
@@ -69,7 +71,7 @@ class PromptRequest(BaseModel):
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@router.post("", response_model=WorkflowOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=WorkflowOut, status_code=status.HTTP_201_CREATED, dependencies=WRITE)
 async def create_workflow(body: WorkflowCreate, db: Session):
     try:
         graph_json = workflow_to_graph_json(body.yaml)
@@ -106,11 +108,12 @@ async def get_workflow(workflow_id: uuid.UUID, db: Session):
     return _to_out(workflow)
 
 
-@router.put("/{workflow_id}", response_model=WorkflowOut)
-async def update_workflow(workflow_id: uuid.UUID, body: WorkflowUpdate, db: Session):
+@router.put("/{workflow_id}", response_model=WorkflowOut, dependencies=WRITE)
+async def update_workflow(workflow_id: uuid.UUID, body: WorkflowUpdate, db: Session, is_admin: Admin):
     workflow = await db.get(Workflow, workflow_id)
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
+    await _read_only_if_run(db, workflow_id, is_admin)
 
     if body.name is not None:
         workflow.name = body.name
@@ -131,11 +134,12 @@ async def update_workflow(workflow_id: uuid.UUID, body: WorkflowUpdate, db: Sess
     return _to_out(workflow)
 
 
-@router.delete("/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_workflow(workflow_id: uuid.UUID, db: Session):
+@router.delete("/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=WRITE)
+async def delete_workflow(workflow_id: uuid.UUID, db: Session, is_admin: Admin):
     workflow = await db.get(Workflow, workflow_id)
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
+    await _read_only_if_run(db, workflow_id, is_admin)
     await db.delete(workflow)
 
 
@@ -169,6 +173,14 @@ async def create_workflow_from_prompt(body: PromptRequest, db: Session,
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
+
+async def _read_only_if_run(db: AsyncSession, workflow_id: uuid.UUID, is_admin: bool) -> None:
+    """409 for an anonymous caller once the workflow has runs: there is no user auth (D6), so anyone could otherwise
+    rewrite the golden run's canvas, or the YAML a retry of someone's run executes."""
+    if not is_admin and await db.scalar(select(Run.id).where(Run.workflow_id == workflow_id).limit(1)):
+        raise HTTPException(status_code=409, detail="this workflow has runs, so it is read-only on the public app; "
+                                                    "save a copy as a new workflow")
+
 
 def _to_out(w: Workflow) -> WorkflowOut:
     return WorkflowOut(

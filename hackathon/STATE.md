@@ -4,7 +4,7 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 ## Next actions (in order)
 1. Hari: NEBIUS_API_KEY and TAVILY_API_KEY into ~/src/orchapod-hack/.env — both lines still empty on disk (2026-10-21T02:37Z); the hidden-input command is in chat. Unblocks spikes 1–3 and every live check.
 2. Spikes 1–3 (hackathon/briefs/2026-10-22-spikes.md; worktrees spike1–3 at c164e4e) — dispatch the moment the key lands.
-3. Wave 3: MERGED devrel-w3, frontend-w3, data-w3, platform-w3, backend-w3; REVIEW ml-w3 (opus); IN_PROGRESS qa-w3. Wave 4 (hackathon/briefs/2026-10-23-wave4.md): IN_PROGRESS platform-w4 (Docker steps pending), frontend-w4, backend-w4; queued ml-w4, qa-w4, data-w4.
+3. Wave 3: ALL MERGED except qa-w3 (IN_PROGRESS). Wave 4 (hackathon/briefs/2026-10-23-wave4.md): REVIEW frontend-w4; IN_PROGRESS platform-w4, backend-w4, ml-w4, data-w4; queued qa-w4 (after qa-w3).
 4. After wave 3: shared fence() (platform), apps/api/config.py (platform), vllm-serve rewrite (ml), `make check E2E=1` + Playwright smoke on the merged branch, D6 hardening (anonymous budget ceiling).
 5. G1 Oct 24: golden path green from the UI (needs spike 1's deploy answer) + intent #2 from the agent chat (STUB green 2026-10-21; live waits on the key).
 
@@ -43,8 +43,8 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [x] P2 test_dockerfiles.py minors — DONE (ml-w2)
 - [x] P0 D3 tf-finetune node (idempotent retry R19, lost-create recovery) — DONE (ml-w2; live behaviour waits on spike 1)
 - [x] P0 D3 tf-deploy node (unsupported path → vllm-serve message; price check before deploy) — DONE (ml-w2; /v0/models = spike 1)
-- [ ] P0 D4 judge-eval node: base vs tuned, identical decoding, Ultra pairwise reference-guided, position swap, R18 fencing — IN_PROGRESS(ml-w3)
-- [ ] P0 D4 quantize path for intent #3: maths shortlist, GGUF q4_k_m on CPU, judge-eval serves GGUF via llama-server — IN_PROGRESS(ml-w3)
+- [x] P0 D4 judge-eval node: base vs tuned, identical decoding, Ultra pairwise reference-guided, position swap, R18 fencing, pairing rule, GGUF via llama-server — DONE (ml-w3; R23)
+- [x] P0 D4 quantize path for intent #3: maths shortlist, GGUF q4_k_m + keep_f16 on CPU, hf-download hardened — DONE (ml-w3); CPU timing of the full template → ml-w4
 - [ ] P1 D2 unsloth-train container: bucket I/O, SDK logs, --max-steps, pinned to spike 4's requirements.lock.txt (BOS fix; Mamba out_proj excluded; tvm-ffi restore) — TODO
 - [ ] P1 D3 vllm-serve: test `--enable-lora` with the 8B adapter (one endpoint for base + tuned); merged weights are the proven fallback — TODO
 - [ ] P0 SECURITY vllm-serve writes metadata={"api_key": …} (containers/vllm-serve/run.py) — the API now redacts meta on the way in and out (backend-w3, R22); ml-w4's vllm-serve rewrite removes it at the source — TODO(ml-w4)

@@ -282,7 +282,7 @@ async def test_startup_runs_the_sweep_and_creates_the_bucket(monkeypatch):
     monkeypatch.setattr(main, "sweep", swept)
     monkeypatch.setattr(main, "create_tables", AsyncMock())
     monkeypatch.setattr(main, "register_providers", lambda **_: None)
-    monkeypatch.setattr(main, "ensure_bucket_exists", bucket.set)  # MinIO in dev starts without the bucket
+    monkeypatch.setattr(main.storage, "ensure_bucket_exists", bucket.set)  # MinIO in dev starts without the bucket
     monkeypatch.setattr(main.event_bus, "connect", AsyncMock())
     monkeypatch.setattr(main.event_bus, "disconnect", AsyncMock())
 

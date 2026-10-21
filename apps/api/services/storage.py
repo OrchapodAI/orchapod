@@ -72,6 +72,11 @@ def dataset_upload_key(user_id: str, filename: str) -> str:
     return f"uploads/{user_id}/{filename}"
 
 
+def head_bucket() -> None:
+    """Raises unless the bucket answers to these credentials (GET /health)."""
+    _get_client().head_bucket(Bucket=_bucket())
+
+
 def ensure_bucket_exists() -> None:
     """Create the R2 bucket if it doesn't exist (MinIO dev only)."""
     client = _get_client()

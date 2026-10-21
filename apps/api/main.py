@@ -10,16 +10,19 @@ Start: uvicorn api.main:app --reload
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
-from api import config
+from api import config, database
 from api.database import AsyncSessionLocal, create_tables
 from api.executor.run_workflow import sweep
+from api.services import storage
 from api.services.events import event_bus
-from api.services.storage import ensure_bucket_exists
 from api.routes import agent, compare, workflows, runs, models, internal, ws, inference, model_registry, artifacts
 from packages.providers.vastai import register_providers
 
@@ -32,7 +35,7 @@ async def lifespan(app: FastAPI):
     async with AsyncSessionLocal() as db:
         await sweep(db)  # runs a restart left mid-flight fail; their pods are terminated
     # MinIO in dev starts without the bucket; off the event loop, so a slow or absent store never delays startup
-    asyncio.get_running_loop().run_in_executor(None, ensure_bucket_exists)
+    asyncio.get_running_loop().run_in_executor(None, storage.ensure_bucket_exists)
 
     register_providers(vastai_key=config.env("VASTAI_API_KEY"))
 
@@ -75,6 +78,38 @@ app.include_router(compare.router,         prefix="/compare",   tags=["compare"]
 app.include_router(ws.router, tags=["websocket"])
 
 
+log = logging.getLogger("api.health")
+HEALTH_TIMEOUT_S = 3
+
+
+async def _answers(name: str, check) -> bool:
+    try:
+        await asyncio.wait_for(check(), HEALTH_TIMEOUT_S)
+        return True
+    except Exception as e:  # down, refused, or slower than HEALTH_TIMEOUT_S; the cause goes to the log only
+        log.warning("health: %s failed: %r", name, e)
+        return False
+
+
+async def _database() -> None:
+    async with database.engine.connect() as conn:
+        await conn.execute(text("SELECT 1"))
+
+
 @app.get("/health")
 async def health():
+    """Deep: the database, Redis and object storage each answer within HEALTH_TIMEOUT_S, else 503 names the ones that
+    did not. For uptime monitors and people; the watchdog restarts on /livez, since a restart fixes none of these."""
+    checks = {"database": _database, "redis": lambda: event_bus.redis.ping(),
+              "storage": lambda: asyncio.to_thread(storage.head_bucket)}
+    up = await asyncio.gather(*(_answers(name, check) for name, check in checks.items()))
+    failed = [name for name, ok in zip(checks, up) if not ok]
+    if failed:
+        return JSONResponse(status_code=503, content={"status": "fail", "failed": failed})
+    return {"status": "ok"}
+
+
+@app.get("/livez")
+async def livez():
+    """Shallow: the process answers (the watchdog's and the container healthcheck's probe)."""
     return {"status": "ok"}

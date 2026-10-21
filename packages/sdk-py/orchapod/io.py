@@ -12,7 +12,7 @@ The contract (docs/NODE_CONTRACT.md, docs/contracts.md "Node SDK"):
   - Outputs are written locally then uploaded by this SDK
   - Artifact URIs follow: r2://${ORCHAPOD_R2_BUCKET}/runs/{run_id}/{node_id}/{name}
   - Nodes never read from each other directly — only via r2:// URIs
-  - cost_json is written at exit (normal, exception or SIGTERM)
+  - cost_json is written at SIGTERM, when main ends (before its threads are joined) and at exit
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ import re
 import signal
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from dataclasses import dataclass
@@ -147,6 +148,8 @@ def download_directory(uri_prefix: str, local_dir: Path | str) -> Path:
 # ---------------------------------------------------------------------------
 
 _armed = False
+_cost_lock = threading.Lock()
+_registered: dict | None = None  # the cost summary last registered as cost_json
 
 
 def _arm() -> None:
@@ -154,12 +157,18 @@ def _arm() -> None:
     if _armed:
         return
     _armed = True
-    atexit.register(_at_exit)                   # runs after normal exit, uncaught exceptions and SystemExit
+    # CPython joins worker threads (pool calls still in flight) before atexit, and a SIGKILL 30 s after SIGTERM would
+    # lose cost_json with them: so it also goes out when main ends, from threading's hook that runs before the joins.
+    # Hooks run newest first, so the pool's own join hook is registered (imported) before this one.
+    import concurrent.futures.thread  # noqa: F401
+    threading._register_atexit(_flush_cost)
+    atexit.register(_at_exit)                   # after every thread: the spend of calls that were in flight, then logs
     signal.signal(signal.SIGTERM, _sigterm)     # cancel/timeout: docker stop sends SIGTERM, kills after 30 s
     sys.excepthook = _excepthook
 
 
 def _sigterm(signum, frame):
+    threading.Thread(target=_flush_cost, daemon=True).start()  # the spend so far, beside the node's cleanup
     raise SystemExit(143)  # unwinds the node's `finally` blocks, which cancel remote jobs
 
 
@@ -168,15 +177,26 @@ def _excepthook(exc_type, exc, tb) -> None:
     sys.__excepthook__(exc_type, exc, tb)
 
 
+def _flush_cost() -> None:
+    """Register what the node spent since its last cost_json: the file holds the whole summary, the metadata
+    {"usd": the increase}, which the control plane adds to the run. No new spend, no new cost_json."""
+    global _registered
+    with _cost_lock:
+        summary = cost.summary()
+        if summary == _registered:
+            return
+        path = local_path("cost_json")
+        path.write_text(json.dumps(summary))
+        try:
+            write_output("cost_json", path, "metrics", {"usd": round(summary["usd"] - (_registered or {"usd": 0})["usd"], 6)})
+            _registered = summary
+        except Exception as e:
+            log.error(f"cost_json not registered: {e}")
+
+
 def _at_exit() -> None:
     """cost_json first (money), then `logs`: the last lines the node logged (log.lines), as JSONL {ts, level, message}."""
-    summary = cost.summary()
-    path = local_path("cost_json")
-    path.write_text(json.dumps(summary))
-    try:
-        write_output("cost_json", path, "metrics", {"usd": summary["usd"]})
-    except Exception as e:
-        log.error(f"cost_json not registered: {e}")
+    _flush_cost()
     path = local_path("logs")
     path.write_text("".join(json.dumps(line) + "\n" for line in list(log.lines)))  # a copy: another thread may still log
     try:

@@ -192,8 +192,9 @@ def _flush_cost() -> None:
         path = local_path("cost_json")
         path.write_text(json.dumps(summary))
         try:
+            attempt = {"attempt": a} if (a := os.environ.get("ORCHAPOD_ATTEMPT")) else {}  # whose spend it is
             write_output("cost_json", path, "metrics",
-                         {"usd": round(summary["usd"] - (last or {"usd": 0})["usd"], 6), "seq": seq + 1})
+                         {"usd": round(summary["usd"] - (last or {"usd": 0})["usd"], 6), "seq": seq + 1, **attempt})
             _registered = (cost._items, summary, seq + 1)
         except Exception as e:
             log.error(f"cost_json not registered: {e}")

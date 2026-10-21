@@ -304,10 +304,12 @@ def test_a_registration_that_failed_goes_again_under_its_seq(sdk, node_env, monk
                 raise OSError("control plane down")
 
     monkeypatch.setattr(log, "post", post)
+    monkeypatch.setenv("ORCHAPOD_ATTEMPT", "2026-10-24T12:00:00.000001")  # the executor's attempt, echoed
     cost.add("token_factory", "m", usd=0.25)
     io._flush_cost()  # every try fails
     down[0] = False
     cost.add("token_factory", "m", usd=0.1)
     io._flush_cost()
     io._flush_cost()  # nothing new
-    assert sent == [{"usd": 0.25, "seq": 1}] * 4 + [{"usd": 0.35, "seq": 1}]
+    attempt = {"attempt": "2026-10-24T12:00:00.000001"}
+    assert sent == [{"usd": 0.25, "seq": 1, **attempt}] * 4 + [{"usd": 0.35, "seq": 1, **attempt}]

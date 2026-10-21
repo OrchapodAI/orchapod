@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import secrets
 import uuid
-from datetime import datetime
 from decimal import Decimal
 from typing import Callable
 
@@ -50,11 +49,17 @@ def attempt_cost(metas: list[dict]) -> float:
     return max([reported + sum(seqs.values()), *walls])
 
 
-async def attempt_costs(db: AsyncSession, node_run) -> list[dict]:
-    """The metas of the cost_json rows of the node's current attempt (a retry restarts started_at)."""
-    return [m or {} for m in await db.scalars(select(Artifact.meta).where(
-        Artifact.node_run_id == node_run.id, Artifact.name == "cost_json",
-        Artifact.created_at >= (node_run.started_at or datetime.min)))]
+def attempt_of(node_run) -> str:
+    """A node attempt's id: when it started (a retry restarts it). The executor passes it as ORCHAPOD_ATTEMPT."""
+    return node_run.started_at.isoformat() if node_run.started_at else ""
+
+
+async def attempt_costs(db: AsyncSession, node_run_id: uuid.UUID, attempt: str) -> list[dict]:
+    """The metas of the node's cost_json rows of one attempt, which every row carries (the SDK echoes ORCHAPOD_ATTEMPT):
+    a late flush counts toward its own attempt, even after a quick Retry."""
+    metas = await db.scalars(select(Artifact.meta).where(Artifact.node_run_id == node_run_id,
+                                                          Artifact.name == "cost_json"))
+    return [m for m in metas if m and m.get("attempt") == attempt]
 
 
 def admin(x_orchapod_admin: str = Header(default="")) -> bool:

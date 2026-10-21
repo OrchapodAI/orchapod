@@ -234,7 +234,7 @@ async def _execute_node(
 
     stream = asyncio.create_task(_stream_stdout(provider, pod, node_run, broadcast))
     bill = None if runtime in ("cpu", "api") else (  # once the pod is gone, inside its shielded teardown
-        lambda: _bill_gpu_time(run.id, node_run, provider, gpu_spec, pod, started, broadcast))
+        lambda: _bill_gpu_time(run.id, node_run.id, env["ORCHAPOD_ATTEMPT"], provider, gpu_spec, pod, started, broadcast))
     try:
         node_run.gpu_provider = run.gpu_provider = provider.name
         node_run.gpu_pod_id = run.gpu_pod_id = pod.pod_id
@@ -254,8 +254,8 @@ async def _execute_node(
     return node_run.outputs or {}
 
 
-async def _bill_gpu_time(run_id: uuid.UUID, node_run: NodeRun, provider, gpu_spec, pod, started: float,
-                         broadcast: Broadcast) -> None:
+async def _bill_gpu_time(run_id: uuid.UUID, node_run_id: uuid.UUID, attempt: str, provider, gpu_spec, pod,
+                         started: float, broadcast: Broadcast) -> None:
     """A gpu attempt costs max(its pod's wall time at the provider's hourly quote, what the node reported) (contracts
     "Run state machine"). Once the pod is gone the executor records its bill (one per attempt), adding only what exceeds the node's
     reports so far; a later cost_json (a Nebius job's SIGTERM flush lands after terminate returns) adds only what
@@ -267,11 +267,11 @@ async def _bill_gpu_time(run_id: uuid.UUID, node_run: NodeRun, provider, gpu_spe
     try:
         hours = (monotonic() - started) / 3600
         bill = {"wall_usd": round(hours * (await provider.quote(gpu_spec)).price_per_hour, 6),
-                "gpu_hours": round(hours, 4), "billed_by": "executor"}
+                "gpu_hours": round(hours, 4), "billed_by": "executor", "attempt": attempt}
         async with budget.cost_lock, database.AsyncSessionLocal() as db:
-            earlier = await budget.attempt_costs(db, node_run)
+            earlier = await budget.attempt_costs(db, node_run_id, attempt)
             usd = round(budget.attempt_cost(earlier + [bill]) - budget.attempt_cost(earlier), 6)
-            db.add(Artifact(node_run_id=node_run.id, name="cost_json", kind=ArtifactKind.METRICS,
+            db.add(Artifact(node_run_id=node_run_id, name="cost_json", kind=ArtifactKind.METRICS,
                             uri=f"{provider.name}:{pod.pod_id}", meta={"usd": usd, **bill}))
             total = await db.scalar(update(Run).where(Run.id == run_id).values(cost_usd=func.coalesce(Run.cost_usd, 0)
                                                                                 + Decimal(str(usd)))
@@ -346,6 +346,7 @@ def _build_env(node_run: NodeRun, max_cost_usd: float) -> dict[str, str]:
         "ORCHAPOD_NODE_OUTPUTS_DIR": "/tmp/orchapod_outputs",
         "ORCHAPOD_RUN_ID":           str(node_run.run_id),
         "ORCHAPOD_NODE_ID":          node_run.node_id,
+        "ORCHAPOD_ATTEMPT":          budget.attempt_of(node_run),  # the SDK echoes it in cost_json
     })
     # Retry reuses the row and keeps its outputs, so the newest checkpoint resumes training.
     checkpoints = sorted(k for k in (node_run.outputs or {}) if k.startswith("checkpoint_step_"))

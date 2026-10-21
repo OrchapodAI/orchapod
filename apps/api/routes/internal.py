@@ -217,11 +217,12 @@ async def _reconcile(db: AsyncSession, node_run: NodeRun, meta: dict) -> tuple[d
         log.warning("refused a cost_json of %r from run %s node %s", meta.get("usd"), node_run.run_id, node_run.node_id)
         raise HTTPException(422, "cost_json usd must be a finite amount, at most twice ORCHAPOD_MAX_RUN_USD")
     reported, seq = max(0.0, reported), meta.get("seq")
-    earlier = await budget.attempt_costs(db, node_run)
+    attempt = meta.get("attempt") if isinstance(meta.get("attempt"), str) and meta["attempt"] else budget.attempt_of(node_run)
+    earlier = await budget.attempt_costs(db, node_run.id, attempt)
     if isinstance(seq, int) and any(m.get("seq") == seq and m.get("billed_by") != "executor"
                                     and float(m.get("reported_usd", m.get("usd", 0))) >= reported for m in earlier):
         return None, 0.0
-    new = {**meta, "reported_usd": reported}
+    new = {**meta, "reported_usd": reported, "attempt": attempt}
     added = round(budget.attempt_cost(earlier + [new]) - budget.attempt_cost(earlier), 6)
     return {**new, "usd": added}, added
 

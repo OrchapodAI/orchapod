@@ -75,8 +75,12 @@ class FakeProvider:
             nr.error = step.get("error")
             await self.db.commit()
         if "cost" in step:  # the node's SDK registers its cost_json through /internal/artifact (self.client)
-            run = Run(id=uuid.UUID(self.envs[pod.pod_id]["ORCHAPOD_RUN_ID"]), user_id=uuid.uuid4())
-            assert (await self.client.post("/internal/artifact", json=cost_json(run, pod.pod_id, step["cost"], 1))).is_success
+            env = self.envs[pod.pod_id]
+            run = Run(id=uuid.UUID(env["ORCHAPOD_RUN_ID"]), user_id=uuid.uuid4())
+            body = cost_json(run, pod.pod_id, step["cost"], 1, env["ORCHAPOD_ATTEMPT"])
+            assert (await self.client.post("/internal/artifact", json=body)).is_success
+        if "during" in step:  # something that lands while the pod runs (an earlier attempt's late flush, say)
+            assert (await step["during"]()).is_success
         if "pod_error" in step:  # platform-w5's NebiusProvider: why the job ended, set before wait() returns
             pod.error = step["pod_error"]
         if "exit" in step and step["exit"] is None:
@@ -289,7 +293,7 @@ async def test_build_env_forwards_exactly_the_contract_vars(db, monkeypatch):
         "ORCHAPOD_ENDPOINT_TOKEN", "ORCHAPOD_R2_ENDPOINT", "ORCHAPOD_R2_REGION", "ORCHAPOD_R2_ACCESS_KEY",
         "ORCHAPOD_R2_SECRET_KEY", "ORCHAPOD_R2_BUCKET", "ORCHAPOD_CONTROL_URL", "ORCHAPOD_INTERNAL_SECRET",
         "ORCHAPOD_MAX_COST_USD", "STUB", "ORCHAPOD_NODE_INPUTS", "ORCHAPOD_NODE_OUTPUTS_DIR", "ORCHAPOD_RUN_ID",
-        "ORCHAPOD_NODE_ID", "ORCHAPOD_RESUME_CHECKPOINT_URI",
+        "ORCHAPOD_NODE_ID", "ORCHAPOD_RESUME_CHECKPOINT_URI", "ORCHAPOD_ATTEMPT",
     }
     assert env["TAVILY_API_KEY"] == "tvly-z"
     assert env["NEBIUS_BASE_URL"] == "https://api.tokenfactory.nebius.com/v1"
@@ -374,11 +378,11 @@ async def test_why_the_provider_ended_a_pod_is_the_node_error(db, provider, gpu)
 ONE_GPU = "name: t\nnodes:\n  - {id: train, type: unsloth-train, inputs: {train_data: r2://b/t}}\n"
 
 
-def cost_json(run, node_id: str, usd: float, seq: int) -> dict:
-    """POST /internal/artifact's body for a node's cost_json, as the SDK sends it."""
+def cost_json(run, node_id: str, usd: float, seq: int, attempt: str | None = None) -> dict:
+    """POST /internal/artifact's body for a node's cost_json, as the SDK sends it (it echoes ORCHAPOD_ATTEMPT)."""
     return {"run_id": str(run.id), "node_id": node_id, "artifact": {
         "name": "cost_json", "uri": f"r2://bk/runs/x/{node_id}/cost_json", "kind": "metrics",
-        "metadata": {"usd": usd, "seq": seq}}}
+        "metadata": {"usd": usd, "seq": seq, **({"attempt": attempt} if attempt else {})}}}
 
 
 async def test_a_gpu_attempt_costs_its_wall_time_or_what_its_node_reported_whichever_is_more(client, db, provider, gpu,
@@ -398,8 +402,8 @@ async def test_a_gpu_attempt_costs_its_wall_time_or_what_its_node_reported_which
     killed, broadcast = await seed(db, ONE_GPU), AsyncMock()
     await ex.run_workflow(killed.id, db, broadcast, 1.0)
     bill = await db.scalar(select(Artifact).where(Artifact.name == "cost_json"))
-    assert (bill.meta, bill.uri) == ({"usd": 2.25, "wall_usd": 2.25, "gpu_hours": 0.5, "billed_by": "executor"},
-                                     "nebius:train")
+    assert (bill.meta, bill.uri) == ({"usd": 2.25, "wall_usd": 2.25, "gpu_hours": 0.5, "billed_by": "executor",
+                                      "attempt": gpu.envs["train"]["ORCHAPOD_ATTEMPT"]}, "nebius:train")
     assert await cost(killed) == (2.25, 2.25) and {"type": "run_cost", "cost_usd": 2.25} in events(broadcast)
     for usd, seq, total in ((1.0, 1, 2.25), (2.0, 2, 3.0),  # late flushes add only what the node reported beyond the bill
                             (2.0, 2, 3.0),                   # a re-send of seq 2 (its POST broke after it landed): once
@@ -460,12 +464,12 @@ async def test_a_cost_json_racing_the_executors_bill_is_counted_once(client, pro
     gpu.script = {"train": {"exit": 1}}
     read, landed = budget.attempt_costs, []
 
-    async def racing(session, node_run):
+    async def racing(*args):
         if not landed:  # the executor's read: the node's POST arrives now
             landed.append(asyncio.create_task(client.post("/internal/artifact", json=cost_json(run, "train", 1.0, 1))))
             for _ in range(20):
                 await asyncio.sleep(0)  # let the POST run as far as it can (to the lock, or into the database)
-        return await read(session, node_run)
+        return await read(*args)
 
     monkeypatch.setattr(budget, "attempt_costs", racing)
     try:
@@ -477,6 +481,24 @@ async def test_a_cost_json_racing_the_executors_bill_is_counted_once(client, pro
             assert float(run.cost_usd) == 2.25  # max($2.25 billed, $1.00 reported)
     finally:
         await engine.dispose()
+
+
+async def test_a_late_flush_counts_toward_its_own_attempt_after_a_quick_retry(client, db, provider, gpu, monkeypatch):
+    """Arrival time used to split the attempts, so attempt 1's flush landing after Retry had started attempt 2 was
+    reconciled against attempt 2. The SDK echoes ORCHAPOD_ATTEMPT, so it counts toward its own attempt."""
+    clock = iter([0.0, 1800.0, 0.0, 3600.0])  # attempt 1: 30 min, $2.25; attempt 2: 60 min, $4.50
+    monkeypatch.setattr(ex, "monotonic", lambda: next(clock))
+    gpu.client, gpu.script = client, {"train": {"exit": 1}}
+    run = await seed(db, ONE_GPU)
+    await ex.run_workflow(run.id, db, AsyncMock(), 1.0)
+    first = gpu.envs["train"]["ORCHAPOD_ATTEMPT"]
+    late = cost_json(run, "train", 3.0, 1, first)  # attempt 1 reported more than its bill (Token Factory calls, say)
+
+    gpu.script = {"train": {"exit": 1, "during": lambda: client.post("/internal/artifact", json=late)}}
+    await ex.run_workflow(run.id, db, AsyncMock(), 1.0)  # Retry node: attempt 2, while attempt 1's flush lands
+
+    await db.refresh(run)
+    assert (gpu.envs["train"]["ORCHAPOD_ATTEMPT"] != first, float(run.cost_usd)) == (True, 7.5)  # $3.00 + $4.50
 
 
 GPU_THEN_CPU = """

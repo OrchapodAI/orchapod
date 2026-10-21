@@ -23,6 +23,7 @@ check:     ; ruff check apps packages containers && $(PY) -m pytest tests -q && 
 ui-deps:
 	-pnpm -C apps/web install --frozen-lockfile
 	pnpm -C tests/ui install --frozen-lockfile
+	pnpm -C tests/ui exec playwright install chromium  # a fresh clone has no browser; a cached one makes this a no-op
 ui-smoke: ui-deps ; $(PY) scripts/e2e_ui.py $(UI_ARGS)
 e2e:       ; $(PY) scripts/e2e_demo.py --max-cost 3
 agent-e2e: ; $(PY) scripts/e2e_agent.py --intent "$(INTENT)" --max-cost 3

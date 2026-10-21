@@ -36,7 +36,7 @@ FULL_CAPS = {"ORCHAPOD_ANON_SCALE": "1", "ORCHAPOD_MAX_RUN_USD": f"{CAP_USD:g}",
 # default run covers these three and no others. The rules are docs/agent_knowledge.md "Expected plans": a template edit that
 # drops a step fails here.
 INTENTS = {
-    "1": ("real-estate-compliance", lambda t: t[-1] == "judge-eval", "ends in judge-eval"),
+    "1": ("real-estate-compliance", lambda t: t[-1:] == ["judge-eval"], "ends in judge-eval"),
     "2": ("movie-engagement", lambda t: "tf-finetune" not in t, "has no tf-finetune: it trains nothing"),
     "3": ("maths-quantize", lambda t: "quantize" in t and "judge-eval" in t and t.index("quantize") < t.index("judge-eval"),
           "runs quantize before judge-eval"),

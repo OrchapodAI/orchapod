@@ -154,10 +154,11 @@ SKIP_SITES = {"scripts/e2e_agent.py", "scripts/e2e_ui.py", "tests/ui/smoke.spec.
               "tests/e2e/test_e2e_agent.py", "tests/e2e/test_e2e_ui.py", "docs/NODE_CONTRACT.md"}
 
 
+@pytest.mark.skipif(not (ROOT / ".git").exists(), reason="needs a git checkout")  # briefs under hackathon/ may quote the tag
 def test_the_skip_marker_lists_every_skip_site():  # SKIP-SITE(ml-w4)
     """One deletion when ml-w4 merges: the marker in scripts/e2e_agent.py names every file that carries the tag, and no more."""
     tag = "SKIP-SITE" + "(ml-w4)"
-    tagged = set(subprocess.run(["git", "grep", "-l", "-F", tag], cwd=ROOT, capture_output=True, text=True).stdout.split())
+    tagged = set(subprocess.run(["git", "grep", "-l", "-F", tag, "--", ".", ":!hackathon"], cwd=ROOT, capture_output=True, text=True).stdout.split())
     assert tagged == SKIP_SITES, f"tagged but unlisted: {sorted(tagged - SKIP_SITES)}; listed but untagged: {sorted(SKIP_SITES - tagged)}"
     marker = (ROOT / "scripts/e2e_agent.py").read_text()
     assert all(site in marker for site in SKIP_SITES - {"scripts/e2e_agent.py"}), "the marker names each site's path"

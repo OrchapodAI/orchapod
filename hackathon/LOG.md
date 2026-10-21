@@ -193,3 +193,4 @@ worktrees:
   - Minors: /health cached 10 s; compare refill 1/min; secret-looking inputs stripped at workflow ingest + node inputs redacted.
   - Fix round 1 → ad26d49ed3a343a04.
   - At merge (orchestrator, platform files): prod healthcheck → /livez (or the watchdog restarts the API on any dependency blip); Caddyfile `request_body max_size 1MB`; HOSTING.md warning never to give Caddy trusted_proxies or front it with a CDN while uvicorn trusts `*`; env-scan test also covers config.DEFAULTS; .env.example gains ORCHAPOD_CORS_ORIGINS.
+- 2026-10-21T13:31Z Orchestrator, ahead of backend-w4's merge: Caddyfile caps API request bodies at 1 MB (caddy 2.10.2 validate: exit 0), and the Caddyfile + HOSTING.md say never trusted_proxies or a CDN while uvicorn trusts `*`. The /livez healthcheck switch waits for the /livez endpoint (backend-w4).

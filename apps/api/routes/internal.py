@@ -32,11 +32,10 @@ from sqlmodel import select
 from api import config
 from api.database import get_session, AsyncSessionLocal
 from api.models.db import (
-    utcnow,
     Artifact, ArtifactKind,
     Model, ModelFormat,
     NodeRun, NodeStatus,
-    Run, RunStatus,
+    Run,
 )
 from api.services.events import event_bus
 from api.services.redact import redact
@@ -358,13 +357,6 @@ async def _terminate_after_ttl(
             except Exception:
                 pass
 
-    async with AsyncSessionLocal() as db:
-        node_run = await db.get(NodeRun, uuid.UUID(node_run_id))
-        run      = await db.get(Run, uuid.UUID(run_id))
-        if node_run:
-            node_run.status      = NodeStatus.SUCCEEDED
-            node_run.finished_at = utcnow()
-        if run:
-            run.status      = RunStatus.SUCCEEDED
-            run.finished_at = utcnow()
-        await db.commit()
+    # Expiry changes no status: vllm-serve's node already succeeded when it registered, and its run finished on its own
+    # (overwriting them turned failed and cancelled runs into "succeeded"). TODO(backend-w5): delete the endpoint by its
+    # endpoint_id here; today only the legacy vast.ai pod branch above terminates anything.

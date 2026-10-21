@@ -317,7 +317,14 @@ async def test_secret_looking_inputs_are_dropped_before_a_workflow_is_stored(cli
     monkeypatch.setattr("api.executor.run_workflow.launch", lambda *_: None)
     plan = {"name": "p", "nodes": [{"id": "s", "type": "vllm-serve", "needs": [], "inputs": {"model": "m", "hf_token": "hf_SECRET"}}]}
     r = await client.post("/agent/run", json={"intent": "x", "plan": plan}, headers={"X-Orchapod-Admin": "s3cret"})
-    assert r.status_code == 201
+    assert r.status_code == 422  # hf_token is no longer a vllm-serve input (ml-w4): review refuses it before anything is stored
+    import copy, json, pathlib
+    movie = json.loads((pathlib.Path(__file__).parents[2] / "apps/api/agent/templates/2-movie-engagement.json").read_text())["plan"]
+    plan = copy.deepcopy(movie)
+    synth = next(n for n in plan["nodes"] if n["type"] == "synth-distilabel")
+    synth["inputs"]["row_schema"] = {**synth["inputs"]["row_schema"], "api_key": "sk-SECRET"}  # nested in an accepted dict input
+    r = await client.post("/agent/run", json={"intent": "x", "plan": plan}, headers={"X-Orchapod-Admin": "s3cret"})
+    assert r.status_code == 201, r.text
     for w in await db.scalars(select(Workflow)):
         stored(w.yaml + str(w.graph_json))
     stored(str([a.plan for a in await db.scalars(select(AgentRun))]))

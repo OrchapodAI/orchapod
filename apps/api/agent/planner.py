@@ -100,11 +100,31 @@ def _values(node: dict) -> dict:
 # Estimate and validation
 # ---------------------------------------------------------------------------
 
+TRAIN_TOKENS_PER_ROW = 250  # a short Q&A row in Llama's chat template; ponytail: measure it once a fine-tune has run
+
+
+def _source(nodes: dict, value) -> tuple[dict | None, str | None]:
+    """The node and output a `${{ nodes.<id>.outputs.<name> }}` value refers to, else (None, None)."""
+    m = REF.fullmatch(value.strip()) if isinstance(value, str) else None
+    return (nodes.get(m[2]), m[3]) if m and m[2] else (None, None)
+
+
+def _rows(nodes: dict, value) -> float | None:
+    """The rows a train_data ref delivers: synth-distilabel's n_samples, directly or through data-prep's train_jsonl
+    (x train_split); None for any other source."""
+    source, output = _source(nodes, value)
+    share = 1.0
+    if source and source["type"] == "data-prep":
+        share = float(_values(source)["train_split"]) if output == "train_jsonl" else 1.0
+        source, output = _source(nodes, _values(source).get("dataset"))
+    return share * int(_values(source)["n_samples"]) if source and source["type"] == "synth-distilabel" else None
+
+
 def estimate(plan: dict) -> tuple[dict, list[str]]:
     """{"usd", "minutes", "by_node": {id: {"usd", "minutes"}}} and its warnings for a well-formed plan (see Plan);
     nodes run one after another."""
     tf, gpu = PRICES["token_factory"], PRICES["nebius_serverless"]
-    by_node, warnings = {}, []
+    by_node, warnings, nodes = {}, [], {n["id"]: n for n in plan["nodes"]}
     for n in plan["nodes"]:
         t, v = n["type"], _values(n)
         usd, minutes = TYPICAL.get(t, (0.0, 5))
@@ -120,11 +140,19 @@ def estimate(plan: dict) -> tuple[dict, list[str]]:
                 usd, minutes = 2 * rows * (1500 * p["in"] + 300 * p["out"]) / 1e6, 5 + rows / 6
             elif t == "vllm-serve":  # the endpoint bills keep_alive_min of GPU time
                 usd = int(v.get("keep_alive_min") or 30) / 60 * gpu.get(v.get("platform"), gpu["gpu-l40s-a"])
+            elif t == "tf-finetune":  # trained tokens (rows x tokens per row x epochs) at the base's fine-tune price
+                price, rows = PRICES["token_factory_finetune"].get(str(v.get("model"))), _rows(nodes, v.get("train_data"))
+                if price is None:
+                    warnings.append(f"{n['id']}: no fine-tune price for {v.get('model')} yet (spike 1); "
+                                    f"the estimate assumes ${usd:.2f}")
+                elif rows is None:
+                    warnings.append(f"{n['id']}: the rows of train_data are unknown (not from synth-distilabel); "
+                                    f"the estimate assumes ${usd:.2f}")
+                else:  # n_epochs in hyperparameters wins, as in the node
+                    epochs = int({"n_epochs": v.get("n_epochs") or 2, **(v.get("hyperparameters") or {})}["n_epochs"])
+                    usd = rows * TRAIN_TOKENS_PER_ROW * epochs * price
         except (TypeError, ValueError):
             pass  # a ref or a bad value: review() reports it; the typical cost stands
-        if t == "tf-finetune" and str(v.get("model")) not in PRICES["token_factory_finetune"]:
-            warnings.append(f"{n['id']}: no fine-tune price for {v.get('model')} yet (spike 1); "
-                            f"the estimate assumes ${usd:.2f}")
         if t == "tf-deploy":
             warnings.append(f"{n['id']}: per-token LoRA deploy is unverified until spike 1; "
                             f"if it fails, serve the lora_adapter with vllm-serve")

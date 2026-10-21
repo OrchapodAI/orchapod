@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import functools
 import json
 import re
@@ -20,6 +21,7 @@ from api.agent import planner
 from api.executor import run_workflow as ex
 from api.models.db import AgentRun, Artifact, ArtifactKind, NodeRun, NodeStatus, Run, RunStatus, Spend, Workflow, utcnow
 from api.services import budget
+from orchapod.prices import PRICES
 from packages.providers.tokenfactory import LIGHTNING, SUPER, TokenFactory
 from packages.workflow_schema.models import NODE_REGISTRY, ResourceSpec, SynthDistilabelInputs
 
@@ -370,6 +372,32 @@ def test_estimates_never_go_negative_and_count_page_extraction():
     assert estimate["by_node"]["s"]["usd"] == 0.0
     assert estimate["by_node"]["r"]["usd"] == pytest.approx((2 * 2 + 20 / 5) * 0.008)  # advanced searches + pages read
     assert "s: keep_alive_min: Input should be greater than or equal to 1" in errors_of({"name": "p", "nodes": [serve]})
+
+
+def test_tf_finetune_is_priced_from_its_trained_tokens_once_the_base_has_a_price(monkeypatch):
+    docs = planner.templates()[3]  # synth 300 rows -> data-prep train_split 0.8 -> tf-finetune 2 epochs on Llama 3.1 8B
+    est, warnings = planner.estimate(docs["plan"])
+    assert est["by_node"]["finetune"]["usd"] == 0.5  # TYPICAL until spike 1 fills the price ...
+    assert "finetune: no fine-tune price for meta-llama/Llama-3.1-8B-Instruct yet (spike 1); the estimate assumes $0.50" in warnings
+
+    monkeypatch.setitem(PRICES["token_factory_finetune"], "meta-llama/Llama-3.1-8B-Instruct", 0.4e-6)  # $0.40 per 1M
+    est, warnings = planner.estimate(docs["plan"])
+    assert est["by_node"]["finetune"]["usd"] == pytest.approx(300 * 0.8 * 250 * 2 * 0.4e-6)  # rows x tokens x epochs x $
+    assert not [w for w in warnings if w.startswith("finetune:")]
+    small = planner.reduced(docs)["estimate"]  # 40 rows, 1 epoch
+    assert small["by_node"]["finetune"]["usd"] == pytest.approx(40 * 0.8 * 250 * 0.4e-6)
+    assert small["usd"] <= budget.run_cap(0.1)  # ... which decides `fits` on the public app
+
+    plan = copy.deepcopy(docs["plan"])
+    plan["nodes"][3]["inputs"]["hyperparameters"] = {"n_epochs": 3}  # wins over n_epochs, as in the node
+    assert planner.estimate(plan)[0]["by_node"]["finetune"]["usd"] == pytest.approx(300 * 0.8 * 250 * 3 * 0.4e-6)
+    hf = {"name": "p", "nodes": [node("prep", "data-prep", dataset="hf://x"),
+                                 node("ft", "tf-finetune", ["prep"], train_data="${{ nodes.prep.outputs.train_jsonl }}")]}
+    est, warnings = planner.estimate(hf)
+    assert (est["by_node"]["ft"]["usd"], warnings) == (0.5, [
+        "ft: the rows of train_data are unknown (not from synth-distilabel); the estimate assumes $0.50"])
+    del hf["nodes"][0]["inputs"]["dataset"]  # a required input missing: review() reports it, the estimate never crashes
+    assert planner.review(hf)[0] == ["prep: dataset: Field required"]
 
 
 def test_review_reports_an_estimate_over_the_budget_left():

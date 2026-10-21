@@ -1,7 +1,7 @@
 # Orchapod Agent knowledge (the planner reads this at request time — keep it current)
 
 ## Node catalog
-Source of truth: `NODE_REGISTRY` in packages/workflow_schema/models.py. On every request the planner (apps/api/agent/planner.py) appends each row not marked `hidden` to its prompt, after this file: inputs JSON Schema → outputs, runtime (cpu | gpu | api), and typical cost and time from its `TYPICAL` table. Estimates price synth-distilabel, web-research, judge-eval and vllm-serve from their inputs and `orchapod.prices.PRICES`. Canonical plans: apps/api/agent/templates/*.json.
+Source of truth: `NODE_REGISTRY` in packages/workflow_schema/models.py. On every request the planner (apps/api/agent/planner.py) appends each row not marked `hidden` to its prompt, after this file: inputs JSON Schema → outputs, runtime (cpu | gpu | api), and typical cost and time from its `TYPICAL` table. Estimates price synth-distilabel, web-research, judge-eval and vllm-serve from their inputs and `orchapod.prices.PRICES`, and tf-finetune from its trained tokens (synth-distilabel's rows × data-prep's train_split × about 250 tokens a row × epochs) once PRICES has its base model's fine-tune price (spike 1); until then it assumes its typical $0.50, with a warning. Canonical plans: apps/api/agent/templates/*.json.
 
 ## Models on Nebius Token Factory (https://api.tokenfactory.nebius.com/v1, key NEBIUS_API_KEY)
 | Role | Model ID | $ per 1M tokens in / out |

@@ -222,7 +222,8 @@ async def run_summary(run_id: uuid.UUID, db: Session):
         raise HTTPException(status_code=404, detail="Run not found")
     nodes = list(await db.scalars(select(NodeRun).where(NodeRun.run_id == run_id)))
     order = executor.node_order(await db.get(Workflow, run.workflow_id) if run.workflow_id else None, run)
-    nodes.sort(key=lambda n: order.index(n.node_id) if n.node_id in order else len(order))
+    # a workflow that no longer compiles (a retired or not yet merged node type) lists its nodes as they ran
+    nodes.sort(key=lambda n: (order.index(n.node_id) if n.node_id in order else len(order), n.started_at or datetime.max))
     node_ids = {n.id: n.node_id for n in nodes}
     artifacts = (await db.scalars(select(Artifact).where(
         Artifact.node_run_id.in_(node_ids)).order_by(Artifact.created_at))).all()

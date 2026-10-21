@@ -263,3 +263,4 @@ worktrees:
   - Ledger: qa-w4 fix rounds 0/5. Merged; make check green (700 + web 27).
 - 2026-10-21T14:58Z `make ui-smoke` on f43fdd0 (qa-w4 merged): see the scratchpad ui-smoke2.log; the result follows in the next entry.
 - 2026-10-21T14:58Z RESULT `make ui-smoke` on f43fdd0: 5 passed / 0 skipped in 43.6 s — incl. the public-scale check (at ORCHAPOD_ANON_SCALE=0.1, templates over the per-run cap cannot be run and say why) and the golden path (24.9 s).
+- 2026-10-21T14:59Z Dispatched on 5354f75: qa-w5 (sonnet, id a9605152debf5ce90: delete the SKIP layer, restore --strict, CI disk for unsloth-train); platform-w6 (opus, id ac2ebae51cb4fd219: shared R18 fence with NFKC/zero-width); devrel-w5 (opus, id af39c612fcbfcd91c: README/Devpost refresh + qa-w4's 16 audit gaps). CHANGELOG re-dated to local merge dates (Oct 20 = waves 1–3a; Oct 21 = waves 3b–4, merged work only).

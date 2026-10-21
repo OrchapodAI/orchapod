@@ -4,6 +4,8 @@ allow-list, per-IP rate limits, the deep /health and the shallow /livez."""
 from __future__ import annotations
 
 import asyncio
+import inspect
+import sys
 import time
 import uuid
 from types import SimpleNamespace
@@ -67,7 +69,7 @@ def caller(ip):
 
 
 async def test_each_address_gets_a_burst_then_429_with_retry_after(client, limits):
-    assert RATES == {"plan": (5, 12.0), "run": (5, 12.0), "compare": (10, 6.0)}  # contracts "Run control API"
+    assert RATES == {"plan": (5, 12.0), "run": (5, 12.0), "compare": (3, 60.0)}  # contracts "Run control API"
     plan = {"intent": "synthetic movie likes"}
     async with caller("203.0.113.7") as a, caller("198.51.100.9") as b:
         assert [(await a.post("/agent/plan", json=plan)).status_code for _ in range(5)] == [200] * 5
@@ -89,7 +91,21 @@ async def test_routes_that_spend_alike_share_a_bucket_and_the_limit_comes_first(
         assert (await a.post("/agent/run", json={})).status_code == 429
         codes = [(await a.post("/workflows/from-prompt", json={"prompt": "movie likes"})).status_code for _ in range(5)]
         assert codes == [201] * 5 and (await a.post("/agent/plan", json={"intent": "x"})).status_code == 429
-        assert [(await a.post("/compare", json={})).status_code for _ in range(11)] == [422] * 10 + [429]
+        assert [(await a.post("/compare", json={})).status_code for _ in range(4)] == [422] * 3 + [429]
+
+
+async def test_simultaneous_requests_never_pass_more_than_the_burst(client, limits):
+    """take() is async, so it runs on the event loop; a sync one runs in the threadpool, where two requests can read
+    the same tokens (and a size change breaks an iteration)."""
+    assert inspect.iscoroutinefunction(ratelimit.limit("plan"))  # the race below shows only some of the time
+    switch = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)  # the worst case for a GIL hand-off between reading and writing a bucket
+    try:
+        async with caller("203.0.113.7") as a:
+            replies = await asyncio.gather(*(a.post("/compare", json={}) for _ in range(40)))
+    finally:
+        sys.setswitchinterval(switch)
+    assert sorted(r.status_code for r in replies) == [422] * 3 + [429] * 37
 
 
 def request(peer, xff=None):
@@ -97,23 +113,20 @@ def request(peer, xff=None):
                     "headers": [(b"x-forwarded-for", xff.encode())] if xff is not None else []})
 
 
-def test_the_address_is_the_peer_unless_a_trusted_proxy_forwarded_it(monkeypatch):
-    monkeypatch.delenv("ORCHAPOD_TRUSTED_PROXIES", raising=False)
-    assert ratelimit.address(request("10.0.0.2", "1.2.3.4")) == "10.0.0.2"  # nobody is trusted by default
-    monkeypatch.setenv("ORCHAPOD_TRUSTED_PROXIES", "10.0.0.0/8, 192.0.2.1")
-    assert ratelimit.address(request("10.0.0.2", "6.6.6.6, 1.2.3.4")) == "1.2.3.4"  # a client can prepend anything
-    assert ratelimit.address(request("10.0.0.2", "1.2.3.4, 192.0.2.1")) == "1.2.3.4"  # two proxies in a row
-    assert ratelimit.address(request("10.0.0.2")) == "10.0.0.2"
-    assert ratelimit.address(request("5.5.5.5", "1.2.3.4")) == "5.5.5.5"  # an untrusted peer's header counts for nothing
+def test_the_address_is_the_client_uvicorn_reports():
+    # prod: uvicorn --forwarded-allow-ips "*" behind Caddy, which overwrites X-Forwarded-For; the app reads no header
+    assert ratelimit.address(request("203.0.113.7", "6.6.6.6")) == "203.0.113.7"
+    assert ratelimit.address(request("::ffff:203.0.113.7")) == "203.0.113.7"  # an IPv4-mapped address is not ::/64
     assert ratelimit.address(request("2001:db8:1:2:a:b:c:d")) == "2001:db8:1:2::/64"  # one subscriber's IPv6 block
 
 
-async def test_idle_addresses_are_forgotten_once_there_are_many(client, limits):
-    idle = {("plan", f"10.0.{i // 256}.{i % 256}"): (0.0, limits[0] - 60) for i in range(10_001)}  # refilled by now
-    ratelimit._buckets.update(idle)
+async def test_buckets_stay_in_last_use_order_and_refilled_ones_go_from_the_front(client, limits):
+    ratelimit._buckets[("plan", "203.0.113.7")] = (2.0, limits[0] - 1)  # in use, and the oldest entry
+    ratelimit._buckets.update({("plan", f"10.0.{i // 256}.{i % 256}"): (0.0, limits[0] - 60) for i in range(1000)})
+    ratelimit._buckets[("plan", "198.51.100.9")] = (0.0, limits[0])  # emptied just now: not refilled
     async with caller("203.0.113.7") as a:
         assert (await a.post("/agent/plan", json={"intent": "x"})).status_code == 200
-    assert list(ratelimit._buckets) == [("plan", "203.0.113.7")]
+    assert list(ratelimit._buckets) == [("plan", "198.51.100.9"), ("plan", "203.0.113.7")]
 
 
 # --- /health and /livez ----------------------------------------------------------

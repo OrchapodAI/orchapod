@@ -23,7 +23,7 @@ DEFAULTS = {
     # control plane
     "DATABASE_URL": "sqlite+aiosqlite:///./orchapod_dev.db", "REDIS_URL": "redis://localhost:6379",
     "ORCHAPOD_CONTROL_URL": "http://localhost:8001", "ORCHAPOD_INTERNAL_SECRET": "",
-    "ORCHAPOD_CORS_ORIGINS": "", "ORCHAPOD_TRUSTED_PROXIES": "",
+    "ORCHAPOD_CORS_ORIGINS": "",
     # budget
     "ORCHAPOD_MAX_RUN_USD": "3", "ORCHAPOD_MAX_DAY_USD": "15", "ORCHAPOD_KILL_SWITCH": "0", "ORCHAPOD_ANON_SCALE": "0.1",
     "ORCHAPOD_ADMIN_TOKEN": "", "ORCHAPOD_NODE_TIMEOUT_S": "5400", "ORCHAPOD_MAX_COMPARES": "4",

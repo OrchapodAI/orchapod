@@ -219,6 +219,7 @@ def share(values: list) -> float | None:
 
 
 def main():
+    STOP.clear()  # module-level: an earlier main() in this process may have unwound and set it
     inputs = io.read_inputs()
     max_samples = int(inputs.get("max_samples") or 60)
     n_judge = max_samples if inputs.get("n_judge") in (None, "") else int(inputs["n_judge"])

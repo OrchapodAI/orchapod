@@ -27,6 +27,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -116,14 +117,9 @@ async def start_run(run_id: uuid.UUID, db: Session):
     run = await db.get(Run, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
-    if run.status not in (RunStatus.PENDING,):
-        raise HTTPException(
-            status_code=409,
-            detail=f"Run is already {run.status} — only pending runs can be started",
-        )
-
-    run.status = RunStatus.PROVISIONING_GPU
-    await db.commit()  # the executor reads the run in its own session
+    if run.status != RunStatus.PENDING or not await _move(db, run, [RunStatus.PENDING]):
+        await db.refresh(run)
+        raise HTTPException(status_code=409, detail=f"Run is {run.status.value}; only pending runs can be started")
     executor.launch(run_id)
     return _run_out(run)
 
@@ -160,14 +156,29 @@ async def retry_node(run_id: uuid.UUID, node_id: str, db: Session):
     if run.status not in (RunStatus.FAILED, RunStatus.CANCELLED) or node_run.status != NodeStatus.FAILED:
         raise HTTPException(status_code=409, detail=f"Only the failed node of a failed or cancelled run "
                                                     f"can be retried (run {run.status.value}, node {node_run.status.value})")
-    if run_id in executor.running_tasks:
+    if executor.busy(run_id):  # its executor, or a container it started, is still stopping
         raise HTTPException(status_code=409, detail="Run is still stopping; retry in a moment")
 
-    node_run.status, node_run.error = NodeStatus.PENDING, None
-    run.status, run.finished_at = RunStatus.PROVISIONING_GPU, None
-    await db.commit()
+    reset = await db.execute(update(NodeRun).where(NodeRun.id == node_run.id, NodeRun.status == NodeStatus.FAILED)
+                             .values(status=NodeStatus.PENDING, error=None).execution_options(synchronize_session=False))
+    if reset.rowcount != 1 or not await _move(db, run, [RunStatus.FAILED, RunStatus.CANCELLED]):
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Run changed meanwhile; reload it")
     executor.launch(run_id)
     return _run_out(run)
+
+
+async def _move(db: AsyncSession, run: Run, sources: list[RunStatus]) -> bool:
+    """Atomically move the run from one of `sources` to provisioning_gpu and commit (the executor reads it
+    in its own session); False when another request or worker changed it first."""
+    moved = await db.execute(update(Run).where(Run.id == run.id, Run.status.in_(sources))
+                             .values(status=RunStatus.PROVISIONING_GPU, finished_at=None)
+                             .execution_options(synchronize_session=False))
+    if moved.rowcount != 1:
+        return False
+    await db.commit()
+    await db.refresh(run)
+    return True
 
 
 @router.get("", response_model=list[RunOut])

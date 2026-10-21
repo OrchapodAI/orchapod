@@ -117,9 +117,9 @@ def events(broadcast):
 
 
 async def drain():
-    """Wait for background pod terminations."""
-    while ex._background:
-        await asyncio.wait(set(ex._background))
+    """Wait for background provisions and pod terminations."""
+    while ex._inflight:
+        await asyncio.wait(set().union(*ex._inflight.values()))
 
 
 async def test_success_resolves_refs_and_records_lineage(db, provider, monkeypatch):
@@ -328,14 +328,42 @@ async def test_a_second_cancel_cannot_interrupt_teardown(db, provider):
     task.cancel()
     await asyncio.wait_for(provider.terminating.wait(), 5)  # SIGTERM sent, grace running
     task.cancel()                                            # a second click on Cancel
-    provider.terminate_gate.set()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, 5)
+    assert ex.busy(run.id)                                   # the executor is gone, the teardown is not
+    provider.terminate_gate.set()
     await drain()
 
-    assert provider.terminated == ["a"]
+    assert provider.terminated == ["a"] and not ex.busy(run.id)
     rows = await nodes(db, run)
     assert (rows["a"].status, rows["a"].error) == (NodeStatus.FAILED, "cancelled")
+
+
+async def test_a_failing_setup_broadcast_still_fails_the_run(db, provider):
+    run = await seed(db)
+
+    async def broadcast(run_id, event):
+        if event == {"type": "run_status", "status": "running"}:
+            raise ConnectionError("redis down")
+
+    await ex.run_workflow(run.id, db, broadcast)
+
+    await db.refresh(run)
+    rows = await nodes(db, run)
+    assert run.status == RunStatus.FAILED  # not stuck in provisioning_gpu
+    assert (rows["a"].status, rows["a"].error) == (NodeStatus.FAILED, "internal: redis down")
+    assert provider.provisioned == []
+
+
+async def test_a_bad_node_timeout_fails_before_provisioning(db, provider, monkeypatch):
+    monkeypatch.setenv("ORCHAPOD_NODE_TIMEOUT_S", "90m")
+    run = await seed(db)
+
+    await ex.run_workflow(run.id, db, AsyncMock())
+
+    rows = await nodes(db, run)
+    assert rows["a"].status == NodeStatus.FAILED and rows["a"].error.startswith("internal: ")
+    assert provider.provisioned == []  # no container left running without a timeout
 
 
 async def test_pod_is_terminated_even_if_recording_it_fails(db, provider, monkeypatch):
@@ -445,6 +473,46 @@ async def test_retry_reruns_the_failed_node_and_continues(client, db, provider, 
     assert {n.status for n in rows.values()} == {NodeStatus.SUCCEEDED}
     assert [n for n, _ in provider.provisioned] == ["a", "b", "b", "c"]  # a is not re-run
     assert (await client.post(f"/runs/{run.id}/nodes/b/retry")).status_code == 409   # run succeeded
+
+
+async def test_retry_waits_for_a_provision_still_in_flight(client, db, provider, launched):
+    provider.provision_gate = asyncio.Event()
+    run = await seed(db, status=RunStatus.PENDING)
+    await client.post(f"/runs/{run.id}/start")
+    await asyncio.wait_for(provider.provisioning.wait(), 5)
+    assert (await client.post(f"/runs/{run.id}/cancel")).json()["status"] == "cancelled"
+
+    r = await client.post(f"/runs/{run.id}/nodes/a/retry")
+    assert r.status_code == 409  # the cancelled node's container is still coming up
+    provider.provision_gate.set()
+    await drain()
+    assert provider.terminated == ["a"]
+
+    provider.script = {"a": {"exit": 1}}
+    assert (await client.post(f"/runs/{run.id}/nodes/a/retry")).status_code == 202
+    await asyncio.wait_for(launched[-1], 5)
+    assert [n for n, _ in provider.provisioned] == ["a", "a"]  # one container per attempt
+
+
+def other_session(db):
+    return async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)()
+
+
+async def test_start_and_retry_are_conditional_updates(client, db, launched):
+    run = await seed(db, status=RunStatus.PENDING)  # this session still holds it as pending
+    async with other_session(db) as other:
+        (await other.get(Run, run.id)).status = RunStatus.CANCELLED  # cancelled meanwhile, elsewhere
+        await other.commit()
+    assert (await client.post(f"/runs/{run.id}/start")).status_code == 409
+
+    failed = await seed(db, status=RunStatus.FAILED)
+    db.add(NodeRun(run_id=failed.id, node_id="a", node_type="data-prep", status=NodeStatus.FAILED, error="exit 1"))
+    await db.commit()
+    async with other_session(db) as other:
+        (await other.get(Run, failed.id)).status = RunStatus.PROVISIONING_GPU  # another worker's retry won
+        await other.commit()
+    assert (await client.post(f"/runs/{failed.id}/nodes/a/retry")).status_code == 409
+    assert launched == []
 
 
 async def test_concurrent_retries_launch_one_executor(client, db, provider, launched):

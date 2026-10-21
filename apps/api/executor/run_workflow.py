@@ -36,7 +36,8 @@ log = logging.getLogger("api.executor")
 
 # run_id → the task executing it. One API worker (see ORCHAPOD_INTERNAL_SECRET).
 running_tasks: dict[uuid.UUID, asyncio.Task] = {}
-_background: set[asyncio.Task] = set()  # pod terminations, referenced until done
+# run_id → its provisions and pod teardowns still in flight after a cancel, referenced until done.
+_inflight: dict[uuid.UUID, set[asyncio.Future]] = {}
 
 # SDK-formatted stdout lines already reached the UI through /internal/log or /internal/progress.
 _SDK_LINE = re.compile(r"\[[^\]]+\] \[(INFO|WARN|ERROR|PROGRESS)\] ")
@@ -73,6 +74,24 @@ def launch(run_id: uuid.UUID) -> asyncio.Task:
     return task
 
 
+def busy(run_id: uuid.UUID) -> bool:
+    """The run's executor, or a provision or pod teardown it left behind, is still in flight."""
+    return bool((task := running_tasks.get(run_id)) and not task.done() or _inflight.get(run_id))
+
+
+def _track(run_id: uuid.UUID, future: asyncio.Future) -> asyncio.Future:
+    _inflight.setdefault(run_id, set()).add(future)
+
+    def done(f):
+        pending = _inflight.get(run_id, set())
+        pending.discard(f)
+        if not pending:
+            _inflight.pop(run_id, None)
+
+    future.add_done_callback(done)
+    return future
+
+
 async def _run_in_own_session(run_id: uuid.UUID) -> None:
     from api import database
     from api.services.events import event_bus
@@ -87,20 +106,20 @@ async def _run_in_own_session(run_id: uuid.UUID) -> None:
 async def run_workflow(run_id: uuid.UUID, db: AsyncSession, broadcast: Broadcast) -> None:
     """Execute (or, after a retry, resume) a run: succeeded nodes are skipped."""
     run = await db.get(Run, run_id)
-    workflow = await db.get(Workflow, run.workflow_id)
-    order = compile_dag(workflow.yaml, run.inputs).topological_order()
-
-    rows = {n.node_id: n for n in await db.scalars(select(NodeRun).where(NodeRun.run_id == run_id))}
-    for node in order:
-        if node.id not in rows:
-            rows[node.id] = NodeRun(run_id=run_id, node_id=node.id, node_type=node.type, inputs=node.inputs)
-            db.add(rows[node.id])
-    run.status, run.finished_at = RunStatus.RUNNING, None
-    run.started_at = run.started_at or utcnow()
-    await db.commit()
-    await broadcast(run_id, {"type": "run_status", "status": "running"})
-
+    order, rows = [], {}
     try:
+        workflow = await db.get(Workflow, run.workflow_id)
+        order = compile_dag(workflow.yaml, run.inputs).topological_order()
+        rows = {n.node_id: n for n in await db.scalars(select(NodeRun).where(NodeRun.run_id == run_id))}
+        for node in order:
+            if node.id not in rows:
+                rows[node.id] = NodeRun(run_id=run_id, node_id=node.id, node_type=node.type, inputs=node.inputs)
+                db.add(rows[node.id])
+        run.status, run.finished_at = RunStatus.RUNNING, None
+        run.started_at = run.started_at or utcnow()
+        await db.commit()
+        await broadcast(run_id, {"type": "run_status", "status": "running"})
+
         for node in order:
             node_run = rows[node.id]
             if node_run.status == NodeStatus.SUCCEEDED:
@@ -115,7 +134,7 @@ async def run_workflow(run_id: uuid.UUID, db: AsyncSession, broadcast: Broadcast
             await broadcast(run_id, {"type": "node_status", "node_id": node.id, "status": "succeeded", "outputs": outputs})
     except (Exception, asyncio.CancelledError) as e:
         cancelled = isinstance(e, asyncio.CancelledError)
-        first = next((rows[n.id] for n in order if rows[n.id].status != NodeStatus.SUCCEEDED), None)
+        first = next((rows[n.id] for n in order if n.id in rows and rows[n.id].status != NodeStatus.SUCCEEDED), None)
         await _stop(db, run, first, RunStatus.CANCELLED if cancelled else RunStatus.FAILED,
                     "cancelled" if cancelled else str(e) if isinstance(e, NodeFailed) else f"internal: {e}", broadcast)
         if cancelled:
@@ -159,6 +178,7 @@ async def _execute_node(
     from api.services.provider_selector import pick_local_docker, pick_provider
     from packages.workflow_schema.models import NODE_REGISTRY, NodeType, ResourceSpec
 
+    timeout = float(os.environ.get("ORCHAPOD_NODE_TIMEOUT_S") or 5400)  # backstop above node-level timeouts
     node_run.inputs = _resolve_inputs(dag_node.inputs, run, rows)  # resolved inputs = lineage
 
     # cpu and api nodes run on LocalDocker; gpu nodes on a GPU provider
@@ -175,13 +195,12 @@ async def _execute_node(
     try:
         pod = await asyncio.shield(prov)  # a cancel mid-provision (image pull, jobs.create) leaves it running
     except asyncio.CancelledError:
-        # terminate the pod once it exists, even if this task is cancelled again
-        prov.add_done_callback(lambda f: f.cancelled() or f.exception() or _terminate(provider, f.result()))
+        # terminate the pod once it exists, even if this task is cancelled again; retry waits for both
+        _track(run.id, asyncio.ensure_future(_terminate_when_up(provider, prov)))
         raise
     except Exception as e:
         raise NodeFailed(f"provision failed: {e}")
 
-    timeout = float(os.environ.get("ORCHAPOD_NODE_TIMEOUT_S") or 5400)  # backstop above node-level timeouts
     stream = asyncio.create_task(_stream_stdout(provider, pod, node_run, broadcast))
     try:
         node_run.gpu_provider = run.gpu_provider = provider.name
@@ -191,7 +210,7 @@ async def _execute_node(
     except TimeoutError:
         raise NodeFailed(f"timeout after {timeout:g} s")
     finally:
-        await _terminate(provider, pod)  # cancel/timeout: SIGTERM, 30 s grace, kill; after exit: cleanup
+        await _terminate(provider, pod, run.id)  # cancel/timeout: SIGTERM, 30 s grace, kill; after exit: cleanup
         await asyncio.wait({stream}, timeout=5)  # drain the tail of stdout
         stream.cancel()
 
@@ -201,13 +220,18 @@ async def _execute_node(
     return node_run.outputs or {}
 
 
-def _terminate(provider, pod) -> asyncio.Future:
-    """Teardown runs as its own referenced task and is awaited through shield, so a second cancel
-    cannot interrupt the SIGTERM grace; it never raises."""
-    task = asyncio.ensure_future(_terminate_now(provider, pod))
-    _background.add(task)
-    task.add_done_callback(_background.discard)
-    return asyncio.shield(task)
+def _terminate(provider, pod, run_id: uuid.UUID) -> asyncio.Future:
+    """Teardown runs as its own task, tracked under its run, and is awaited through shield, so a second
+    cancel cannot interrupt the SIGTERM grace; it never raises."""
+    return asyncio.shield(_track(run_id, asyncio.ensure_future(_terminate_now(provider, pod))))
+
+
+async def _terminate_when_up(provider, provision: asyncio.Future) -> None:
+    try:
+        pod = await provision
+    except Exception:
+        return  # it never came up
+    await _terminate_now(provider, pod)
 
 
 async def _terminate_now(provider, pod) -> None:
@@ -306,9 +330,9 @@ async def sweep(db: AsyncSession) -> None:
                 provider = (await pick_local_docker(None))[0] if node_run.gpu_provider == "local-docker" \
                     else get_providers().get(node_run.gpu_provider)
                 if provider:
-                    pods.append((provider, Pod(provider=node_run.gpu_provider, pod_id=node_run.gpu_pod_id)))
+                    pods.append((run.id, provider, Pod(provider=node_run.gpu_provider, pod_id=node_run.gpu_pod_id)))
             node_run.status, node_run.error, node_run.finished_at = NodeStatus.FAILED, "control plane restarted", now
         run.status, run.finished_at = RunStatus.FAILED, now
     await db.commit()
-    for provider, pod in pods:  # in the background: the API must be serving when the nodes post their last cost_json
-        _terminate(provider, pod)
+    for run_id, provider, pod in pods:  # in the background: the API must be serving when the nodes post their last cost_json
+        _terminate(provider, pod, run_id)

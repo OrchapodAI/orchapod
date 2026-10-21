@@ -261,3 +261,5 @@ worktrees:
   - Touch-ups by the orchestrator at merge: the drills import ratelimit plainly, so the 3 backend-w4 drills now run instead of skipping; e2e_ui starts the public API inside the try; the prod-images job gets `permissions: contents: read`; a tautological test deleted; Makefile comment; the preempted-Job pin cites LOG + owners.
   - Note: smoke.spec's fits canary goes red if no template, or every template, is over $0.30 — a data/price change, not a regression.
   - Ledger: qa-w4 fix rounds 0/5. Merged; make check green (700 + web 27).
+- 2026-10-21T14:58Z `make ui-smoke` on f43fdd0 (qa-w4 merged): see the scratchpad ui-smoke2.log; the result follows in the next entry.
+- 2026-10-21T14:58Z RESULT `make ui-smoke` on f43fdd0: 5 passed / 0 skipped in 43.6 s — incl. the public-scale check (at ORCHAPOD_ANON_SCALE=0.1, templates over the per-run cap cannot be run and say why) and the golden path (24.9 s).

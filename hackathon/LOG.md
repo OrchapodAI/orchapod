@@ -214,3 +214,7 @@ worktrees:
   - Parked (P2, D6+): anonymous POST /runs/{id}/cancel can cancel others' runs (write bucket only); executor-level gpu refusal for scale < 1 (defense in depth); recursive strip done; R22 misses HFToken/APIToken/access_key_id.
   - Follow-ups for others: canvas 'save a copy' on 409 (frontend); RunOut.workflow_name for the golden-run link (backend+frontend); hf_token schema fields (owners).
 - 2026-10-21T14:12Z INTEGRATION `make check E2E=1` on af6a579 (backend-w4 hardening merged): exit 0. 702 passed. Demo #2 PASS (run 2ca64c62, 16 s, $0). Agent #2 PASS (0065df2a, 16 s), #3 PASS (95d3aa08, 4 s), #1 SKIP until ml-w4. The hardened API (rate limits, gpu guard, 409, YAML checks) does not break the e2e harness.
+- 2026-10-21T14:14Z Wave 5 brief (hackathon/briefs/2026-10-24-wave5.md, base 23b0a57). Dispatched (opus):
+  - platform-w5 (id afe7cf5b02abce878): NebiusServerless rewrite (jobs + endpoints, IAM CLI fallback, s3 volumes) and NebiusProvider on Jobs, replacing the legacy Compute code that never provisioned. It is on the critical path for the vllm-serve fallback if spike 1 refuses per-token LoRA; ml-w4 told to code against the contract signatures.
+  - backend-w5 (id ae3dca2e95263a331): STUB stopwords, tf-finetune priced from tokens, SDK cost_json without thread joins, RunOut.workflow_name, anonymous cancel needs the run's cancel token, executor-level gpu refusal, R22 acronym keys.
+  - Queued: frontend-w5, platform-w6 (shared fence), devrel-w5.

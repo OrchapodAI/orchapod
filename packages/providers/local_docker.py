@@ -127,6 +127,9 @@ class LocalDockerProvider:
         argv = [
             "docker", "run", "-d",
             "--add-host=host.docker.internal:host-gateway",
+            # the API's startup sweep finds the containers it started by these (a teardown in flight dies with the process)
+            "--label", f"orchapod.run_id={env.get('ORCHAPOD_RUN_ID', '')}",
+            "--label", f"orchapod.control_url={env.get('ORCHAPOD_CONTROL_URL', '')}",
         ]
         for k, v in rewritten_env.items():
             argv += ["-e", f"{k}={v}"]

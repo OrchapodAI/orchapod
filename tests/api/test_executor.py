@@ -138,6 +138,19 @@ def nebius_cli(tmp_path, monkeypatch):
     return SimpleNamespace(path=cli, calls=tmp_path / "calls")
 
 
+@pytest.fixture
+def docker_cli(tmp_path, monkeypatch):
+    """`docker` on the API host's PATH, so no test reaches the real daemon (other APIs' and projects' containers): `ps`
+    prints the lines of `listing`; every call's arguments are appended to `calls`."""
+    cli, listing, calls = tmp_path / "bin" / "docker", tmp_path / "ps", tmp_path / "docker-calls"
+    cli.parent.mkdir(exist_ok=True)
+    listing.write_text("")
+    cli.write_text(f'#!/bin/sh\necho "$@" >> {calls}\nif [ "$1" = ps ]; then cat {listing}; fi\n')
+    cli.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{cli.parent}{os.pathsep}{os.environ['PATH']}")
+    return SimpleNamespace(path=cli, listing=listing, calls=calls)
+
+
 EVERY_RUNTIME = """
 name: g
 nodes:
@@ -565,7 +578,7 @@ async def test_one_node_run_per_run_and_node(db):
         await db.commit()
 
 
-async def test_startup_sweep_fails_orphaned_runs(db, provider):
+async def test_startup_sweep_fails_orphaned_runs(db, provider, docker_cli):
     run = await seed(db, status=RunStatus.RUNNING)
     for node_id, status, pod in [("a", NodeStatus.SUCCEEDED, None), ("b", NodeStatus.RUNNING, "b"), ("c", NodeStatus.PENDING, None)]:
         db.add(NodeRun(run_id=run.id, node_id=node_id, node_type="data-prep", status=status,
@@ -589,6 +602,46 @@ async def test_startup_sweep_fails_orphaned_runs(db, provider):
     assert [rows[i].status for i in "abc"] == [NodeStatus.SUCCEEDED, NodeStatus.FAILED, NodeStatus.PENDING]
     assert rows["b"].error == rows2["b"].error == "control plane restarted"
     assert provider.terminated == ["b"]
+
+
+async def test_the_startup_sweep_stops_this_apis_containers_of_runs_that_are_over_or_unknown(db, docker_cli, monkeypatch):
+    """A teardown in flight dies with the API (qa-w6: a cancel mid-provision, then a shutdown), and a stub e2e's database is
+    thrown away. Only containers LocalDocker labelled for this API are touched: never another project's, nor those of
+    another API on this host (its runs are unknown here)."""
+    monkeypatch.setenv("ORCHAPOD_CONTROL_URL", "http://localhost:8002")
+    mid, over, waiting = [await seed(db, status=s) for s in (RunStatus.RUNNING, RunStatus.CANCELLED, RunStatus.PENDING)]
+    db.add(NodeRun(run_id=mid.id, node_id="a", node_type="data-prep", status=NodeStatus.RUNNING,
+                   gpu_provider="local-docker", gpu_pod_id="c-recorded"))
+    await db.commit()
+    unknown, ours, other_api = uuid.uuid4(), "http://localhost:8002", "http://127.0.0.1:8003"
+    docker_cli.listing.write_text("".join(f"{cid}\t{run_id}\t{url}\n" for cid, run_id, url in [
+        ("c-recorded", mid.id, ours),     # the running node's pod: terminated once, by the sweep's first half
+        ("c-over", over.id, ours),        # cancelled mid-provision, then the API stopped
+        ("c-unknown", unknown, ours),     # a run this database never had
+        ("c-waiting", waiting.id, ours),  # a run that is neither over nor unknown
+        ("c-other-api", unknown, other_api),
+        ("c-unlabelled", "", ""),         # what docker prints for a container without the labels
+    ]))
+
+    await ex.sweep(db)
+    await drain()
+
+    calls = docker_cli.calls.read_text().splitlines()
+    assert [c.split(" ")[:5] for c in calls if c.startswith("ps ")] == [["ps", "-a", "--no-trunc", "--filter",
+                                                                         "label=orchapod.run_id"]]
+    assert sorted(c for c in calls if not c.startswith("ps ")) == sorted(
+        f"{verb} {cid}" for cid in ("c-recorded", "c-over", "c-unknown") for verb in ("stop -t 30", "rm -f"))
+
+
+async def test_a_docker_that_hangs_never_holds_up_the_api_start(db, provider, docker_cli, monkeypatch, caplog):
+    docker_cli.path.write_text("#!/bin/sh\nexec sleep 5\n")  # Docker Desktop half up
+    monkeypatch.setattr(ex, "DOCKER_PS_TIMEOUT_S", 0.2)
+    run = await seed(db, status=RunStatus.RUNNING)
+
+    await asyncio.wait_for(ex.sweep(db), 3)
+
+    await db.refresh(run)
+    assert run.status == RunStatus.FAILED and "docker ps took over 0.2 s" in caplog.text
 
 
 async def test_startup_runs_the_sweep_and_creates_the_bucket(monkeypatch):
@@ -628,6 +681,7 @@ async def test_cancel_during_provision_terminates_the_pod_once_it_exists(db, pro
     assert provider.terminated == ["a"] and run.id not in budget._granted
     rows = await nodes(db, run)
     assert (rows["a"].status, rows["a"].error) == (NodeStatus.FAILED, "cancelled")
+    assert rows["a"].inputs == {"dataset": "hf://x"}  # resolved: stored with running, so the cancel's rollback keeps it
 
 
 async def test_a_second_cancel_cannot_interrupt_teardown(db, provider):
@@ -650,6 +704,73 @@ async def test_a_second_cancel_cannot_interrupt_teardown(db, provider):
     assert provider.terminated == ["a"] and not ex.busy(run.id) and run.id not in budget._granted
     rows = await nodes(db, run)
     assert (rows["a"].status, rows["a"].error) == (NodeStatus.FAILED, "cancelled")
+
+
+@pytest.fixture
+async def sqlite_file(tmp_path):
+    """An engine on a SQLite file, a connection per session as in dev and the stub e2e, set up as the API sets up its own; a
+    0.5 s busy timeout (5 s in the API) keeps a lock failure quick."""
+    from sqlalchemy import event
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlmodel import SQLModel
+    from api import database
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'api.db'}", connect_args={"timeout": 0.5})
+    event.listen(engine.sync_engine, "connect", database.sqlite_wal)
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+    yield engine
+    await engine.dispose()
+
+
+A_CANCELLED = {"a": (NodeStatus.FAILED, "cancelled"), "b": (NodeStatus.PENDING, None), "c": (NodeStatus.PENDING, None)}
+
+
+@pytest.mark.parametrize("statement, reading, left", [
+    ("sum(run.cost_usd)", False, A_CANCELLED),  # qa-w6: the budget check's read
+    ("sum(run.cost_usd)", True, A_CANCELLED),   # the same, once SQLite has run it and its row is being read
+    ("UPDATE noderun", False, A_CANCELLED),     # the flush that marks a running
+    ("INSERT INTO noderun", False, {}),         # the first commit: no row exists yet, as for a run cancelled before it started
+])
+async def test_a_cancel_that_lands_mid_statement_still_ends_the_run_cancelled(provider, sqlite_file, monkeypatch, statement,
+                                                                             reading, left):
+    """qa-w6 (SQLite, a cancel within ms of start). SQLAlchemy invalidates a connection whose statement a cancel interrupts,
+    or rolls the flush back, and the session refuses to write until it is rolled back: the executor recorded the cancel
+    anyway (PendingRollbackError, the node left pending). And a read cut off while its rows are fetched stays open (sqlite3
+    closes the connection only once the cursor is gone): in SQLite's default journal mode its lock failed every commit,
+    the executor's record of the cancel included, with "database is locked"; WAL lets a writer past readers."""
+    import aiosqlite
+    from sqlalchemy import event
+
+    sessions = async_sessionmaker(sqlite_file, class_=AsyncSession, expire_on_commit=False)
+    async with sessions() as s:
+        run = await seed(s)
+    armed, reached, fetchall = asyncio.Event(), asyncio.Event(), aiosqlite.Cursor.fetchall
+
+    def before(conn, cursor, sql, *_):
+        if statement in sql:
+            (armed if reading else reached).set()
+
+    async def fetching(cursor):
+        if armed.is_set():  # SQLite has run the statement and holds its read open until the cursor ends
+            armed.clear()
+            reached.set()
+            await asyncio.Event().wait()
+        return await fetchall(cursor)
+
+    monkeypatch.setattr(aiosqlite.Cursor, "fetchall", fetching)
+    event.listen(sqlite_file.sync_engine, "before_cursor_execute", before)
+    async with sessions() as db:
+        task = asyncio.create_task(ex.run_workflow(run.id, db, AsyncMock(), 1.0))
+        await asyncio.wait_for(reached.wait(), 5)
+        task.cancel()  # lands while the executor awaits that statement
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 5)
+
+    async with sessions() as s:
+        assert (await s.get(Run, run.id)).status == RunStatus.CANCELLED
+        rows = await s.scalars(select(NodeRun).where(NodeRun.run_id == run.id))
+        assert {n.node_id: (n.status, n.error) for n in rows} == left
 
 
 async def test_a_failing_setup_broadcast_still_fails_the_run(db, provider):

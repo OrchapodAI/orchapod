@@ -142,11 +142,12 @@ async def run_workflow(run_id: uuid.UUID, db: AsyncSession, broadcast: Broadcast
             if max_cost <= 0:
                 raise NodeFailed(f"budget: {which} cap ${cap:g} reached")
             try:
+                node_run.inputs = _resolve_inputs(node.inputs, run, rows)  # resolved inputs = lineage, stored with running
                 node_run.status, node_run.error = NodeStatus.RUNNING, None
                 node_run.started_at, node_run.finished_at = utcnow(), None
                 await db.commit()
                 await broadcast(run_id, {"type": "node_status", "node_id": node.id, "status": "running"})
-                outputs = await _execute_node(node_run, node, run, rows, db, broadcast, max_cost)
+                outputs = await _execute_node(node_run, node, run, db, broadcast, max_cost)
             finally:
                 _release(run_id)
             node_run.status, node_run.finished_at, node_run.error = NodeStatus.SUCCEEDED, utcnow(), None
@@ -154,6 +155,11 @@ async def run_workflow(run_id: uuid.UUID, db: AsyncSession, broadcast: Broadcast
             await broadcast(run_id, {"type": "node_status", "node_id": node.id, "status": "succeeded", "outputs": outputs})
     except (Exception, asyncio.CancelledError) as e:
         cancelled = isinstance(e, asyncio.CancelledError)
+        # A cancel (or a database error) that lands mid-statement leaves the transaction unusable: SQLAlchemy invalidates
+        # the connection or rolls the flush back, and the session writes nothing until it is rolled back (qa-w6).
+        await db.rollback()
+        await db.refresh(run)
+        rows = {n.node_id: n for n in await db.scalars(select(NodeRun).where(NodeRun.run_id == run_id))}
         first = next((rows[n.id] for n in order if n.id in rows and rows[n.id].status != NodeStatus.SUCCEEDED), None)
         await _stop(db, run, first, RunStatus.CANCELLED if cancelled else RunStatus.FAILED,
                     "cancelled" if cancelled else str(e) if isinstance(e, NodeFailed) else f"internal: {e}", broadcast)
@@ -187,7 +193,6 @@ async def _execute_node(
     node_run: NodeRun,
     dag_node: DAGNode,
     run: Run,
-    rows: dict[str, NodeRun],
     db: AsyncSession,
     broadcast: Broadcast,
     max_cost: float,
@@ -201,7 +206,6 @@ async def _execute_node(
     from packages.workflow_schema.models import NODE_REGISTRY, NodeType, ResourceSpec
 
     timeout = float(config.env("ORCHAPOD_NODE_TIMEOUT_S"))  # backstop above node-level timeouts
-    node_run.inputs = _resolve_inputs(dag_node.inputs, run, rows)  # resolved inputs = lineage
 
     # cpu and api nodes run on LocalDocker; gpu nodes on a GPU provider
     row = NODE_REGISTRY.get(NodeType(dag_node.type), {})
@@ -395,9 +399,11 @@ def node_order(workflow: Workflow | None, run: Run) -> list[str]:
 
 async def sweep(db: AsyncSession) -> None:
     """At API start: runs left mid-flight fail; a running node's pod is terminated so the node
-    cancels its remote job, and that node (or else the first unfinished one) fails "control plane restarted".
-    ponytail: a Nebius job or endpoint that no row names (a create lost to a SIGTERM) is not swept; deleting our
-    "orchapod-" names needs platform-w5's jobs.list()/endpoints.list() and a rule for a project two APIs share."""
+    cancels its remote job, and that node (or else the first unfinished one) fails "control plane restarted". Then the
+    LocalDocker containers this API left behind go too (_containers_left).
+    ponytail: no sweep of Nebius jobs or endpoints that no row names (a create lost to a SIGTERM) by their "orchapod-"
+    name prefix: dev and hosted may share one Nebius project, so it would delete the other's live ones; it needs a
+    per-deployment part in those names first."""
     from api.services.provider_selector import get_providers, pick_local_docker
     from packages.providers.base import Pod
 
@@ -417,5 +423,49 @@ async def sweep(db: AsyncSession) -> None:
             node_run.status, node_run.error, node_run.finished_at = NodeStatus.FAILED, "control plane restarted", now
         run.status, run.finished_at = RunStatus.FAILED, now
     await db.commit()
+    pods += await _containers_left(db, {pod.pod_id for *_, pod in pods})
     for run_id, provider, pod in pods:  # in the background: the API must be serving when the nodes post their last cost_json
         _terminate(provider, pod, run_id)
+
+
+DOCKER_PS_TIMEOUT_S = 10
+
+
+async def _containers_left(db: AsyncSession, terminating: set[str]) -> list[tuple]:
+    """(run id, provider, pod) of each LocalDocker container labelled with this API's ORCHAPOD_CONTROL_URL whose run is over
+    or unknown to this database: a teardown in flight dies with the process (a cancel mid-provision, then a shutdown), and
+    a stub e2e's database is thrown away. A container without the labels, or another API's on this host (another port),
+    is never listed. Never raises: an API without docker, or with its daemon down, starts all the same."""
+    from api.services.provider_selector import pick_local_docker
+    from packages.providers.base import Pod
+
+    try:
+        ps = await asyncio.create_subprocess_exec(
+            "docker", "ps", "-a", "--no-trunc", "--filter", "label=orchapod.run_id",
+            "--format", '{{.ID}}\t{{.Label "orchapod.run_id"}}\t{{.Label "orchapod.control_url"}}',
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+    except OSError:
+        return []  # no docker CLI: nothing LocalDocker started here
+    try:
+        out, _ = await asyncio.wait_for(ps.communicate(), DOCKER_PS_TIMEOUT_S)
+    except TimeoutError:
+        ps.kill()
+        await ps.wait()
+        log.warning("container sweep skipped: docker ps took over %g s", DOCKER_PS_TIMEOUT_S)
+        return []
+    ours, left = {}, []
+    for line in out.decode(errors="replace").splitlines():
+        cid, run_id, url = (line.split("\t") + ["", ""])[:3]
+        if url == config.env("ORCHAPOD_CONTROL_URL") and cid not in terminating:
+            try:
+                ours[cid] = uuid.UUID(run_id)
+            except ValueError:
+                continue  # not a run id
+    status = dict((await db.execute(select(Run.id, Run.status).where(Run.id.in_(list(ours.values()))))).all())
+    provider = (await pick_local_docker(None))[0]
+    for cid, run_id in ours.items():
+        if status.get(run_id) in (None, RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED):
+            log.warning("startup sweep: terminating container %s of run %s (%s)", cid[:12], run_id,
+                        status[run_id].value if run_id in status else "unknown here")
+            left.append((run_id, provider, Pod(provider=provider.name, pod_id=cid)))
+    return left

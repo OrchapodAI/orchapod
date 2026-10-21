@@ -26,18 +26,25 @@ def test_web_env_points_at_the_api_and_carries_no_paid_key():
 
 
 def test_playwright_env_says_where_the_app_is_what_cannot_run_and_whether_that_fails():
-    env = ui.playwright_env("http://127.0.0.1:3100", "http://127.0.0.1:8003", {"1": ["ml-w4: vllm-serve"]}, True, SHELL)
+    env = ui.playwright_env("http://127.0.0.1:3100", "http://127.0.0.1:8003", "http://127.0.0.1:8004",
+                            {"1": ["ml-w4: vllm-serve"]}, True, SHELL)
     assert env["E2E_WEB_URL"] == "http://127.0.0.1:3100" and env["E2E_API_URL"] == "http://127.0.0.1:8003"
+    assert env["E2E_PUBLIC_API_URL"] == "http://127.0.0.1:8004"
     assert json.loads(env["E2E_PENDING"]) == {"1": ["ml-w4: vllm-serve"]} and env["E2E_STRICT"] == "1"
     assert json.loads(env["E2E_SLUGS"]) == {"1": "real-estate-compliance", "2": "movie-engagement"}  # the spec drives these two
-    assert ui.playwright_env("w", "a", {}, False, SHELL)["E2E_STRICT"] == ""  # blank, so `=== "1"` is false
+    assert ui.playwright_env("w", "a", "p", {}, False, SHELL)["E2E_STRICT"] == ""  # blank, so `=== "1"` is false
     assert not {"NEBIUS_API_KEY", "TAVILY_API_KEY", "HF_TOKEN", "VASTAI_API_KEY"} & set(env)
+
+
+def test_the_public_api_differs_from_the_pages_only_in_the_anonymous_scale():
+    """The fits test reads the templates at the public demo's scale (contracts "Budget guard": ORCHAPOD_ANON_SCALE 0.1)."""
+    assert ui.PUBLIC_CAPS == agent.FULL_CAPS | {"ORCHAPOD_ANON_SCALE": "0.1"}
 
 
 def test_the_spec_and_the_config_read_exactly_what_the_driver_sets():
     """tests/ui is TypeScript and the driver is Python: a renamed variable on one side must not silently break the other."""
     text = "".join((ROOT / "tests/ui" / f).read_text() for f in ("smoke.spec.ts", "playwright.config.ts"))
-    assert set(re.findall(r"process\.env\.(E2E_\w+)", text)) == set(ui.playwright_env("w", "a", {}, False, {}))
+    assert set(re.findall(r"process\.env\.(E2E_\w+)", text)) == set(ui.playwright_env("w", "a", "p", {}, False, {}))
 
 
 def test_playwright_is_pinned_and_locked():

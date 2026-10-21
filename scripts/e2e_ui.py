@@ -4,12 +4,13 @@
 
 It rebuilds and retags the shared `orchapod/<node>:dev` images, like `make check E2E=1`, so only the orchestrator runs it, after
 merges. It starts the API (STUB=1, throwaway DB, full caps: the UI is anonymous) and `next dev` on the first free port from 3100,
-builds the node images of the canonical intents that can run, and runs tests/ui (Playwright, version pinned in
-tests/ui/package.json, headless Chromium) against them; Playwright's own report counts the passes and the skips.
+a second API at the public demo's scale (PUBLIC_CAPS) for the template cap test, builds the node images of the canonical
+intents that can run, and runs tests/ui (Playwright, version pinned in tests/ui/package.json, headless Chromium) against
+them; Playwright's own report counts the passes and the skips.
 
-The tests: /agent intent #2 to a finished report; the template gallery's one-click Run of intent #2 with its dataset card; the
-eval view and the compare playground on a run served from a fixture; the golden path (intent #1: one click, the run, its eval
-view, the playground).
+The tests: /agent intent #2 to a finished report; the template gallery's one-click Run of intent #2 with its dataset card; at
+ORCHAPOD_ANON_SCALE=0.1, a template above the per-run cap keeps Run disabled and says why; the eval view and the compare
+playground on a run served from a fixture; the golden path (intent #1: one click, the run, its eval view, the playground).
 
 A step whose piece is not merged yet (vllm-serve for intent #1: see e2e_agent.PENDING) prints SKIP with its reason and does not
 fail; --strict fails it. The pieces the API still lacks are found here, from the planner's own errors, and passed on in
@@ -35,6 +36,9 @@ WEB, UI = ROOT / "apps/web", ROOT / "tests/ui"
 PNPM = ["pnpm", "--config.verify-deps-before-run=false"]
 SPEC_INTENTS = ("1", "2")  # the canonical intents tests/ui drives
 PLAYWRIGHT_TIMEOUT_S = 570  # tests/ui/playwright.config.ts: globalTimeout 9 min
+# The page's own API runs at full scale, so the golden path can run from the gallery; the template cap test reads
+# GET /agent/templates from a second API at the public demo's scale.
+PUBLIC_CAPS = agent.FULL_CAPS | {"ORCHAPOD_ANON_SCALE": "0.1"}
 
 
 def web_env(api_url: str, environ) -> dict[str, str]:
@@ -44,11 +48,12 @@ def web_env(api_url: str, environ) -> dict[str, str]:
                   "NEXT_TELEMETRY_DISABLED": "1"}
 
 
-def playwright_env(web_url: str, api_url: str, pending: dict, strict: bool, environ) -> dict[str, str]:
-    """What tests/ui reads: where the app and the API are, what cannot run yet, which templates are the canonical intents, and
-    whether a SKIP fails."""
+def playwright_env(web_url: str, api_url: str, public_url: str, pending: dict, strict: bool, environ) -> dict[str, str]:
+    """What tests/ui reads: where the app, its API and the public-scale API are, what cannot run yet, which templates are the
+    canonical intents, and whether a SKIP fails."""
     env = {k: v for k, v in environ.items() if k not in demo.PAID}
-    return env | {"E2E_WEB_URL": web_url, "E2E_API_URL": api_url, "E2E_SLUGS": json.dumps({n: agent.SLUGS[n] for n in SPEC_INTENTS}),
+    return env | {"E2E_WEB_URL": web_url, "E2E_API_URL": api_url, "E2E_PUBLIC_API_URL": public_url,
+                  "E2E_SLUGS": json.dumps({n: agent.SLUGS[n] for n in SPEC_INTENTS}),
                   "E2E_PENDING": json.dumps(pending), "E2E_STRICT": "1" if strict else ""}  # SKIP-SITE(ml-w4): the last two
 
 
@@ -129,14 +134,17 @@ def run(c: httpx.Client, strict: bool, extra: list[str]) -> int:
     api_url = str(c.base_url).rstrip("/")
     with tempfile.TemporaryDirectory(prefix="orchapod-ui-") as tmp:
         web, web_url = start_web(api_url, Path(tmp))
+        public, public_url = demo.start_api(Path(tmp), PUBLIC_CAPS)  # its own port, DB and api.log in this directory
         try:
             demo.wait_healthy(web, web_url, Path(tmp) / "web.log", path="/agent", tries=240)
-            demo.say(f"web up on {web_url} (next dev, API {api_url})")
-            code = run_playwright(extra, playwright_env(web_url, api_url, pending, strict, os.environ))
+            demo.wait_healthy(public, public_url, Path(tmp) / "api.log")
+            demo.say(f"web up on {web_url} (next dev, API {api_url}; public-scale API {public_url})")
+            code = run_playwright(extra, playwright_env(web_url, api_url, public_url, pending, strict, os.environ))
         except RuntimeError as e:
             return demo.fail(e)
         finally:
             stop_group(web)
+            demo.stop(public)
         if code:
             demo.say(f"web log (last lines):\n{demo.tail(Path(tmp) / 'web.log')}")
     if code:

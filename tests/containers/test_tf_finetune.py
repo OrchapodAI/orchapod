@@ -6,7 +6,9 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
+from orchapod.cost import BudgetExceeded
 from orchapod.prices import PRICES
 from packages.workflow_schema.models import NODE_REGISTRY, NodeType, TFFinetuneInputs, TFFinetuneOutputs
 
@@ -40,7 +42,8 @@ def routes(**over):
         "events": {"data": [{"created_at": 2, "level": "info", "message": "epoch 1 done"},
                             {"created_at": 1, "level": "warn", "message": "slow queue"}]},
         "cancel": job("cancelled", trained_tokens=1000),
-        "list": {"data": []},
+        "list": {"data": []},  # no earlier job with this node's suffix, so a new one is created
+        "checkpoints": {"data": CKPTS},
         **over,
     }
     return {
@@ -50,7 +53,7 @@ def routes(**over):
         ("GET", JOB): named["get"],
         ("GET", f"{JOB}/events"): named["events"],
         ("POST", f"{JOB}/cancel"): named["cancel"],
-        ("GET", f"{JOB}/checkpoints"): {"data": CKPTS},
+        ("GET", f"{JOB}/checkpoints"): named["checkpoints"],
         ("GET", "/v1/files/file-a"): {"id": "file-a", "filename": "adapter_model.safetensors"},
         ("GET", "/v1/files/file-b"): {"id": "file-b", "filename": "../adapter_config.json"},
         ("GET", "/v1/files/file-a/content"): httpx.Response(200, content=b"weights"),
@@ -96,12 +99,18 @@ def last_error():
     return ft.log.error.call_args_list[-1].args[0]
 
 
+def posts(seen, path="/v1/fine_tuning/jobs"):
+    return [r for r in seen if (r.method, r.url.path) == ("POST", path)]
+
+
 def test_registry_row_and_defaults():
     row = NODE_REGISTRY[NodeType.TF_FINETUNE]
     assert (row["runtime"], row["inputs_schema"], row["outputs_schema"]) == ("api", TFFinetuneInputs, TFFinetuneOutputs)
     i = TFFinetuneInputs(train_data=TRAIN)
     assert (i.model, i.eval_data, i.n_epochs, i.hyperparameters, i.timeout_min) == (LLAMA, "", 2, {}, 60)
     assert set(TFFinetuneOutputs.model_fields) == {"job", "lora_adapter"}
+    with pytest.raises(ValidationError):  # the node's own timeout must fire before the executor's 5400 s backstop
+        TFFinetuneInputs(train_data=TRAIN, timeout_min=86)
 
 
 def test_stub_writes_job_adapter_and_metrics(node, monkeypatch):
@@ -127,8 +136,9 @@ def test_polls_every_15s_and_keeps_the_lowest_valid_loss(node, tf_routes, clock)
     seen = tf_routes(ft, routes())
     outs, metrics = node(eval_data=EVAL, hyperparameters={"lora_r": 16, "n_epochs": 3})
 
-    assert b'filename="train.jsonl"' in seen[0].content and b'filename="eval.jsonl"' in seen[1].content
-    assert json.loads(seen[2].content) == {
+    assert (seen[0].method, seen[0].url.path) == ("GET", "/v1/fine_tuning/jobs")  # R19: no earlier job to adopt
+    assert b'filename="train.jsonl"' in seen[1].content and b'filename="eval.jsonl"' in seen[2].content
+    assert json.loads(seen[3].content) == {
         "model": LLAMA, "training_file": "file-train", "validation_file": "file-eval",
         "hyperparameters": {"lora": True, "n_epochs": 3, "lora_r": 16}, "suffix": SUFFIX}
     assert clock == [15, 15]
@@ -154,7 +164,7 @@ def test_no_eval_data_means_no_validation_file(node, tf_routes, eval_data, eval_
     seen = tf_routes(ft, routes())
     node(eval_text, eval_data=eval_data)
     assert [r.url.path for r in seen].count("/v1/files") == 1
-    assert "validation_file" not in json.loads(seen[1].content)
+    assert "validation_file" not in json.loads(posts(seen)[0].content)
 
 
 def test_failed_job_exits_1_with_its_error_message(node, tf_routes):
@@ -166,15 +176,17 @@ def test_failed_job_exits_1_with_its_error_message(node, tf_routes):
     assert "job" not in [c.args[0] for c in ft.io.write_output.call_args_list]
 
 
-def test_timeout_cancels_the_job_and_bills_what_it_trained(node, tf_routes, clock):
-    running = job("running", trained_steps=1, total_steps=10)
-    seen = tf_routes(ft, routes(get=[running] * 5 + [job("succeeded", trained_tokens=4000)]))
+@pytest.mark.parametrize("cancel_tokens, billed", [(1000, 1000), (None, 700)])  # null keeps the last poll's count
+def test_timeout_cancels_the_job_and_bills_what_it_trained(node, tf_routes, clock, cancel_tokens, billed):
+    running = job("running", trained_steps=1, total_steps=10, trained_tokens=700)
+    seen = tf_routes(ft, routes(get=[running] * 5 + [job("succeeded", trained_tokens=4000)],
+                                cancel=job("cancelled", trained_tokens=cancel_tokens)))
     with pytest.raises(SystemExit) as e:
         node(timeout_min=1)
     assert e.value.code == 1 and "timeout" in last_error()
     assert clock == [15] * 5  # polled until past 60 s, never reaching the 6th answer
     assert [r.url.path for r in seen][-1] == f"{JOB}/cancel"
-    ft.cost.add.assert_called_once_with("token_factory", LLAMA, trained_tokens=1000)
+    ft.cost.add.assert_called_once_with("token_factory", LLAMA, trained_tokens=billed)
 
 
 def test_sigterm_while_polling_cancels_the_job(node, tf_routes, monkeypatch):
@@ -192,14 +204,14 @@ def test_sigterm_while_polling_cancels_the_job(node, tf_routes, monkeypatch):
 @pytest.mark.parametrize("listed, found", [([job("running", suffix=SUFFIX)], True),
                                           ([job("cancelled", suffix=SUFFIX), job("running", suffix="other")], False)])
 def test_lost_create_response_finds_the_job_by_suffix(node, tf_routes, listed, found):
-    seen = tf_routes(ft, routes(create=httpx.Response(503), list={"data": listed}))
+    seen = tf_routes(ft, routes(create=httpx.Response(503), list=[{"data": []}, {"data": listed}]))
     if found:
         assert node()[0]["job"][2]["job_id"] == "ftjob-1"
     else:
         with pytest.raises(SystemExit):
             node()
         assert last_error().startswith("token_factory server 503")
-    assert [r.method for r in seen if r.url.path == "/v1/fine_tuning/jobs"] == ["POST", "GET"]  # create is never re-sent
+    assert len(posts(seen)) == 1  # create is never re-sent
 
 
 def test_transient_poll_failure_waits_for_the_next_poll(node, tf_routes, clock):
@@ -208,19 +220,58 @@ def test_transient_poll_failure_waits_for_the_next_poll(node, tf_routes, clock):
     assert [s for s in clock if s == 15] == [15, 15]  # the client's own backoff sleeps are shorter
 
 
-def test_estimate_over_the_node_budget_fails_before_any_call(node, tf_routes, monkeypatch):
+def test_estimate_over_the_node_budget_fails_before_anything_is_sent(node, tf_routes, monkeypatch):
     monkeypatch.setitem(PRICES["token_factory_finetune"], LLAMA, 1e-3)
     monkeypatch.setenv("ORCHAPOD_MAX_COST_USD", "0.05")
     seen = tf_routes(ft, routes())
     with pytest.raises(SystemExit):
         node()  # ~65 tokens × 2 epochs × $0.001
-    assert seen == [] and "ORCHAPOD_MAX_COST_USD" in last_error()
+    assert [r.method for r in seen] == ["GET"] and "ORCHAPOD_MAX_COST_USD" in last_error()  # only the R19 lookup
 
 
 def test_a_finished_job_is_not_cancelled_when_a_later_call_fails(node, tf_routes):
-    seen = tf_routes(ft, routes(get=job("succeeded", trained_tokens=4000), events=httpx.Response(401)))
+    seen = tf_routes(ft, routes(get=job("succeeded", trained_tokens=4000), checkpoints=httpx.Response(401)))
     with pytest.raises(SystemExit):
         node()
     assert last_error().startswith("token_factory auth 401")  # the real error stays the node's last ERROR line
     assert not any(r.url.path.endswith("/cancel") for r in seen)
+    ft.cost.add.assert_called_once_with("token_factory", LLAMA, trained_tokens=4000)
+
+
+@pytest.mark.parametrize("reply", [SystemExit(143), httpx.Response(200, content=b"<html>busy</html>"),
+                                   {"object": "fine_tuning.job", "status": "validating_files"}],
+                         ids=["sigterm-mid-post", "non-json-2xx", "no-id"])
+def test_a_job_whose_create_reply_was_lost_is_found_by_suffix_and_cancelled(node, tf_routes, reply):
+    seen = tf_routes(ft, routes(create=reply, list=[{"data": []}, {"data": [job("validating_files", suffix=SUFFIX)]}]))
+    with pytest.raises((SystemExit, ValueError)):
+        node()
+    assert len(posts(seen)) == 1 and (seen[-1].method, seen[-1].url.path) == ("POST", f"{JOB}/cancel")
+    ft.cost.add.assert_called_once_with("token_factory", LLAMA, trained_tokens=1000)
+
+
+@pytest.mark.parametrize("found, polls", [(job("running", suffix=SUFFIX, trained_steps=5, total_steps=10), [15, 15]),
+                                          (job("succeeded", suffix=SUFFIX, trained_tokens=4000), [])],
+                         ids=["running-resumes-polling", "succeeded-goes-to-outputs"])
+def test_retry_adopts_this_nodes_job_instead_of_paying_again(node, tf_routes, clock, found, polls):
+    seen = tf_routes(ft, routes(list={"data": [job("cancelled", suffix=SUFFIX), found]}))
+    outs, _ = node()
+    assert "POST" not in [r.method for r in seen]  # no upload, no second job
+    assert (outs["job"][2]["job_id"], outs["job"][2]["trained_tokens"], clock) == ("ftjob-1", 4000, polls)
+    if found["status"] == "succeeded":
+        ft.cost.add.assert_not_called()  # the attempt that saw it finish billed it
+    else:
+        ft.cost.add.assert_called_once_with("token_factory", LLAMA, trained_tokens=4000)
+
+
+def test_events_failing_never_fails_or_cancels_the_job(node, tf_routes):
+    seen = tf_routes(ft, routes(events=httpx.Response(401)))
+    assert node()[0]["job"][2]["status"] == "succeeded"
+    assert any("events" in c.args[0] for c in ft.log.warn.call_args_list)
+    assert not any(r.url.path.endswith("/cancel") for r in seen)
+
+
+def test_spend_past_the_node_budget_is_recorded_without_failing_a_finished_node(node, tf_routes):
+    tf_routes(ft, routes())
+    ft.cost.add.side_effect = BudgetExceeded("node spend passed ORCHAPOD_MAX_COST_USD")
+    assert node()[0]["job"][2]["trained_tokens"] == 4000  # outputs written; the next node boundary stops the run
     ft.cost.add.assert_called_once_with("token_factory", LLAMA, trained_tokens=4000)

@@ -391,7 +391,8 @@ class TFFinetuneInputs(BaseModel):
         default={}, description="Token Factory names verbatim (batch_size, learning_rate, lora_r, lora_alpha, lora_dropout, "
                                 "packing, context_length, warmup_ratio, weight_decay, max_grad_norm), merged over "
                                 "{lora: true, n_epochs}")
-    timeout_min: int = Field(default=60, ge=1, description="Then the job is cancelled and the node fails")
+    timeout_min: int = Field(default=60, ge=1, le=85, description="Then the job is cancelled and the node fails "
+                                                                 "(at most 85, under the executor's 90-min backstop)")
 
 class TFFinetuneOutputs(BaseModel):
     job: str           # {job_id, model, status, checkpoint_id, checkpoint_step, train_loss, valid_loss, trained_tokens}

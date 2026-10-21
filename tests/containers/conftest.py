@@ -79,7 +79,8 @@ def clock(monkeypatch):
 @pytest.fixture
 def tf_routes(monkeypatch):
     """tf_routes(module, routes) points module.TokenFactory at a fake Token Factory; returns the requests it saw.
-    routes: {(method, path): JSON for a 200 | an httpx.Response | a list of those, one per request (the last repeats)}."""
+    routes: {(method, path): JSON for a 200 | an httpx.Response | an exception to raise once the request is recorded |
+    a list of those, one per request (the last repeats)}."""
     from packages.providers.tokenfactory import TokenFactory
 
     def make(module, routes: dict) -> list[httpx.Request]:
@@ -90,6 +91,8 @@ def tf_routes(monkeypatch):
             answer = routes[(request.method, request.url.path)]
             if isinstance(answer, list):
                 answer = answer.pop(0) if len(answer) > 1 else answer[0]
+            if isinstance(answer, BaseException):
+                raise answer
             if isinstance(answer, httpx.Response):
                 return httpx.Response(answer.status_code, content=answer.content)
             return httpx.Response(200, json=answer)

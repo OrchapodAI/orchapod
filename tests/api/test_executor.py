@@ -706,35 +706,60 @@ async def test_a_second_cancel_cannot_interrupt_teardown(db, provider):
     assert (rows["a"].status, rows["a"].error) == (NodeStatus.FAILED, "cancelled")
 
 
-PENDING_BC = {"b": (NodeStatus.PENDING, None), "c": (NodeStatus.PENDING, None)}
-
-
-@pytest.mark.parametrize("statement, left", [
-    ("sum(run.cost_usd)", {"a": (NodeStatus.FAILED, "cancelled"), **PENDING_BC}),  # qa-w6: the budget check's read
-    ("UPDATE noderun", {"a": (NodeStatus.FAILED, "cancelled"), **PENDING_BC}),     # the flush that marks a running
-    ("INSERT INTO noderun", {}),  # the first commit: no row exists yet, as for a run cancelled before it started
-])
-async def test_a_cancel_that_lands_mid_statement_still_ends_the_run_cancelled(provider, tmp_path, statement, left):
-    """qa-w6 (SQLite, a cancel within ms of start): SQLAlchemy invalidates a connection whose statement a cancel interrupts,
-    or rolls the flush back, and the session then refuses to write until it is rolled back. The executor recorded the
-    cancel through it anyway: PendingRollbackError, the node left pending."""
+@pytest.fixture
+async def sqlite_file(tmp_path):
+    """An engine on a SQLite file, a connection per session as in dev and the stub e2e, set up as the API sets up its own; a
+    0.5 s busy timeout (5 s in the API) keeps a lock failure quick."""
     from sqlalchemy import event
     from sqlalchemy.ext.asyncio import create_async_engine
     from sqlmodel import SQLModel
+    from api import database
 
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'cancel.db'}")  # a connection per session, as in dev
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'api.db'}", connect_args={"timeout": 0.5})
+    event.listen(engine.sync_engine, "connect", database.sqlite_wal)
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
-    sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    yield engine
+    await engine.dispose()
+
+
+A_CANCELLED = {"a": (NodeStatus.FAILED, "cancelled"), "b": (NodeStatus.PENDING, None), "c": (NodeStatus.PENDING, None)}
+
+
+@pytest.mark.parametrize("statement, reading, left", [
+    ("sum(run.cost_usd)", False, A_CANCELLED),  # qa-w6: the budget check's read
+    ("sum(run.cost_usd)", True, A_CANCELLED),   # the same, once SQLite has run it and its row is being read
+    ("UPDATE noderun", False, A_CANCELLED),     # the flush that marks a running
+    ("INSERT INTO noderun", False, {}),         # the first commit: no row exists yet, as for a run cancelled before it started
+])
+async def test_a_cancel_that_lands_mid_statement_still_ends_the_run_cancelled(provider, sqlite_file, monkeypatch, statement,
+                                                                             reading, left):
+    """qa-w6 (SQLite, a cancel within ms of start). SQLAlchemy invalidates a connection whose statement a cancel interrupts,
+    or rolls the flush back, and the session refuses to write until it is rolled back: the executor recorded the cancel
+    anyway (PendingRollbackError, the node left pending). And a read cut off while its rows are fetched stays open (sqlite3
+    closes the connection only once the cursor is gone): in SQLite's default journal mode its lock failed every commit,
+    the executor's record of the cancel included, with "database is locked"; WAL lets a writer past readers."""
+    import aiosqlite
+    from sqlalchemy import event
+
+    sessions = async_sessionmaker(sqlite_file, class_=AsyncSession, expire_on_commit=False)
     async with sessions() as s:
         run = await seed(s)
-    reached = asyncio.Event()
+    armed, reached, fetchall = asyncio.Event(), asyncio.Event(), aiosqlite.Cursor.fetchall
 
     def before(conn, cursor, sql, *_):
         if statement in sql:
-            reached.set()
+            (armed if reading else reached).set()
 
-    event.listen(engine.sync_engine, "before_cursor_execute", before)
+    async def fetching(cursor):
+        if armed.is_set():  # SQLite has run the statement and holds its read open until the cursor ends
+            armed.clear()
+            reached.set()
+            await asyncio.Event().wait()
+        return await fetchall(cursor)
+
+    monkeypatch.setattr(aiosqlite.Cursor, "fetchall", fetching)
+    event.listen(sqlite_file.sync_engine, "before_cursor_execute", before)
     async with sessions() as db:
         task = asyncio.create_task(ex.run_workflow(run.id, db, AsyncMock(), 1.0))
         await asyncio.wait_for(reached.wait(), 5)
@@ -746,7 +771,6 @@ async def test_a_cancel_that_lands_mid_statement_still_ends_the_run_cancelled(pr
         assert (await s.get(Run, run.id)).status == RunStatus.CANCELLED
         rows = await s.scalars(select(NodeRun).where(NodeRun.run_id == run.id))
         assert {n.node_id: (n.status, n.error) for n in rows} == left
-    await engine.dispose()
 
 
 async def test_a_failing_setup_broadcast_still_fails_the_run(db, provider):

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlmodel import SQLModel
 
@@ -24,6 +25,20 @@ _pool_kwargs = (
 )
 
 engine = create_async_engine(DATABASE_URL, echo=False, **_pool_kwargs)
+
+
+def sqlite_wal(dbapi_connection, _record) -> None:
+    """SQLite (dev, tests, the stub e2e) in WAL mode, where readers never block a writer. A cancel that cuts off a read while
+    its rows are fetched leaves it open (sqlite3 closes the connection only once the cursor is gone), and in the default
+    journal mode its lock failed every commit for 5 s with "database is locked", the executor's record of the cancel
+    included (qa-w6)."""
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.close()
+
+
+if DATABASE_URL.startswith("sqlite"):
+    event.listen(engine.sync_engine, "connect", sqlite_wal)
 
 AsyncSessionLocal = async_sessionmaker(
     engine,

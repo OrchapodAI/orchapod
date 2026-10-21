@@ -170,3 +170,75 @@
 4. **The IAM token comes from the API's NEBIUS_IAM_TOKEN when that is set.** Its precedence over the CLI mirrors the contract's "CLI fallback"; a stale static token is the operator's to rotate.
 5. **/inference/deploy returns no cancel token,** so only the admin can cancel deploy runs (that route is off the demo path).
 6. **Live checks wait on the key:** the IAM CLI against Nebius, `endpoints.delete`, and a real job's wall time. The CLI was mocked with a shell script on PATH; Nebius was mocked at `_endpoints()`.
+
+---
+
+## Fix round 1 (Orchestrator review; all 8 items done)
+### Commits (tip f3a905f)
+| SHA | Items | What |
+| --- | --- | --- |
+| 410f6b5 | 2, 4 | The IAM token comes from the CLI first; stdout's last line must match platform's `TOKEN`; fixed errors, never the CLI's stderr |
+| b94cb62 | 3, 7, 8a | `endpoint_id` must be an id; a 4xx other than 404/429 ends the delete retries; a re-register supersedes; `_expire` guards a vanished artifact |
+| 886fac4 | all | docs(contracts): the round's lines, in their own commit |
+| f3a905f | 1, 5, 6 | A gpu attempt costs max(wall-time bill, node-reported) in either order; cost_json `seq`; rollback on a failed bill |
+
+### Per item
+1. **GPU time billed twice.**
+   - `budget.attempt_cost(metas)` = max(the executor's `wall_usd`, what the node reported).
+   - Both sides compute what they add as `attempt_cost(earlier + [new]) - attempt_cost(earlier)`, under one in-process lock (`budget.cost_lock`):
+     - the executor's bill (`_bill_gpu_time`) adds only what exceeds the node's reports so far;
+     - a node's cost_json (`internal._reconcile`) adds only what exceeds the bill.
+   - `meta.usd` = what each row added, so the summary equals Run.cost_usd; `meta.reported_usd` = the node's figure.
+   - **Decision 5 updated:** "either order" means the executor now also records its bill when the node reported first, adding only the excess.
+   - Hardening added in the same path: a node's figure is clamped at 0, and a node meta's `billed_by`, `wall_usd` and `reported_usd` are dropped, so a gpu Job cannot lower its cost or pose as the bill.
+   - Tests (FakeProvider now registers through the real /internal/artifact):
+     - late flushes after the bill: $1.00 → total stays $2.25; then $3.00, a re-send, and a larger re-send → $3.50;
+     - the cancel;
+     - the node reporting first: $0.40, then the bill adds $1.85;
+     - a retry, for a new attempt;
+     - a race: the node's POST lands between the executor's read and its insert. The test uses per-request sessions as in production; it fails without the lock.
+   - The unreachable "second bill per attempt" guard was deleted: billing runs once per attempt by construction.
+2. **CLI stderr.**
+   - Node errors are fixed text: `no Nebius IAM token: nebius iam get-access-token exited <rc>`, `… printed no token`, `… took over 10 s`, `… the API host has no nebius CLI, and NEBIUS_IAM_TOKEN is blank or malformed`.
+   - The token is stdout's last line, required to fullmatch platform's `TOKEN`. On NebiusHackathon it is imported from packages/providers/nebius.py; a one-line fallback copy is marked `ponytail:` for deletion once the merge brings platform-w5 in.
+   - The test's fake CLI prints a warning line before the token, and puts a profile and tenant in stderr.
+3. **`endpoint_id` in the REST path.**
+   - /internal/ttl requires `^[a-z0-9][a-z0-9-]{0,62}$` (422; tested with `../jobs/x`, an empty id, upper case, a leading hyphen, 64 characters, and a trailing newline).
+   - `_arm`, which both entry points use, refuses a stored id that does not match.
+   - A delete refused with a 4xx other than 404 (done) or 429 (tried again) stops the retries. The next API start tries again.
+4. **CLI first.** A fresh CLI token beats a static NEBIUS_IAM_TOKEN; the static one is used only on a host without the CLI.
+5. **`seq`.**
+   - The SDK sends `{"usd": increase, "seq": n}`.
+   - A registration that failed goes again under the same seq with whatever was spent since.
+   - The API counts a seq once, at its largest, and stores no re-send of a seq it has already counted.
+6. **`_bill_gpu_time`** rolls back on failure (suppressed, so the node's own outcome stands).
+7. **Re-register.** Earlier live rows with the same `endpoint_id` get `superseded_at` and their timer is cancelled. `resume_ttls` and /compare's pair rule ignore superseded rows.
+8. **Nits.**
+   - `_expire` tolerates a vanished artifact.
+   - **cost_json rows are not consolidated:** one row per registration, because reconciliation needs each seq's `reported_usd`, and the summary sums `meta.usd`.
+
+### Proof
+- **`make check`** on f3a905f: exit 0. `All checks passed!`, `734 passed`, web `pass 27`, `SKIP stub e2e`.
+- **Dry merge** with NebiusHackathon @ 90d34a6 (platform-w5, ml-w5, qa-w4 and devrel-w5 merged).
+  - Still one conflict, `apps/api/routes/internal.py`; take this branch's side.
+  - NebiusHackathon's only edit there since 23b0a57 is 18fcc8e, which this branch already contains.
+  - Merged tree: ruff clean, `825 passed, 1 skipped`. Only the `.git`-dependent hosting test is deselected; qa-w4's drills pass.
+- **Mutations this round: 21 of 21 caught**, all clean failures.
+
+  | Area | Count | Mutations |
+  | --- | --- | --- |
+  | IAM | 3 | whole stdout as the token, stderr in the error, static token first |
+  | TTL | 8 | no id pattern, `_arm` sends any id, 4xx retried, 429 not retried, no supersede, superseded timer kept, /compare trusts superseded, sweep re-arms superseded |
+  | Reconciliation | 10 | late report adds in full, no de-dup, seq counted every time, bill plus report, bill ignores an earlier report, negative report, node posing as the bill, no lock (race test), SDK never records a seq, SDK seq never advances |
+
+- **gitleaks** 23b0a57..HEAD: no leaks.
+
+### Contract lines changed this round (886fac4)
+- Node SDK: cost_json metadata carries `seq`; a seq counts once, at its largest.
+- Config: the IAM token comes from the CLI first; it is stdout's last line matching TOKEN; a static token only without the CLI; fixed public errors.
+- Run state machine, the billing bullet (:245), now the late-cost_json rule: max(wall bill, node-reported), each side adds only the excess, `meta.usd` / `meta.reported_usd`, one lock.
+- /internal/ttl: the `endpoint_id` pattern, the 4xx stop rule, and superseded rows.
+
+### Notes
+- After the merge, delete run_workflow.py's `TOKEN` fallback; the import from packages/providers/nebius.py is then always found.
+- **Still open, with a `ponytail:` note:** a job that never got capacity is billed its provision-to-teardown wait (over, never under). Skipping that bill would need platform's `pod.error` code to be parsed.

@@ -247,11 +247,12 @@ def test_review_enforces_the_knowledge_constraints(monkeypatch):
              base_model_ref={**tf_ref, "base_url": "https://attacker.example/v1"},
              tuned_model_ref={**tf_ref, "api_key_env": "ORCHAPOD_ENDPOINT_TOKEN", "base_url": "https://e.example/v1"}),
         node("fair", "judge-eval", test_data="r2://b/test", base_model_ref=tf_ref, tuned_model_ref="meta-llama/x"),
+        node("inline", "tf-deploy", job={"job_id": "j", "model": ["not", "a", "string"]}),
     ]}
 
     errors, warnings, _ = planner.review(plan)
 
-    assert [e.split(":")[0] for e in errors] == ["nemo", "dep_small", "judge", "judge", "judge"]
+    assert [e.split(":")[0] for e in errors] == ["nemo", "dep_small", "judge", "judge", "judge", "inline"]
     assert errors[0].startswith("nemo: Token Factory does not fine-tune nvidia/Llama-3.1-Nemotron-Nano-8B-v1")
     assert errors[1] == ("dep_small: Token Factory has no per-token LoRA deploy for meta-llama/Llama-3.2-3B-Instruct: "
                          "serve the tf-finetune lora_adapter with vllm-serve")

@@ -219,7 +219,7 @@ def _constraint_problems(n: PlanNode, nodes: dict[str, PlanNode]) -> list[str]:
         m = REF.fullmatch(job.strip()) if isinstance(job, str) else None
         source = nodes.get(m[2]) if m and m[2] else None
         base = job.get("model") if isinstance(job, dict) else _values(source.model_dump()).get("model") if source else None
-        if base and base not in SERVERLESS_LORA_BASES:
+        if base and str(base) not in SERVERLESS_LORA_BASES:
             problems.append(f"Token Factory has no per-token LoRA deploy for {base}: "
                             "serve the tf-finetune lora_adapter with vllm-serve")
     return problems

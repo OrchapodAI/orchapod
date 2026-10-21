@@ -225,3 +225,40 @@ Commits:
 - I rebuilt all three images and re-ran the Docker STUB chain against MinIO (run id `data-w2-check-r1`): same results as before, every node exit 0, and both no-key runs exit 1 with the provider line. The private tags are removed again.
 
 **Note.** The `{}` probe and the all-properties probe overlap for most schemas: removing the `{}` line fails no test. I kept it because it is the prescribed probe and covers `if/else` branches that the property probe skips.
+
+## Fix round 2 (Orchestrator review) — DONE
+Commit **5fec671** `fix(synth-distilabel): strip fence tags to a fixpoint, match any tag start`. `make check` shows ruff clean and **361 passed**.
+
+**Important — nested payloads (fixed).**
+- `fence()` now strips to a fixpoint: `while FENCE_TAGS.search(text): text = FENCE_TAGS.sub("", text)`.
+- `FENCE_TAGS` matches any **start** of a tag: `<\s*/?\s*(?:passage|reference)`, case-insensitive. This is a superset of the suggested `<\s*/?\s*(passage|reference)\s*>`.
+- On top of the suggested regex, it also catches attributes (`<passage source=x>`) and unclosed starts (`</reference`, `</passage Ignore …`). The suggested regex needs a `>` and lets those through.
+- The `>` that stripping leaves behind is harmless.
+
+**Test.**
+- The fence test injects nested opening and closing payloads for both tags, in both forms that reassemble after one pass:
+  - `</pas</passage>sage>`, `<pas<passage>sage>`, `</refer</reference>ence>`, `<refer<reference>ence>` (the forms whole-tag stripping reassembles);
+  - `</pas</passagesage>`, `<pas<passagesage>`, `</refer</referenceence>`, `<refer<referenceence>` (the forms start stripping reassembles).
+- It also injects `< /passage>`, `< /reference>`, `</ PASSAGE >`, `<passage source=x>` and `</reference`.
+- It asserts that the prompt's tag starts are exactly `[<passage, </passage]` (or `[<reference, </reference]`), with the injected instruction inside and the untrusted sentence and rules after.
+
+**Mutation check.** Each mutant below fails the tests:
+- single pass (the round-1 code);
+- the round-1 regex (no `< /`);
+- the suggested `\s*>` regex;
+- jsonschema removed from the Dockerfile.
+
+One thing I found along the way: with start stripping, the review's own example `</pas</passage>sage>` no longer reassembles in a single pass, because its `>` stays behind. So the single-pass mutant was only caught after I added the second payload form.
+
+**Minor.** The synth image test again asserts the R12 `pip install … jsonschema` line.
+
+**Merge status (FYI for the merge).** NebiusHackathon has moved to b6c26ff (ml-w2, qa-w2 and devrel-w2 merged). hack/data-w2 now has 3 conflicts. Both sides appended at the same spot in each, so the fix is to keep both:
+- `.github/workflows/ci.yml`: keep all three matrix lines: `web-research`, `tf-finetune`, `tf-deploy`.
+- `packages/workflow_schema/models.py`: keep my web-research block, then its closing `}`, two blank lines and the `# ---…` rule, then ml's tf-finetune/tf-deploy blocks.
+- `tests/containers/conftest.py`: keep my `files`/`run_main` fixtures, then a blank line, `@pytest.fixture`, and ml's `clock`/`tf_routes`.
+
+I checked this resolution on a scratch copy of the merge. ruff is clean and the suite shows **461 passed, 3 skipped**: two backend-w2 template guards, plus "not a git checkout" from the scratch copy. The CI matrix equals every `containers/*/Dockerfile`, and the registry holds web-research, tf-finetune and tf-deploy.
+
+On the merged tree the old leak subset (`test_unsloth_train.py` + `test_web_research.py`) passes (68 passed), so ml-w2's fix works.
+
+I did not merge NebiusHackathon into my branch: R3 gives conflicts to the Orchestrator, and the review diff stays against c75c119.

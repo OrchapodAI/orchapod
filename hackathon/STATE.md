@@ -54,13 +54,13 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D1 spike 2: Nemotron 3 Super plan for intent #2 — test `response_format` json_schema (TF's OpenAPI says only json_object|text; its docs page documents json_schema; fallback json_object + schema in prompt + jsonschema validation) and the thinking switch (reasoning_effort vs chat_template_kwargs) — BLOCKED(NEBIUS_API_KEY)
 - [x] P0 D1 run/node state machine for long-polling nodes: cancel, timeouts, retry-node — DONE (bc5c59f)
 - [x] P0 D1 SDK: cost_json + metrics_json, progress, internal secret — DONE (bc5c59f)
-- [ ] P0 D2 Orchapod Agent planner on Nemotron (Claude out of agent/workflow_builder.py) + POST /agent/plan — TODO
+- [x] P0 D2 Orchapod Agent planner on Nemotron (Claude out of agent/workflow_builder.py) + POST /agent/plan — DONE (backend-w2)
 - [ ] P0 D2 executor forwards only Nebius/Tavily/HF keys to containers (no ANTHROPIC/OPENAI); default provider_pref not vastai — TODO
 - [ ] P1 D3 checkpoint-resume never fires (looks in a fresh NodeRun's empty outputs); drop the 19 debug log.warning lines in the executor — TODO
 - [ ] P0 D2 remote logs: public ORCHAPOD_CONTROL_URL, WebSocket fan-out verified — TODO
 - [x] P0 D2 lineage + cost roll-up; GET /runs/{id}/summary — DONE (bc5c59f)
-- [ ] P0 D3 budget guard: per-run, per-day, anonymous scale, ORCHAPOD_KILL_SWITCH — TODO
-- [ ] P0 D3 agent validate → run → monitor → report; POST /agent/run, GET /agent/runs/{id}/report — TODO
+- [x] P0 D3 budget guard: per-run, per-day, anonymous scale, ORCHAPOD_KILL_SWITCH — DONE (backend-w2)
+- [x] P0 D3 agent validate → run → monitor → report; POST /agent/run, GET /agent/runs/{id}/report — DONE (backend-w2)
 - [ ] P0 D4 compare playground API; templates + golden-run fixture — TODO
 - [ ] P1 D5 Serverless Job runtime · P0 D6 public-demo hardening (anon read, rate limits, CORS, health) — TODO
 ### frontend

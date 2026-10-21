@@ -82,7 +82,7 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
       const run = await api.runs.cancel(id);
       setView((v) => v && { ...v, run });
     } catch (err) {
-      toastError("Couldn't cancel the run")(err); // a 403: this tab has no valid cancel token for the run
+      toastError("Couldn't cancel the run")(err); // a 403 (no valid cancel token in this tab) reads as one sentence
     } finally {
       setCancelling(false);
     }

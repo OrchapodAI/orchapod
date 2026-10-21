@@ -86,9 +86,16 @@ def write_output(
     Returns the URI: r2://${ORCHAPOD_R2_BUCKET}/runs/{run_id}/{node_id}/{name}
 
     The control plane records it in NodeRun.outputs, so `${{ nodes.<id>.outputs.<name> }}` resolves to it.
+    The name `logs` is reserved: the SDK writes it at exit.
     """
     if not _NAME.fullmatch(name):
         raise ValueError(f"output name {name!r} must match ^[a-z][a-z0-9_]*$")
+    if name == "logs":
+        raise ValueError("output name 'logs' is reserved: the SDK writes the node's log lines under it at exit")
+    return _write(name, local_path, kind, metadata)
+
+
+def _write(name: str, local_path: Path | str, kind: ArtifactKind, metadata: dict | None = None) -> str:
     r2_key = f"runs/{os.environ['ORCHAPOD_RUN_ID']}/{os.environ['ORCHAPOD_NODE_ID']}/{name}"
     r2_uri = f"r2://{_bucket()}/{r2_key}"
 
@@ -162,7 +169,7 @@ def _excepthook(exc_type, exc, tb) -> None:
 
 
 def _at_exit() -> None:
-    """cost_json first (money), then `logs`: every line the node logged, as JSONL {ts, level, message}."""
+    """cost_json first (money), then `logs`: the last lines the node logged (log.lines), as JSONL {ts, level, message}."""
     summary = cost.summary()
     path = local_path("cost_json")
     path.write_text(json.dumps(summary))
@@ -173,7 +180,7 @@ def _at_exit() -> None:
     path = local_path("logs")
     path.write_text("".join(json.dumps(line) + "\n" for line in log.lines))
     try:
-        write_output("logs", path, "log")
+        _write("logs", path, "log")
     except Exception as e:
         log.warn(f"logs not registered: {e}")  # not ERROR: the node's last ERROR line is its error
 

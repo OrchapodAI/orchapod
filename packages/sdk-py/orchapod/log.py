@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import urllib.request
+from collections import deque
 from datetime import datetime, timezone
 
 
@@ -30,8 +31,9 @@ def post(path: str, payload: dict, timeout: float = 3) -> None:
         pass
 
 
-# Every line this node logged; io writes them as the `logs` artifact at exit, so a finished run keeps its logs.
-lines: list[dict] = []
+# The last lines this node logged; io writes them as the `logs` artifact at exit, so a finished run keeps its logs.
+# Bounded: an hour of progress lines stays a small file.
+lines: deque[dict] = deque(maxlen=5000)
 
 
 def _emit(level: str, message: str, path: str = "/internal/log", payload: dict | None = None) -> None:

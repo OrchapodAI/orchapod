@@ -30,7 +30,7 @@ Every team wants a cheaper, faster, private specialist model. Today that takes a
 
 - **A cascade of NVIDIA models.** Nemotron 3 Ultra judges, Nemotron 3 Super teaches and plans, Nemotron 3.5 Lightning does the cheap calls, and a small model serves. The Nemotron models share one OpenAI-compatible endpoint and one key.
 - **It makes models, not only calls them.** Nemotron teaches and judges new specialist models, and every one is measured against its base.
-- **An evaluation you can trust.** Base and tuned models get identical prompts and decoding. A Nemotron Ultra judge sees the question, the reference answer and the source passage, and scores the two answers in both orders; a win counts only if it holds in both. Fine-tuning moves style, format and vocabulary more than it injects facts, so answers are short and sourced.
+- **An evaluation you can trust.** Base and tuned models get identical prompts and decoding. A Nemotron Ultra judge sees the question, the reference answer and the source passage, and scores the two answers in both orders; a win counts only if it holds in both. Fine-tuning moves style, format and vocabulary more than it injects facts, so answers are short and sourced. TODO(D8): no win rate has been measured yet; it and the judge's agreement between the two orders come from the golden run.
 - **Cost is a first-class output.** Every billed call (tokens, Tavily credits, GPU hours) is metered per node, estimated before a run and capped during it.
 
 ## How it works
@@ -67,7 +67,7 @@ Under the hood:
 
 ### Nemotron on Nebius Token Factory
 
-A run planned from a sentence starts with a Nemotron call (the plan), a run started from a template skips it, and every run ends with one (the report); the nodes between them make their own. All calls go to `https://api.tokenfactory.nebius.com/v1` (OpenAI-compatible, key `NEBIUS_API_KEY`) through one client that retries, prices every call from a single table, refuses to send our key to any other host and honours `STUB=1`.
+A run planned from a sentence starts with a Nemotron call (the plan), a run started from a template skips it, and a finished run ends with one (the report, which Nemotron 3.5 Lightning writes, or a deterministic template when `STUB=1` is set or that call fails); the nodes between them make their own. All calls go to `https://api.tokenfactory.nebius.com/v1` (OpenAI-compatible, key `NEBIUS_API_KEY`) through one client that retries, prices every call from a single table, refuses to send our key to any other host and honours `STUB=1`.
 
 | Role | Model id | Where |
 | --- | --- | --- |
@@ -111,7 +111,7 @@ pip install -r requirements-dev.txt -r apps/api/requirements.txt
 make check                      # ruff + unit tests + web tests; no keys, no spend
 ```
 
-On pnpm 9, run `make check PNPM=pnpm`. `make check E2E=1` adds the stub end-to-end run of the synthetic-data intent through the API; it needs Docker and `make up`, rebuilds and retags the local `orchapod/<node>:dev` images, and is meant for the integration branch, not for every edit. TODO(D8): the stub e2e is not verified end to end yet.
+On pnpm 9, run `make check PNPM=pnpm`. `make check E2E=1` adds `scripts/e2e_demo.py --stub`, an end-to-end run of the synthetic-data intent through the API (its own API with `STUB=1`, a throwaway database and no key: $0); it needs Docker and `make up`, rebuilds and retags the local `orchapod/<node>:dev` images, and is meant for the integration branch, not for every edit. TODO(D8): record one green run on the integration branch.
 
 Then create the artifact bucket once and start the API and the web app (two terminals):
 
@@ -142,12 +142,12 @@ Open http://localhost:3000. `make down` stops Postgres, Redis and MinIO. `pnpm t
 - **Hosted.** TODO(D8): the URL of the hosted app, which is to ship a real, pre-completed golden run (artifacts, logs, verdicts) and a guarded "Run it yourself" button that launches the pipeline at reduced scale under a per-run spend cap. Neither the app nor the golden run exists yet.
 - **Locally, from the Agent.** Open http://localhost:3000/agent and paste one of the three intents above, or pick a template. Read the plan card: nodes, models, estimated cost and minutes, warnings. Run stays disabled while the plan has errors, and Edit opens the plan on the canvas. Press Run to follow the live run view (node timeline, logs, cost meter). When the run ends, the report card shows what ran, the metrics, the cost against the estimate and how to use the result.
 - **Run page.** `/runs/{id}` (also embedded on `/agent`) shows per-node status, cost and errors from `GET /runs/{id}/summary`, updates the cost meter live, shows a failed node's error verbatim and offers **Retry node** while the run is failed or cancelled.
-- **Headless.** `make agent-e2e INTENT="Create synthetic data of movie likes, shares and subscribes."` runs one intent through the Agent, capped at $3. `make e2e` runs the real golden pipeline under the same cap, and `make demo` seeds the golden run for the hosted app. TODO(D8): the scripts behind these three targets are still being written.
-- **Without keys.** Start the API with `STUB=1` to run the same flow on deterministic stubs: no network beyond your local stack, and $0. TODO(D8): the stub e2e is not verified end to end yet.
+- **Headless.** `make agent-e2e INTENT="Create synthetic data of movie likes, shares and subscribes."` runs one intent through the Agent, capped at $3. `make e2e` runs the real golden pipeline under the same cap, and `make demo` seeds the golden run for the hosted app. TODO(D8): `scripts/e2e_demo.py` has only `--stub` so far, so `make e2e` fails until its real run is written, and the scripts behind `make agent-e2e` and `make demo` are still being written.
+- **Without keys.** Start the API with `STUB=1` to run the same flow on deterministic stubs: no network beyond your local stack, and $0. `make check E2E=1` does this for the synthetic-data intent and checks the dataset it downloads (see Setup).
 
 ### Results
 
-TODO(D8): golden run id, wall time and cost; base-vs-tuned win rate and judge agreement over N held-out questions; one judged example; screenshots of the plan card, run view, eval view and playground; the video link.
+TODO(D8): golden run id, wall time and cost; base-vs-tuned win rate and judge agreement over N held-out questions; one judged example; screenshots of the plan card, run view, eval view and playground (the full list is in `docs/video-script.md`); the video link.
 
 ## Costs and caps
 
@@ -161,7 +161,7 @@ TODO(D8): golden run id, wall time and cost; base-vs-tuned win rate and judge ag
 | Kill switch | off | `ORCHAPOD_KILL_SWITCH=1` |
 | Anonymous visitors | caps × 0.1 | `ORCHAPOD_ANON_SCALE` |
 
-The guard checks the estimate when a plan is validated (an estimate above the remaining budget is a plan error), at start and retry (HTTP 402), at every node boundary, and inside each node, where `ORCHAPOD_MAX_COST_USD` aborts the node once spend passes it. A model with no price in the table fails before the request is sent.
+The guard checks the estimate when a plan is validated (an estimate above the remaining budget is a plan error), at start and retry (HTTP 402), at every node boundary, and inside each node, where `ORCHAPOD_MAX_COST_USD` aborts the node once spend passes it. A model with no price in the table fails before the request is sent. TODO(D8): no real run has hit a cap yet; record one.
 
 | Item | Price (2026-10-20) |
 | --- | --- |
@@ -172,7 +172,7 @@ The guard checks the estimate when a plan is validated (an estimate above the re
 | `gpu-h100-sxm`, per hour | $4.50 |
 | `gpu-l40s-a`, per hour | $1.82 |
 
-These are design budgets, not measurements: a Lane A run under $2 and a Lane B run of about $2.8 (at most 25 minutes of H100 plus 30 minutes of L40S). TODO(D8): measured time and cost per run, and the Token Factory fine-tuning price per trained token (from spike 1).
+These are design budgets, not measurements: a Lane A run under $2 and a Lane B run of about $2.8 (at most 25 minutes of H100 plus 30 minutes of L40S). TODO(D8): measured time and cost per run, the Token Factory fine-tuning price per trained token (from spike 1), and the `gpu-l40s-a` rate, which needs re-checking against nebius.com/prices (the table uses $1.82).
 
 ## What changed during the submission period
 
@@ -181,7 +181,7 @@ The submission period is Aug 26 – Oct 30, 2026. Orchapod predates it: its git 
 During the period (the dated list is [CHANGELOG.md](CHANGELOG.md)):
 
 - Oct 2–8: first Nebius × NVIDIA integration: a Token Factory service, a Nebius provider, the Nemotron 3 Super teacher node (`synth-distilabel`), Token Factory model ids verified against the live catalog, and the executor fixes that let a CPU workflow run end to end.
-- Oct 20: repo clean-up; `make up` and `make check` (TODO(D8): `make e2e`, `make agent-e2e` and `make demo` are in the Makefile, but their scripts are not written yet); a green `make check` with CI running lint and unit tests on every push; interface contracts v1 ([docs/contracts.md](docs/contracts.md)) and the Agent's knowledge base ([docs/agent_knowledge.md](docs/agent_knowledge.md)).
+- Oct 20: repo clean-up; `make up` and `make check` (TODO(D8): `make e2e`, `make agent-e2e` and `make demo` are in the Makefile; `scripts/e2e_demo.py` has only `--stub` so far, and the other scripts are still being written); a green `make check` with CI running lint and unit tests on every push; interface contracts v1 ([docs/contracts.md](docs/contracts.md)) and the Agent's knowledge base ([docs/agent_knowledge.md](docs/agent_knowledge.md)).
 - TODO(D8): replace this list with the final CHANGELOG entries (Tavily research, grounded and structured synthetic data, Token Factory fine-tuning and deploy, Nebius Serverless, judge-eval, the Agent, the budget guard).
 
 ## License

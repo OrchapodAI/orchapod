@@ -99,3 +99,65 @@ The diff is 7 files, +149/−21: `containers/vllm-serve/run.py` +55, its tests +
   - A create that fails with `server` or `bad_output`, or is cut by SIGTERM, is found by name in `finally` and deleted.
   - Spend counts from just before the create. The pre-create check prices `(keep_alive_min + 15)/60` h.
   - Source: ml-w5.
+
+## Fix round 1 (46469f8 docs/contracts, ff312a2 code + tests)
+This round supersedes these earlier statements:
+- Item 1's "`clear()` calls `endpoints.find(name)`". The pre-create check is now one `endpoints.list()` scan.
+- Open question 2 (the 45 s on every create). Fixed: the normal path makes one scan.
+- Open question 1 (Lane B). Ruled: Lane B plans set `keep_alive_min` 25 and R14 is amended at merge, so the default is unchanged.
+
+**Important 1: one scan, not find().**
+- `listed(eps, name)` is a `def` with a docstring: `next((e for e in eps.list() if e["name"] == name), None)`.
+- `clear()` uses it for the first look (`old = listed(eps, name)`) and for the wait loop (`while listed(eps, name):`). A failed scan raises a ProviderError, and the node exits 1 with it:
+  - an auth failure surfaces at once instead of after 45 s;
+  - an outage in the wait loop is no longer read as a free name.
+- `eps.find(name)` stays only in `finally`, for the lost create.
+- Optional part taken: a 409 on the create counts like `server`/`bad_output` (`sent = … or e.status == 409`), so `finally` finds and deletes whatever holds the name. The other refusals (400, 401, 402, 429) still look nothing up.
+- Contract line 223 now says "one `endpoints.list()` scan".
+
+**Minors.**
+2. **SIGTERM in `finally`.** Its first line is now `signal.signal(signal.SIGTERM, signal.SIG_IGN)`, so a cancel during the lost-create lookup cannot abort the delete; docker's 30 s still bounds it. The tests patch `vs.signal` with a mock that records into the fake's ordered `ops`, so pytest's own handler is untouched. The lost-create test pins the order: `list, create, ignore SIGTERM, find, delete`.
+3. **Failed leftover delete.** It now ends in `fail(f"could not delete endpoint {old['id']} ({name}): {e}; delete it in the Nebius console")`. Tested with a 503 on the delete: exit 1, that exact line, no create.
+4. **Contract overclaims.**
+   - "so the create cannot 409" is dropped.
+   - "a registered one still expires on its old timer" is dropped from the contract and from `clear()`'s docstring. It holds only once backend-w5's delete-by-id at expiry merges. Never-adopt rests on get() showing no spec.
+   - The errors line now reads: every endpoint whose id the node knows is deleted or registered; the one that may outlive the node without an expiry is a lost create that find misses, which an ERROR line names for the console.
+5. **No token in the logs.** `assert TOKEN not in str(vs.log.mock_calls)` is now in the happy-path test and the four lost-create cases.
+
+**Proof.**
+- Red first: with only `import signal` added, the updated tests gave `17 failed, 19 passed`.
+- `python -m pytest tests/containers/test_vllm_serve.py tests/containers/test_judge_eval.py -q` → `67 passed`. vllm-serve has 36 tests (31 before this round). New tests:
+  - the normal path makes exactly `[list, create, ignore SIGTERM]`;
+  - failed scans (auth; an outage while waiting);
+  - a failed leftover delete;
+  - 409 in the lost-create cases.
+- `make check` → exit 0: ruff `All checks passed!`, `759 passed, 2 warnings`, web `pass 27 fail 0`, `SKIP stub e2e`.
+- Mutation check: I broke one rule at a time and restored the file each time (`cmp` IDENTICAL). A no-op control edit passes all 36 tests.
+
+  | Rule broken | Result |
+  | --- | --- |
+  | pre-create look by find() | 17 failed |
+  | wait loop by find() | 5 failed |
+  | failed leftover delete not fatal | 1 failed |
+  | 409 not looked up | 1 failed |
+  | SIGTERM not ignored in `finally` | 13 failed |
+  | SIGTERM ignored only after the lookup | 13 failed |
+
+  The earlier round's eight rules all still fail a test:
+
+  | Rule broken | Result |
+  | --- | --- |
+  | no pre-create scan | 17 failed |
+  | refused create looked up | 4 failed |
+  | no `finally` find | 5 failed |
+  | DELETING leftover deleted again | 1 failed |
+  | name at INFO | 1 failed |
+  | clock from before the cleanup | 3 failed |
+  | TTL timeout 3 s | 1 failed |
+  | budget without the wait | 1 failed |
+
+- **Real client, not committed.** I ran a one-off test of the node against the real `NebiusServerless` over an `httpx.MockTransport` Nebius (`2 passed`).
+  - Normal path with a 504 create: GET (one scan), POST, GET (find), then DELETE `aiendpoint-lost`. Before this round the scan alone was 3 GETs.
+  - With a leftover: GET, DELETE `aiendpoint-old`, GET, POST, GET, DELETE `aiendpoint-lost`.
+  - The first attempt failed only because the fixture's signal mock records into `eps.ops`, which the real client lacks. With that attribute added, both cases passed. The file was then deleted.
+- Cost $0. No Nebius or cloud call, and no images built.

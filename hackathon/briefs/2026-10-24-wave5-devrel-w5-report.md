@@ -112,3 +112,44 @@ Diff: 5 files, +107 −66. docs/feedback.md is unchanged (see Open questions 3).
   - the node table's nodes and runtimes equal the visible `NODE_REGISTRY` rows;
   - "$1.82" is stale in every submission doc.
 - DECISION 2026-10-21: the docs never give `--strict` as a command (qa-w5 deleted the flag). "Strict" means: a failed intent, or a canonical plan naming a missing node, fails `make check E2E=1`. The intent #3 CPU result is always stated as within noise (f16 0.78 vs q4_k_m 0.84 at n = 50), never as q4 beating f16. — devrel-w5
+
+## Fix round 1 (Orchestrator review, 2026-10-21)
+**Commits:** fc8c6ac test(docs): three honesty guards; fa42b75 docs: README, devpost and video script. Both are on `hack/devrel-w5` and not pushed. The branch merges cleanly into NebiusHackathon 2d1891c.
+
+**Proof**
+- `pytest tests/docs -q`: `28 passed`, 25 before the round plus the 3 new guards.
+- `make check` on fa42b75: exit 0, ruff `All checks passed!`, `705 passed, 2 warnings`, web `pass 27, fail 0`, `SKIP stub e2e`.
+- Mutation check. I applied three throwaway edits at once and restored them with `git checkout`; the restored tree passes 28. Each edit failed exactly its own guard (`3 failed, 25 passed`):
+  - README intent #1's `vllm-serve` changed to `tf-deploy` → `test_each_intent_row_shows_its_templates_node_chain`;
+  - `judge-eval` dropped from the maths image list → `test_the_image_lists_are_the_templates_node_types`;
+  - devpost's "within noise" changed to "so q4_k_m beats f16" → `test_the_cpu_exact_match_is_called_noise_wherever_it_appears`.
+
+**Important**
+1. **README:52 split.** Now: "seeded train / eval / test split stratified by source URL, so each source's rows spread across the splits".
+   - **Deviation.** The requested "(each source appears in every split)" is not true for small sources. data-prep's own docstring (containers/data-prep/run.py:194-195) says "a source needs about 1/share rows to reach eval and test", and one-row sources stay in train. The LOG CORRECTION of 2026-10-21T02:12Z retracted the same wording.
+   - **For the Orchestrator.** CHANGELOG.md (6fe1182) now carries that exact parenthetical. I do not own CHANGELOG. Suggest "(a source with enough rows appears in every split)", or drop the parenthetical.
+2. **devpost.md:38.** Lightning "writes the run report and can filter data quality … (opt-in `quality_filter`; no template enables it yet)". I checked: no `apps/api/agent/templates/*.json` sets it, and the default is False (models.py:88).
+
+**Minors**
+1. **Endpoint expiry.** TODO(D8) added to:
+   - README's caps table ("deletion at expiry is not wired to Nebius yet, so delete a live endpoint by hand; an L40S left up costs $1.55/h");
+   - video-script.md shot 6 ("delete it by hand in the console after the take");
+   - the Recording section ("until backend-w5 lands … the recorder deletes it by hand … once shots 5 and 6 are taken").
+2. **"Side by side" hedged.** README:25 (intents table) and :56 (node table) now say "(TODO(D8): untested)".
+3. **devpost.md:47.** Now "An earlier run on the same Mac had exposed … the evaluation image now drops those kernels, and the timed run used it".
+4. **"a busy host"** added to README:163 and devpost:47.
+5. **"secret-looking inputs never stored"** at README:202 and devpost:73.
+6. **The three guards** (Proof above). The image-list guard reads only the "Node images" paragraph.
+   - A helper `_templates()` now feeds the title, chain and image-list tests.
+   - The noise guard covers README, devpost and feedback.
+7. **Setup.**
+   - Terminal 1 starts with `. .venv/bin/activate`.
+   - README:121 gives Linux users one line: "there, run the app below with `STUB=1` instead (TODO(D8): not yet tried on Linux)". The uvicorn line's `--host 0.0.0.0` note already follows.
+   - This is unverified: the D7 fresh-clone test on the Ubuntu VM is the first Linux run.
+8. **ui-smoke.** "5 of 5 on f43fdd0" is kept as the dated record; nothing new was added.
+9. **Polish.**
+   - README:10 now names "the Nebius and Tavily keys".
+   - README:85 reads "no other model provider's key".
+   - README:97 adds "(TODO(D8): only MinIO so far)".
+   - devpost:39 adds "No fine-tune has run yet: the price per trained token is unset until spike 1, and the client refuses to start an unpriced job". This is `PRICES["token_factory_finetune"]` = {} and tokenfactory.py:154-156. I added the same sentence to README's Lane A TODO, because a user with keys would hit that refusal.
+   - devpost:62 now reads "TODO(G3) … goes public at the freeze; TODO(D8) then check it logged out".

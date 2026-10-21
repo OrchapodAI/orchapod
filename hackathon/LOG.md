@@ -306,3 +306,4 @@ worktrees:
   - Important: README:52 'split by source' (it is stratified by source URL, so each source appears in every split; CHANGELOG fixed by the orchestrator); devpost:38 overstated Lightning's quality filter (opt-in, no template enables it).
   - Minors: propagate the endpoint-expiry TODO (an L40S left up costs $1.55/h); hedge 'base + adapter' (untested); 'busy host'; hedge 'secrets'; honesty-pinning tests; setup nits.
   - Fix round 1 → af39c612fcbfcd91c.
+- 2026-10-21T15:43Z devrel-w5 fix round 1 (fc8c6ac three honesty-pinning tests, fa42b75 doc fixes; tests/docs 28), verified by the orchestrator from the diff. It pushed back correctly: 'each source appears in every split' is false for small sources, so the README says 'spread across the splits' and the CHANGELOG is corrected. Ledger: devrel-w5 fix rounds 1/5, 0 open. Merged; make check green (777 + web 27). Note: the README's endpoint-expiry TODO goes stale when backend-w5 merges.

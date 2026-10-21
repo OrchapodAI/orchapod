@@ -1,5 +1,6 @@
 # devrel-w3 report — wave 3 (2026-10-22)
 Status: DONE_WITH_CONCERNS · branch `hack/devrel-w3` (worktree `/Users/hari/src/orchapod-hack/.claude/worktrees/devrel-w3`; `git merge-base --is-ancestor b6c26ff HEAD` = yes; HEAD was ef00bb7 before my commits) · cost $0 (no API call, no container, no network).
+Fix round 1 is the last section; it supersedes the wording and the shot details below where they differ. HEAD is `a16faec`.
 
 **Concern.** Bash was limited to git, so I did not run pytest or `make check`. Every "proof" below is a desk-check with `git grep` (outputs quoted), not a test run. Run before merging: `cd /Users/hari/src/orchapod-hack/.claude/worktrees/devrel-w3 && . /Users/hari/src/orchapod-hack/.venv/bin/activate && python -m pytest tests/docs -q && make check`. Expected: `tests/docs` 23 passed (was 14: test_readme 8, test_submission_docs 10, test_video_script 5), `make check` = the base's count + 9. Only README.md, docs/ and tests/docs/ changed, so ruff is unaffected.
 
@@ -54,3 +55,31 @@ Shot table: `git grep --no-index -P '^\| (\d+) \| (\d+):(\d\d)-(\d+):(\d\d) \| (
 ## DECISIONs to record
 - DECISION 2026-10-22: the video cut ends at 2:55 (5 s under the limit); narration is capped at 2.3 words per second of each shot; every spoken number is a placeholder read off the golden run; the golden run is Lane A, and Lane B appears only as a separate run in shot 6, if GPU quota lands by G2 — devrel-w3.
 - DECISION 2026-10-22: README and Devpost claims that wait for a measurement (win rate, budget guard on a real run, 70B/2026-08-31 notice) carry TODO(D8), pinned by tripwire tests that D8 deletes; any feedback finding that cites the OpenAPI names its version (20261020) — devrel-w3.
+
+## Fix round 1 (the Orchestrator's two Important items and the minors)
+Commits (never pushed): `5d0b9ba` docs(video): fix round 1 for the script — docs/video-script.md, tests/docs/test_video_script.py; `a16faec` docs(readme): cite the recorded stub run; tripwire tests fail with a message — README.md, tests/docs/test_readme.py, tests/docs/test_submission_docs.py. HEAD `a16faec`. Still not run (Bash is git-only for this role). Expected unchanged: `tests/docs` 23 passed (no test added or removed), `make check` = the base's count + 9. Run: `cd /Users/hari/src/orchapod-hack/.claude/worktrees/devrel-w3 && . /Users/hari/src/orchapod-hack/.venv/bin/activate && python -m pytest tests/docs -q && make check`.
+
+### Important
+1. **Shot 6 claim** (video-script.md:25). The voice-over now opens "Our Nemotron planner, teacher, judge and reporter run on Nebius Token Factory." (37 words, cap 46), so it no longer says every Nemotron call goes through Token Factory over a shot that shows a student served from a Serverless Endpoint. The Token Factory-only line (:40) is unchanged.
+2. **Planner-failure fallback.** :14 now says the template fallback exists only for intent #1 unless a Nebius-docs template is added (the templates are the three canonical intents), closes the loop ("if the docs-topic plan will not validate, switch to intent #1 or add that template") and drops "nothing else": the topic also decides whether a fallback exists. :21 (shot 2): `(or "Use intent" on a template card)`. :39 (alternative): only for a topic that has a template; the card shows the estimate and one click runs the plan straight away; voice-over "Pick a template. The card shows the estimate; one click runs the plan."; caption "Template card with its estimate". Two additions of mine: the alternative says to drop "Press Run." from shot 3 (the click has already started the run), and shot 2's Live cell reads "else the template path, canonical intents only".
+
+### Minors
+- :20 Shot 1 shows "Orchapod.ai" and the caption line, not the tagline (the README tagline is 32 words; counted).
+- :22 and :28 `{minutes}` is the Duration of the run's row in /runs (apps/web/app/runs/page.tsx has that column, from started_at and finished_at), or the first and last log timestamps (LogStream.tsx shows HH:MM:SS per line); `{cost}` is its Cost column. Shot 3 now ends on that /runs row, so the narrator's totals are on screen (my addition).
+- :26 and :28 Word budgets: `{next}` at most 5 words (17 fixed words, 22 of 23), `{difference}` at most 25 (24 fixed, 49 of 69), `{demo_url}` shown and not spoken.
+- :25 and :50 Shot 6 must be captured inside `keep_alive_min` (30 minutes by default; a longer keep-alive needs Hari's yes, R14). Retakes now cover shots 2, 4 and 5 only.
+- :32-35 The claims list adds "Tavily finds and extracts": web-research succeeded with `urls` and `passages` above 0 in its metrics.
+- :8 Rule 2: every sped-up or cut segment carries a "sped up" caption. Shot 2's caption is now "Nemotron 3 Super plans the pipeline (wait sped up)" (drop the label only if the wait ran in real time); the Captions section covers shots 2 and 3.
+- :63 `canvas.png` is TODO(D8): a live plan.
+- Tests: `shots()` asserts that the parsed rows equal the number of `| <digit> |` lines of the table (`TABLE_ROW`); the report test needs "Lightning" on the same line as "deterministic template" (a bare "Lightning" is on dozens of README and Devpost lines, so a file-wide check could not fail); both `next()` tripwires default to `""`, so a missing line fails with the message instead of StopIteration.
+- README:114 cites the recorded run instead of the TODO: "Its recorded run (`hackathon/LOG.md`, 2026-10-21T01:49Z): run 9214965e succeeded in 4 s at $0, and the dataset's download link served 500 rows." That LOG entry is in the main checkout's LOG.md (line 106), not in this branch's copy (base ef00bb7); it resolves on merge.
+- Ponytail: deleted :3 "Nothing is recorded yet.", :41 the over-2:55 cut order (the heading is now "Alternatives"), :53 the upload checklist (only the TODO(D8) playback check stays) and :73-74 the Open Graph image line.
+
+### Desk-check (git grep, not a test run)
+```
+SHOT regex rows 7, TABLE_ROW rows 7 (equal); screenshot rows 12; "no music" 1; TODO(?!\(D8\)) in video script, README, devpost, feedback: none
+Voice-over words 26, 46, 69, 58, 25, 37, 18 against caps 34.5, 57.5, 103.5, 69, 69, 46, 23 (counted by hand; only shot 6 changed)
+Live cells: shot 1 "no", shots 2-7 TODO(D8); screenshot Live cells: "no" only for templates.png and architecture.png (canvas.png is now TODO(D8))
+"Lightning" before "deterministic template" on one line: README.md 1, docs/devpost.md 1
+```
+Process: one command of this round carried a mistyped `| head -0` (it errored and changed nothing); the earlier note about piping read-only `git` output stands.

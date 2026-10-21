@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { yamlValue, buildYamlFromGraph, planYaml } from "../../apps/web/lib/workflowYaml.ts";
 import { api, apiDate, cancelToken, capNote, demoNote, explainError, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
-import { applyCompareEvent, applyRunEvent, canRetry, finished } from "../../apps/web/lib/runEvents.ts";
+import { applyCompareEvent, applyRunEvent, canRetry, finished, runShown } from "../../apps/web/lib/runEvents.ts";
 import { defaultInputs, NODE_FORMS } from "../../apps/web/lib/nodeForms.ts";
 import { datasetOf, evalOf, lossPoints, lossSources, modelRefsOf } from "../../apps/web/lib/results.ts";
 
@@ -398,4 +398,13 @@ test("live progress events append to the loss curve, and a step the curve alread
   // the curve is the node's own record: an event at the same step neither replaces it nor drops its valid_loss
   assert.deepEqual(lossPoints([{ node_id: "tune", rows: [{ step: 2, train_loss: 0.5, valid_loss: 0.6 }] }], [progress("tune", 2, 0.7)] as never),
     [{ node_id: "tune", step: 2, loss: 0.5, valid_loss: 0.6 }]);
+});
+
+test("the golden-run link matches its workflow name exactly and hides runs never started; a typed search is a substring", () => {
+  const golden = { id: "r1", workflow_name: "golden", status: "succeeded" };
+  const copy = { id: "r2", workflow_name: "golden (copy)", status: "succeeded" };
+  const pending = { id: "r3", workflow_name: "golden", status: "pending" };
+  assert.deepEqual([golden, copy, pending].filter(r => runShown(r, "golden", "golden")), [golden]);
+  assert.deepEqual([golden, copy, pending].filter(r => runShown(r, "golden", "")), [golden, copy, pending]);  // typed, not linked
+  assert.deepEqual([golden, copy].filter(r => runShown(r, "copy", "golden")), [copy]);  // the box was edited
 });

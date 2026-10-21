@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { api, explainError, toastError } from "@/lib/api";
 import type { Run } from "@/lib/types";
 import { StatusBadge } from "@/components/StatusBadge";
+import { runShown } from "@/lib/runEvents";
 
 const BAR_DAYS = 14;
 
@@ -62,6 +63,7 @@ export default function RunsPage() {
   const router = useRouter();
   const [runs, setRuns] = useState<Run[]>([]);
   const [search, setSearch] = useState("");
+  const [linked, setLinked] = useState(""); // the ?q= the page opened with: the golden-run link
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -76,7 +78,8 @@ export default function RunsPage() {
 
   useEffect(() => {
     load();
-    setSearch(new URLSearchParams(window.location.search).get("q") ?? ""); // /runs?q=<workflow name>: the golden-run link
+    const q = new URLSearchParams(window.location.search).get("q") ?? ""; // /runs?q=<workflow name>: the golden-run link
+    setSearch(q); setLinked(q);
   }, []);
 
   function exportCsv() {
@@ -91,10 +94,7 @@ export default function RunsPage() {
     URL.revokeObjectURL(url);
   }
 
-  const filtered = runs.filter(r => {
-    const q = search.toLowerCase();
-    return r.id.includes(q) || (r.workflow_name ?? "").toLowerCase().includes(q);
-  });
+  const filtered = runs.filter(r => runShown(r, search, linked));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { api } from "@/lib/api";
+import { api, explainError, toastError } from "@/lib/api";
 import type { ArtifactListItem } from "@/lib/types";
 
 const KIND_LABEL: Record<string, string> = {
@@ -37,10 +37,12 @@ export default function ArtifactsPage() {
   const [search,    setSearch]    = useState("");
   const [kindFilter, setKindFilter] = useState<string>("all");
   const [copied,    setCopied]    = useState<string | null>(null);
+  const [error,     setError]     = useState("");
 
   useEffect(() => {
     api.artifacts.list({ limit: 200 })
       .then(setArtifacts)
+      .catch((err) => { setError(explainError(err)); toastError("Couldn't load artifacts")(err); })
       .finally(() => setLoading(false));
   }, []);
 
@@ -48,7 +50,7 @@ export default function ArtifactsPage() {
     navigator.clipboard.writeText(uri).then(() => {
       setCopied(uri);
       setTimeout(() => setCopied(null), 2000);
-    });
+    }).catch(toastError("Couldn't copy the URI"));
   }
 
   const filtered = artifacts.filter((a) => {
@@ -63,7 +65,7 @@ export default function ArtifactsPage() {
       <div className="op-topbar">
         <div className="op-crumbs"><span>Artifacts</span></div>
         <div className="spacer" />
-        <span className="muted" style={{ fontSize: 12 }}>{artifacts.length} total</span>
+        <span className="muted" style={{ fontSize: 12 }}>{loading ? "…" : `${artifacts.length} total`}</span>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
@@ -103,10 +105,15 @@ export default function ArtifactsPage() {
 
         {!loading && artifacts.length === 0 && (
           <div style={{ textAlign: "center", marginTop: 64 }}>
-            <p style={{ fontSize: 15, fontWeight: 500 }}>No artifacts yet</p>
+            <p style={{ fontSize: 15, fontWeight: 500 }}>{error ? "Couldn't load artifacts" : "No artifacts yet"}</p>
             <p className="muted" style={{ fontSize: 13, marginTop: 4 }}>
-              Artifacts are produced when workflow runs complete.
+              {error || "Artifacts are produced when workflow runs complete."}
             </p>
+            {!error && (
+              <p className="muted" style={{ fontSize: 13, marginTop: 4 }}>
+                Press Run on a template on the <Link href="/agent" style={{ color: "var(--brand)" }}>Agent</Link> page to make a dataset, a model or an eval.
+              </p>
+            )}
           </div>
         )}
 

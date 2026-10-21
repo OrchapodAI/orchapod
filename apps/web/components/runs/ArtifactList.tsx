@@ -12,11 +12,11 @@ const KIND_META: Record<string, { icon: React.ElementType; accent: string; bg: s
   endpoint: { icon: Globe,     accent: "#DE350B", bg: "#FFEBE6" },
 };
 
-export function ArtifactList({ artifacts }: { artifacts: RunSummary["artifacts"] }) {
+export function ArtifactList({ artifacts, done = false }: { artifacts: RunSummary["artifacts"]; done?: boolean }) {
   if (artifacts.length === 0) {
     return (
       <p className="text-sm text-[#97A0AF] italic py-4">
-        Artifacts will appear here as nodes complete.
+        {done ? "This run finished without producing an artifact." : "Artifacts will appear here as nodes complete."}
       </p>
     );
   }

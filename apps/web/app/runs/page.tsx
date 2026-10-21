@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { api } from "@/lib/api";
+import { api, explainError, toastError } from "@/lib/api";
 import type { Run, Workflow } from "@/lib/types";
 import { StatusBadge } from "@/components/StatusBadge";
 
@@ -64,11 +64,13 @@ export default function RunsPage() {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   function load() {
-    setLoading(true);
+    setLoading(true); setError("");
     Promise.all([api.runs.list(), api.workflows.list()])
       .then(([rs, wfs]) => { setRuns(rs); setWorkflows(wfs); })
+      .catch((err) => { setError(explainError(err)); toastError("Couldn't load runs")(err); })
       .finally(() => setLoading(false));
   }
 
@@ -112,7 +114,7 @@ export default function RunsPage() {
         <div style={{ marginBottom: 18 }}>
           <h1 style={{ fontSize: 22, fontWeight: 500, letterSpacing: "-0.02em" }}>Runs</h1>
           <div className="muted" style={{ fontSize: 13.5, marginTop: 2 }}>
-            {runs.length} total · {runs.filter(r => r.status === "running").length} running · {runs.filter(r => r.status === "failed").length} failed in last 7d
+            {loading ? "Loading runs…" : <>{runs.length} total · {runs.filter(r => r.status === "running").length} running · {runs.filter(r => r.status === "failed").length} failed in last 7d</>}
           </div>
         </div>
 
@@ -156,9 +158,12 @@ export default function RunsPage() {
         ) : filtered.length === 0 ? (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "72px 0", textAlign: "center" }}>
             <div style={{ fontSize: 28, marginBottom: 12 }}>▶</div>
-            <h3 style={{ fontWeight: 500 }}>{search ? "No runs match your filter" : "No runs yet"}</h3>
-            <p className="muted" style={{ fontSize: 13.5, marginTop: 6 }}>
-              Open a workflow and click <span style={{ color: "var(--brand)", fontWeight: 500 }}>Run</span> to start training.
+            <h3 style={{ fontWeight: 500 }}>{error ? "Couldn't load runs" : search ? "No runs match your filter" : "No runs yet"}</h3>
+            <p className="muted" style={{ fontSize: 13.5, marginTop: 6, maxWidth: 520 }}>
+              {error ? <>{error} <span style={{ whiteSpace: "nowrap" }}>↻ Refresh tries again.</span></> : <>
+                Press Run on a template on the <Link href="/agent" style={{ color: "var(--brand)", fontWeight: 500 }}>Agent</Link> page,
+                or open a workflow and click <span style={{ color: "var(--brand)", fontWeight: 500 }}>Run</span>.
+              </>}
             </p>
           </div>
         ) : (

@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { yamlValue, buildYamlFromGraph, planYaml } from "../../apps/web/lib/workflowYaml.ts";
-import { api, apiDate, explainError } from "../../apps/web/lib/api.ts";
+import { api, apiDate, explainError, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
 import { applyCompareEvent, applyRunEvent, canRetry } from "../../apps/web/lib/runEvents.ts";
 import { defaultInputs, NODE_FORMS } from "../../apps/web/lib/nodeForms.ts";
 import { datasetOf, evalOf, modelRefsOf } from "../../apps/web/lib/results.ts";
@@ -258,4 +258,16 @@ test("a compare side appends deltas, closes on done and keeps a failed stream's 
     { text: "Hello", done: true, usd: 0.0001, error: undefined },
     { text: "", done: true, usd: null, error: "the model call failed mid-stream" },
   ]);
+});
+
+test("a failed fetch with no error display of its own raises one readable toast", () => {
+  const raised: CustomEvent[] = [];
+  Object.assign(globalThis, { dispatchEvent: (e: CustomEvent) => raised.push(e) });
+  try {
+    toastError("Couldn't load runs")(new TypeError("Failed to fetch"));
+  } finally {
+    delete (globalThis as { dispatchEvent?: unknown }).dispatchEvent;
+  }
+  assert.deepEqual(raised.map((e) => [e.type, e.detail]),
+    [[TOAST_EVENT, "Couldn't load runs: Can't reach the Orchapod API at http://localhost:8001. Is it running?"]]);
 });

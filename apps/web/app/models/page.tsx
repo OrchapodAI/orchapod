@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { api } from "@/lib/api";
+import { api, explainError, toastError } from "@/lib/api";
 import type { RegisteredModel } from "@/lib/types";
 
 const FORMAT_LABEL: Record<string, string> = {
@@ -23,10 +23,12 @@ export default function ModelsPage() {
   const [search,     setSearch]     = useState("");
   const [fmtFilter,  setFmtFilter]  = useState<string>("all");
   const [copied,     setCopied]     = useState<string | null>(null);
+  const [error,      setError]      = useState("");
 
   useEffect(() => {
     api.models.list()
       .then(setModels)
+      .catch((err) => { setError(explainError(err)); toastError("Couldn't load models")(err); })
       .finally(() => setLoading(false));
   }, []);
 
@@ -34,7 +36,7 @@ export default function ModelsPage() {
     navigator.clipboard.writeText(uri).then(() => {
       setCopied(uri);
       setTimeout(() => setCopied(null), 2000);
-    });
+    }).catch(toastError("Couldn't copy the URI"));
   }
 
   const filtered = models.filter((m) => {
@@ -89,10 +91,9 @@ export default function ModelsPage() {
 
         {!loading && models.length === 0 && (
           <div style={{ textAlign: "center", marginTop: 64 }}>
-            <p style={{ fontSize: 15, fontWeight: 500 }}>No models registered yet</p>
+            <p style={{ fontSize: 15, fontWeight: 500 }}>{error ? "Couldn't load models" : "No models registered yet"}</p>
             <p className="muted" style={{ fontSize: 13, marginTop: 4 }}>
-              Models are auto-registered when a workflow run produces a model artifact
-              (via the quantize, unsloth-train, or hf-download node).
+              {error || "Models are auto-registered when a workflow run produces a model artifact (via the quantize, unsloth-train, or hf-download node)."}
             </p>
           </div>
         )}

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { api } from "@/lib/api";
+import { api, explainError, toastError } from "@/lib/api";
 import type { Workflow, Run } from "@/lib/types";
 import { StatusBadge } from "@/components/StatusBadge";
 
@@ -11,13 +11,17 @@ export default function WorkflowsPage() {
   const [runs, setRuns] = useState<Run[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   async function load() {
-    setLoading(true);
+    setLoading(true); setError("");
     try {
       const [wfs, rs] = await Promise.all([api.workflows.list(), api.runs.list()]);
       setWorkflows(wfs);
       setRuns(rs);
+    } catch (err) {
+      setError(explainError(err));
+      toastError("Couldn't load workflows")(err);
     } finally {
       setLoading(false);
     }
@@ -98,11 +102,11 @@ export default function WorkflowsPage() {
         ) : filtered.length === 0 ? (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "96px 0", textAlign: "center" }}>
             <div style={{ fontSize: 32, marginBottom: 12 }}>✦</div>
-            <h3 style={{ fontWeight: 500 }}>{search ? "No workflows match your search" : "No workflows yet"}</h3>
+            <h3 style={{ fontWeight: 500 }}>{error ? "Couldn't load workflows" : search ? "No workflows match your search" : "No workflows yet"}</h3>
             <p className="muted" style={{ fontSize: 13.5, marginTop: 6, maxWidth: 300 }}>
-              {search ? "Try a different search term." : "Create your first workflow from a prompt or blank canvas."}
+              {error || (search ? "Try a different search term." : "Create your first workflow from a prompt or blank canvas.")}
             </p>
-            {!search && (
+            {!search && !error && (
               <Link href="/workflows/new" className="btn btn-primary" style={{ textDecoration: "none", marginTop: 20 }}>
                 ✦ Create workflow
               </Link>

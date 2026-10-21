@@ -9,7 +9,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
-import { api } from "@/lib/api";
+import { api, explainError, toastError } from "@/lib/api";
 import type { Run, Workflow, NodeType } from "@/lib/types";
 import { OrchaNode, NODE_META, type OrchaNodeData } from "@/components/canvas/OrchaNode";
 import { NodePalette } from "@/components/canvas/NodePalette";
@@ -46,7 +46,7 @@ export default function CanvasPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [starting, setStarting] = useState(false);
-  const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const dropRef = useRef<HTMLDivElement>(null);
   const nodeCounter = useRef(0);
 
@@ -63,7 +63,7 @@ export default function CanvasPage() {
       const { nodes: n, edges: e } = wf.graph_json;
       setNodes(n.map((node) => ({ ...node, type: "orchapodNode" })) as Node<OrchaNodeData>[]);
       setEdges(e.map((edge) => ({ ...edge, ...DEFAULT_EDGE })));
-    });
+    }).catch((err) => { setLoadError(explainError(err)); toastError("Couldn't open the workflow")(err); });
   }, [id]);
 
   // Connect edges
@@ -135,14 +135,13 @@ export default function CanvasPage() {
   async function handleSave() {
     if (!workflow) return;
     setSaving(true);
-    setError("");
     try {
       const yaml = buildYamlFromGraph(nodes, edges, workflow.yaml);
       await api.workflows.update(id, { yaml });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Save failed");
+      toastError("Couldn't save the workflow")(err);
     } finally {
       setSaving(false);
     }
@@ -152,7 +151,6 @@ export default function CanvasPage() {
   async function handleRun() {
     if (!workflow) return;
     setStarting(true);
-    setError("");
     try {
       const run = await api.runs.create(id);
       setPendingRun(run);
@@ -160,7 +158,7 @@ export default function CanvasPage() {
       const estimate = await api.runs.costEstimate(run.id);
       setCostEstimates(estimate.nodes as NodeEstimate[]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create run");
+      toastError("Couldn't create the run")(err);
       setPendingRun(null);
     } finally {
       setStarting(false);
@@ -176,7 +174,7 @@ export default function CanvasPage() {
       await api.runs.start(pendingRun.id);
       router.push(`/runs/${pendingRun.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start run");
+      toastError("Couldn't start the run")(err);
       setPendingRun(null);
       setCostEstimates([]);
     } finally {
@@ -192,8 +190,11 @@ export default function CanvasPage() {
 
   if (!workflow) {
     return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%" }}>
-        <span className="muted">Loading…</span>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "center", justifyContent: "center", height: "100%", padding: 16 }}>
+        {loadError ? <>
+          <span role="alert" style={{ fontSize: 13, color: "var(--rose-ink)" }}>{loadError}</span>
+          <Link href="/workflows" className="btn btn-sm" style={{ textDecoration: "none" }}>← Workflows</Link>
+        </> : <span className="muted">Loading…</span>}
       </div>
     );
   }
@@ -210,7 +211,6 @@ export default function CanvasPage() {
         </div>
         <span className="muted mono" style={{ fontSize: 11 }}>v{workflow.version} · {nodes.length} nodes</span>
         <div className="spacer" />
-        {error && <span className="muted" style={{ fontSize: 12, color: "var(--rose)" }}>{error}</span>}
         <button onClick={handleSave} disabled={saving} className="btn btn-sm">
           {saving ? "Saving…" : saved ? "Saved ✓" : "Save draft"}
         </button>

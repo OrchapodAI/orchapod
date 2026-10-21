@@ -45,6 +45,17 @@ export function explainError(err: unknown): string {
   return status === 422 ? detail : `${status} on ${path}: ${detail}`;
 }
 
+/** The toast event: toast() raises it and <Toaster /> (components/Toaster.tsx, in the root layout) shows it. */
+export const TOAST_EVENT = "orchapod:toast";
+
+/** Shows `text` as an error toast; outside the browser there is nowhere to show it. */
+export function toast(text: string) {
+  globalThis.dispatchEvent?.(new CustomEvent(TOAST_EVENT, { detail: text }));
+}
+
+/** A .catch() for fetches and actions that have no error display of their own: "<what>: <explainError>" as a toast. */
+export const toastError = (what: string) => (err: unknown) => toast(`${what}: ${explainError(err)}`);
+
 // ── Workflows ─────────────────────────────────────────────────────────────────
 
 export const api = {

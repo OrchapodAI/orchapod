@@ -238,7 +238,7 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
 
             {tab === "artifacts" && (
               <div className="card" style={{ padding: 16 }}>
-                <ArtifactList artifacts={artifacts} />
+                <ArtifactList artifacts={artifacts} done={!canCancel && run.status !== "pending"} />
               </div>
             )}
 

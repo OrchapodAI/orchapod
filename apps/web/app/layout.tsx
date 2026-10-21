@@ -1,10 +1,19 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Sidebar } from "@/components/Sidebar";
+import { Toaster } from "@/components/Toaster";
 
+const description = "Describe the specialist model you want in one sentence. Orchapod plans the pipeline, runs it on Nebius "
+  + "with NVIDIA Nemotron, evaluates the result against its base model and shows what it cost.";
+
+// og:image comes from app/opengraph-image.tsx. Its URL must be absolute, so the hosted build sets NEXT_PUBLIC_SITE_URL
+// (https://app.<domain>) as a build arg, like NEXT_PUBLIC_API_URL.
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"),
   title: "Orchapod — LLM Fine-tuning Platform",
-  description: "From data to deployed model in 25 minutes.",
+  description,
+  openGraph: { title: "Orchapod.ai", description, siteName: "Orchapod.ai", type: "website" },
+  twitter: { card: "summary_large_image", title: "Orchapod.ai", description },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -20,6 +29,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <main style={{ display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'auto' }}>
           {children}
         </main>
+        <Toaster />
       </body>
     </html>
   );

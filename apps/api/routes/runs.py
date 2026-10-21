@@ -60,6 +60,7 @@ class RunCreate(BaseModel):
 class RunOut(BaseModel):
     id: uuid.UUID
     workflow_id: uuid.UUID | None
+    workflow_name: str | None  # null once the workflow is gone; the golden-run link finds its run by it
     user_id: uuid.UUID
     status: RunStatus
     inputs: dict
@@ -114,7 +115,7 @@ async def create_run(body: RunCreate, db: Session):
     db.add(run)
     await db.flush()
     await db.refresh(run)
-    return _run_out(run)
+    return _run_out(run, workflow.name)
 
 
 @router.post("/{run_id}/start", response_model=RunOut, dependencies=[Depends(ratelimit.limit("run"))])
@@ -130,7 +131,7 @@ async def start_run(run_id: uuid.UUID, db: Session, scale: Scale):
         await db.refresh(run)
         raise HTTPException(status_code=409, detail=f"Run is {run.status.value}; only pending runs can be started")
     executor.launch(run_id, scale)
-    return _run_out(run)
+    return _run_out(run, await _workflow_name(db, run))
 
 
 @router.post("/{run_id}/cancel", response_model=RunOut, dependencies=[Depends(ratelimit.limit("write"))])
@@ -152,7 +153,7 @@ async def cancel_run(run_id: uuid.UUID, db: Session):
         run.finished_at = utcnow()
         await db.commit()  # before the event: subscribers re-read the run on it
         await event_bus.publish(run_id, {"type": "run_status", "status": "cancelled"})
-    return _run_out(run)
+    return _run_out(run, await _workflow_name(db, run))
 
 
 @router.post("/{run_id}/nodes/{node_id}/retry", response_model=RunOut, status_code=status.HTTP_202_ACCEPTED,
@@ -179,7 +180,7 @@ async def retry_node(run_id: uuid.UUID, node_id: str, db: Session, scale: Scale)
         await db.rollback()
         raise HTTPException(status_code=409, detail="Run changed meanwhile; reload it")
     executor.launch(run_id, scale)
-    return _run_out(run)
+    return _run_out(run, await _workflow_name(db, run))
 
 
 async def _to_run(db: AsyncSession, run: Run) -> list[str]:
@@ -214,13 +215,13 @@ async def list_runs(
     user_id: uuid.UUID | None = None,
     limit: int = Query(50, ge=1, le=500),  # a public caller never asks for every row
 ):
-    stmt = select(Run).order_by(Run.created_at.desc()).limit(limit)
+    stmt = (select(Run, Workflow.name).outerjoin(Workflow, Workflow.id == Run.workflow_id)
+            .order_by(Run.created_at.desc()).limit(limit))
     if workflow_id:
         stmt = stmt.where(Run.workflow_id == workflow_id)
     if user_id:
         stmt = stmt.where(Run.user_id == user_id)
-    result = await db.execute(stmt)
-    return [_run_out(r) for r in result.scalars().all()]
+    return [_run_out(r, name) for r, name in (await db.execute(stmt)).all()]
 
 
 @router.get("/{run_id}", response_model=RunOut)
@@ -228,7 +229,7 @@ async def get_run(run_id: uuid.UUID, db: Session):
     run = await db.get(Run, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
-    return _run_out(run)
+    return _run_out(run, await _workflow_name(db, run))
 
 
 @router.get("/{run_id}/summary")
@@ -314,10 +315,15 @@ async def cost_estimate(run_id: uuid.UUID, db: Session):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _run_out(r: Run) -> RunOut:
+async def _workflow_name(db: AsyncSession, run: Run) -> str | None:
+    return await db.scalar(select(Workflow.name).where(Workflow.id == run.workflow_id)) if run.workflow_id else None
+
+
+def _run_out(r: Run, workflow_name: str | None) -> RunOut:
     return RunOut(
         id=r.id,
         workflow_id=r.workflow_id,
+        workflow_name=workflow_name,
         user_id=r.user_id,
         status=r.status,
         inputs=redact(r.inputs or {}),

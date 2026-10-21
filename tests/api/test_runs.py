@@ -140,3 +140,21 @@ async def test_public_lists_cap_limit_at_500(client, db):
             assert (await client.get(path, params={"limit": bad})).status_code == 422
     assert len((await client.get("/workflows")).json()) == 51
     assert (await client.get("/artifacts", params={"limit": -1})).status_code == 422  # SQLite reads -1 as no limit
+
+
+async def test_runs_carry_their_workflows_name(client, db, no_bg_tasks):
+    """The golden-run link finds its run by workflow name, without reading the newest 500 workflows."""
+    from api.models.db import Run, Workflow
+    golden = Workflow(user_id=uuid.uuid4(), name="nebius-docs-specialist-llama-8b", yaml="name: x\nnodes: []\n",
+                      graph_json={})
+    db.add(golden)
+    await db.flush()
+    run, standalone = Run(workflow_id=golden.id, user_id=golden.user_id), Run(user_id=uuid.uuid4())
+    db.add_all([run, standalone])
+    await db.commit()
+
+    listed = {r["id"]: r["workflow_name"] for r in (await client.get("/runs")).json()}
+    assert listed == {str(run.id): "nebius-docs-specialist-llama-8b", str(standalone.id): None}
+    assert (await client.get(f"/runs/{run.id}")).json()["workflow_name"] == "nebius-docs-specialist-llama-8b"
+    made = await client.post("/runs", json={"workflow_id": str(golden.id)})
+    assert made.json()["workflow_name"] == "nebius-docs-specialist-llama-8b"

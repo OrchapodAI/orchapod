@@ -4,7 +4,7 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 ## Next actions (in order)
 1. Hari: NEBIUS_API_KEY and TAVILY_API_KEY into ~/src/orchapod-hack/.env — both lines still empty on disk (2026-10-21T02:37Z); the hidden-input command is in chat. Unblocks spikes 1–3 and every live check.
 2. Spikes 1–3 (hackathon/briefs/2026-10-22-spikes.md; worktrees spike1–3 at c164e4e) — dispatch the moment the key lands.
-3. Wave 3: ALL MERGED except qa-w3 (REVIEW). Wave 4 (hackathon/briefs/2026-10-23-wave4.md): MERGED frontend-w4, platform-w4; REVIEW backend-w4 (opus); RE-REVIEW data-w4; IN_PROGRESS ml-w4; queued qa-w4 (after qa-w3).
+3. Wave 3: ALL MERGED except qa-w3 (REVIEW). Wave 4 (hackathon/briefs/2026-10-23-wave4.md): MERGED frontend-w4, platform-w4, data-w4; REVIEW backend-w4 (opus); IN_PROGRESS ml-w4; queued qa-w4 (after qa-w3).
 4. After wave 3: shared fence() (platform), apps/api/config.py (platform), vllm-serve rewrite (ml), `make check E2E=1` + Playwright smoke on the merged branch, D6 hardening (anonymous budget ceiling).
 5. G1 Oct 24: golden path green from the UI (needs spike 1's deploy answer) + intent #2 from the agent chat (STUB green 2026-10-21; live waits on the key).
 
@@ -121,7 +121,7 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] vast.ai: two stopped instances from other projects (54041703 rec-l2-bench-2, 54062531 esci-bench-v2), stopped since 2026-10-03, still billing storage (~$0.20/h per the spike agent) — destroy them? Hari's call; agents leave them alone
 - [ ] DECISION: disclose in the README/Devpost that the build used AI coding agents? (Hari's call)
 - [ ] Before submission: GitHub's default branch is `main` (pre-hackathon code) — set it to NebiusHackathon, or link the branch explicitly in Devpost (repo admin: Purva)
-- [ ] DECISION by D6: golden-run topic — the Nebius docs specialist (PLAN's default; judges can verify answers) or intent #1 (US real-estate compliance)?
+- [ ] DECISION by D6: golden-run topic — the Nebius docs specialist (PLAN's default; template 4 now exists, NOT G1-ready until spike 1 settles tf-deploy) or intent #1 (US real-estate compliance; template 1)?
 - [ ] Before the repo goes public (G3): gitleaks clean, keys rotated, docs/Jira.csv reviewed for personal data
 
 ## Tooling (installed skills/plugins/MCP, with install command)

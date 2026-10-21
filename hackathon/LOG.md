@@ -174,3 +174,9 @@ worktrees:
   - DECISIONs recorded: no VASTAI_API_KEY on the VM; 14 rotating backup slots; explicit rsync excludes.
   - Pending with backend-w4's merge: ORCHAPOD_CORS_ORIGINS + ORCHAPOD_TRUSTED_PROXIES in .env.example/compose; drop `--forwarded-allow-ips "*"`; healthcheck/watchdog → /livez.
 - 2026-10-21T13:20Z qa-w3 resumed on my note and added c301b8f: canonical intents identified by slug (canonical ⊆ shipped, so the 4th template is allowed) and no role=alert selectors. Scratch merge with data-w4's template: make check E2E=1 661 passed; agent e2e #2/#3 PASS, #1 SKIP until ml-w4. The orchestrator checks c301b8f after the qa-w3 review (the reviewer saw 0038b3d).
+- 2026-10-21T13:24Z data-w4 re-review (sonnet): all ADDRESSED.
+  - Split floors checked over 412,075 generated cases with 0 invariant violations; mutations caught; split sizes unchanged at n ≥ 20.
+  - Minors fixed by the orchestrator in 33bdbab: train size clamped at 0; the schema description, contract and WORKFLOW_SPEC lines describe the floors correctly.
+  - Ledger: data-w4 fix rounds 1/5, 0 open. Merged; make check green (617 + web 27).
+  - Open for spike 3: web-research keeps Tavily's reply order; the docs template's cap assumes request order.
+  - The data-prep image needs rebuilding (E2E=1 does it).

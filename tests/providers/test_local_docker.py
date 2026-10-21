@@ -44,6 +44,27 @@ async def test_terminate_sends_sigterm_with_30s_grace_then_removes(monkeypatch):
     assert argvs == [("docker", "stop", "-t", "30", "c0ffee"), ("docker", "rm", "-f", "c0ffee")]
 
 
+async def test_node_containers_get_host_docker_internal_on_linux_too(monkeypatch):
+    """The stub e2e (scripts/e2e_demo.py) and every local run point nodes at localhost services, which become
+    host.docker.internal. Docker Desktop defines that name itself; a Linux daemon only through --add-host ...:host-gateway."""
+    argvs = []
+
+    async def fake_exec(*argv, **kwargs):
+        argvs.append(argv)
+        proc = AsyncMock(returncode=0)
+        proc.communicate.return_value = (b"c0ffee\n", b"")
+        return proc
+
+    monkeypatch.setattr(local_docker.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(local_docker.shutil, "which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr(local_docker, "_resolve_image", lambda image: "orchapod/data-prep:dev")
+    env = {"ORCHAPOD_CONTROL_URL": "http://127.0.0.1:8003", "ORCHAPOD_R2_ENDPOINT": "http://localhost:9000"}
+    await LocalDockerProvider().provision(None, "ghcr.io/bangadpurva/data-prep:latest", env)
+    (argv,) = argvs
+    assert "--add-host=host.docker.internal:host-gateway" in argv
+    assert {"ORCHAPOD_CONTROL_URL=http://host.docker.internal:8003", "ORCHAPOD_R2_ENDPOINT=http://host.docker.internal:9000"} <= set(argv)
+
+
 async def test_an_unreadable_exit_code_fails_instead_of_reading_as_success(monkeypatch):
     async def fake_exec(*argv, **kwargs):
         proc = AsyncMock(returncode=1)

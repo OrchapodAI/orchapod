@@ -79,7 +79,7 @@ def test_the_stub_api_never_takes_8002_the_dev_api(monkeypatch):
     assert inspect.signature(e2e.listen_on_free_port).parameters["start"].default == 8003
     asked = []
 
-    def refuse(*args):
+    def refuse(*args, **kwargs):
         asked.append(args)
         raise RuntimeError("stop here")
 
@@ -87,6 +87,25 @@ def test_the_stub_api_never_takes_8002_the_dev_api(monkeypatch):
     with pytest.raises(RuntimeError, match="stop here"):
         e2e.start_api(Path("/nonexistent"))
     assert asked == [()], "start_api asks for the default start, not a port of its own"
+
+
+@pytest.mark.parametrize("platform, host", [("linux", "0.0.0.0"), ("darwin", "127.0.0.1"), ("win32", "127.0.0.1")])
+def test_the_stub_api_listens_where_the_node_containers_can_reach_it(platform, host, monkeypatch):
+    """A node container reaches the API as host.docker.internal. Docker Desktop (macOS, Windows) forwards that name to the host's
+    127.0.0.1; on Linux it is the docker0 gateway (LocalDocker's --add-host ...:host-gateway, pinned in
+    tests/providers/test_local_docker.py), which a 127.0.0.1 listener never answers: there the API must listen on every interface."""
+    assert e2e.bind_host(platform) == host
+    asked = []
+
+    def refuse(*args, **kwargs):  # no real bind on 0.0.0.0: macOS would ask Hari to accept incoming connections
+        asked.append(kwargs)
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(e2e, "listen_on_free_port", refuse)
+    monkeypatch.setattr(e2e, "bind_host", lambda: host)
+    with pytest.raises(RuntimeError, match="stop here"):
+        e2e.start_api(Path("/nonexistent"))
+    assert asked == [{"host": host}]  # start_api binds what bind_host says
 
 
 def test_the_api_port_is_held_from_choice_to_start():

@@ -4,7 +4,8 @@
 
 It rebuilds and retags the shared `orchapod/<node>:dev` images, so parallel worktrees must not run it: it is opt-in.
 
-It starts its own API (STUB=1, throwaway SQLite DB, first free port from 8003, no paid key in its env), builds the images
+It starts its own API (STUB=1, throwaway SQLite DB, first free port from 8003, no paid key in its env; on Linux it listens
+on 0.0.0.0, because the node containers reach it through the docker0 gateway, see bind_host), builds the images
 the plan needs (`orchapod/<node>:dev`), creates the workflow from GET /agent/templates, runs it and polls
 GET /runs/{id}/summary. Asserted: the run succeeded in under 5 minutes; data-prep registered dataset, train_jsonl and
 eval_jsonl; cost_usd is 0 with a cost_json on every node; the dataset's download link serves rows with exactly the
@@ -72,14 +73,23 @@ def api_env(port: int, db: Path, environ, extra: dict[str, str] | None = None) -
     } | (extra or {})
 
 
-def listen_on_free_port(start: int = 8003) -> socket.socket:
-    """A listening socket on the first free port from `start` (8000 and 8001 belong to other projects on this Mac, and 8002 is the
-    dev API, which a stub run must never mistake for its own). The API gets this very socket, so no other process can take the
-    port in between."""
+def bind_host(platform: str = sys.platform) -> str:
+    """Where the stub API listens. A node container reaches it as host.docker.internal: Docker Desktop (macOS, Windows) forwards
+    that name to the host's 127.0.0.1, but on Linux it is the docker0 gateway (LocalDocker's --add-host ...:host-gateway), which a
+    127.0.0.1 listener never answers.
+    ponytail: on Linux the key-less STUB API listens on every interface for the minutes it lives, and a host firewall that
+    drops traffic from docker0 blocks the nodes all the same; bind docker0's gateway if either matters."""
+    return "0.0.0.0" if platform.startswith("linux") else "127.0.0.1"
+
+
+def listen_on_free_port(start: int = 8003, host: str = "127.0.0.1") -> socket.socket:
+    """A listening socket on `host` on the first free port from `start` (8000 and 8001 belong to other projects on this Mac, and
+    8002 is the dev API, which a stub run must never mistake for its own). The API gets this very socket, so no other process
+    can take the port in between."""
     for port in range(start, start + 50):
         sock = socket.socket()
         try:
-            sock.bind(("127.0.0.1", port))
+            sock.bind((host, port))
         except OSError:
             sock.close()
             continue
@@ -158,8 +168,8 @@ def tail(path: Path, n: int = 15) -> str:
 
 
 def start_api(tmp: Path, extra: dict[str, str] | None = None) -> tuple[subprocess.Popen, str]:
-    """ponytail: binds 127.0.0.1, which Docker Desktop reaches as host.docker.internal; on Linux it needs 0.0.0.0."""
-    with listen_on_free_port() as sock:
+    """The API on its own port and database; the URL is 127.0.0.1 whichever address it listens on (bind_host)."""
+    with listen_on_free_port(host=bind_host()) as sock:
         port = sock.getsockname()[1]
         with open(tmp / "api.log", "w") as log:
             proc = subprocess.Popen([sys.executable, "-m", "uvicorn", "api.main:app", "--fd", str(sock.fileno())], cwd=ROOT,
@@ -196,7 +206,7 @@ def preflight(stack: dict = LOCAL_STACK) -> list[str]:
     problems = []
     try:
         if subprocess.run(["docker", "info"], capture_output=True, timeout=30).returncode:
-            problems.append("the Docker daemon is not answering (start Docker Desktop)")
+            problems.append("the Docker daemon is not answering (start Docker Desktop, or the daemon on Linux)")
     except (OSError, subprocess.TimeoutExpired) as e:
         problems.append(f"docker is not usable: {e}")
     redis = urlparse(stack["REDIS_URL"])

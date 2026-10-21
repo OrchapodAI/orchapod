@@ -32,7 +32,7 @@ Every node is a Docker container that:
 | `ORCHAPOD_INTERNAL_SECRET` | Sent by the SDK as `X-Orchapod-Secret` on every /internal call |
 | `ORCHAPOD_MAX_COST_USD` | Node budget: the smaller of the run and day budgets left; `cost.add` raises `BudgetExceeded` past it |
 | `STUB` | `1` = deterministic outputs, no paid calls |
-| Provider keys | `NEBIUS_API_KEY`, `NEBIUS_BASE_URL`, `TAVILY_API_KEY`, `HF_TOKEN`, `NEBIUS_PROJECT_ID`, `NEBIUS_IAM_TOKEN`, `ORCHAPOD_ENDPOINT_TOKEN` (docs/contracts.md "Config") |
+| Provider keys | `NEBIUS_API_KEY`, `NEBIUS_BASE_URL`, `TAVILY_API_KEY`, `HF_TOKEN`, `NEBIUS_PROJECT_ID`, `NEBIUS_IAM_TOKEN` (only nodes that rent a GPU), `ORCHAPOD_ENDPOINT_TOKEN` (docs/contracts.md "Config") |
 
 ## Artifact addressing
 

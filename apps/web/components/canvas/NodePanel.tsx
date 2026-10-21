@@ -40,7 +40,8 @@ function FormInput({ field: f, value, onChange }: { field: FormField; value: unk
     case "bool":
       return <input type="checkbox" {...help} defaultChecked={Boolean(value)} onChange={(e) => onChange(e.target.checked)} />;
     case "number":
-      return <input type="number" step="any" {...help} defaultValue={asText(value)} placeholder={f.placeholder} className={INPUT_CLASS}
+      return <input type="number" step="any" max={f.max} {...help} defaultValue={asText(value)} placeholder={f.placeholder}
+        className={`${INPUT_CLASS} invalid:border-[#DE350B]`}
         onChange={(e) => onChange(e.target.value === "" ? undefined : e.target.valueAsNumber)} />;
     case "list":
       return <textarea rows={3} {...help} defaultValue={Array.isArray(value) ? value.join("\n") : asText(value)} className={INPUT_CLASS}

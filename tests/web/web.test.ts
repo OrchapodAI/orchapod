@@ -6,7 +6,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { yamlValue, buildYamlFromGraph, planYaml } from "../../apps/web/lib/workflowYaml.ts";
 import { api, apiDate, explainError } from "../../apps/web/lib/api.ts";
 import { applyRunEvent, canRetry } from "../../apps/web/lib/runEvents.ts";
-import { defaultInputs } from "../../apps/web/lib/nodeForms.ts";
+import { defaultInputs, NODE_FORMS } from "../../apps/web/lib/nodeForms.ts";
 
 const node = (id: string, node_type: string, inputs: Record<string, unknown>) =>
   ({ id, position: { x: 0, y: 0 }, data: { label: id, node_type, inputs, resources: {} } }) as never;
@@ -132,3 +132,10 @@ test("API datetimes are UTC: a naive one gets Z, one with a zone is kept", () =>
   assert.equal(apiDate("2026-10-21T00:32:20.222Z").getTime(), t);
   assert.equal(apiDate("2026-10-21T02:32:20.222+02:00").getTime(), t);
 });
+
+test("tf-finetune's timeout_min stops at 85, under the executor's 90-minute backstop", () => {
+  const timeout = NODE_FORMS["tf-finetune"]?.find((f) => f.key === "timeout_min");
+  assert.equal(timeout?.max, 85);
+  assert.match(timeout?.help ?? "", /85/);
+});
+

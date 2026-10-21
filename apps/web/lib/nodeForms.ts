@@ -6,6 +6,8 @@ export interface FormField {
   kind: "text" | "number" | "bool" | "list" | "json";
   /** Undefined: the node computes it, so the input is only sent once filled in. */
   default?: unknown;
+  /** Upper bound of a number field, as the node's Inputs model has it. */
+  max?: number;
   placeholder?: string;
   help: string;
 }
@@ -30,8 +32,8 @@ export const NODE_FORMS: Partial<Record<NodeType, FormField[]>> = {
     { key: "n_epochs", label: "Epochs", kind: "number", default: 2, help: "Passes over the training set." },
     { key: "hyperparameters", label: "Hyperparameters (JSON)", kind: "json", default: {},
       help: "Token Factory names: batch_size, learning_rate, lora_r, lora_alpha, lora_dropout, packing, context_length, warmup_ratio, weight_decay, max_grad_norm. Merged over {\"lora\": true, \"n_epochs\": epochs}." },
-    { key: "timeout_min", label: "Timeout (minutes)", kind: "number", default: 60,
-      help: "After this the Token Factory job is cancelled and the node fails." },
+    { key: "timeout_min", label: "Timeout (minutes)", kind: "number", default: 60, max: 85,
+      help: "After this the Token Factory job is cancelled and the node fails. At most 85, so the node cancels its job before the run's 90-minute node limit stops it." },
   ],
   "tf-deploy": [
     { key: "job", label: "Fine-tune job", kind: "json", default: "",

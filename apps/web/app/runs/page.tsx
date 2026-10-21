@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, explainError, toastError } from "@/lib/api";
-import type { Run, Workflow } from "@/lib/types";
+import type { Run } from "@/lib/types";
 import { StatusBadge } from "@/components/StatusBadge";
+import { runShown } from "@/lib/runEvents";
 
 const BAR_DAYS = 14;
 
@@ -61,30 +62,30 @@ function RunVolumeChart({ runs }: { runs: Run[] }) {
 export default function RunsPage() {
   const router = useRouter();
   const [runs, setRuns] = useState<Run[]>([]);
-  const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [search, setSearch] = useState("");
+  const [linked, setLinked] = useState(""); // the ?q= the page opened with: the golden-run link
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   function load() {
     setLoading(true); setError("");
     // ponytail: newest 500 runs; use NEXT_PUBLIC_GOLDEN_RUN_ID once D8 fixes the id
-    Promise.all([api.runs.list(undefined, 500), api.workflows.list()])
-      .then(([rs, wfs]) => { setRuns(rs); setWorkflows(wfs); })
+    api.runs.list(undefined, 500) // each run carries its workflow_name: no join against GET /workflows (newest 500 only)
+      .then(setRuns)
       .catch((err) => { setError(explainError(err)); toastError("Couldn't load runs")(err); })
       .finally(() => setLoading(false));
   }
 
   useEffect(() => {
     load();
-    setSearch(new URLSearchParams(window.location.search).get("q") ?? ""); // /runs?q=<workflow name>: the golden-run link
+    const q = new URLSearchParams(window.location.search).get("q") ?? ""; // /runs?q=<workflow name>: the golden-run link
+    setSearch(q); setLinked(q);
   }, []);
 
   function exportCsv() {
-    const wfMap = Object.fromEntries(workflows.map(w => [w.id, w]));
     const header = "id,workflow,status,started_at,finished_at,cost_usd,gpu_provider";
     const rows = runs.map(r =>
-      [r.id, wfMap[r.workflow_id]?.name ?? r.workflow_id, r.status,
+      [r.id, r.workflow_name ?? r.workflow_id ?? "", r.status,
        r.started_at ?? "", r.finished_at ?? "", r.cost_usd ?? "", r.gpu_provider ?? ""].join(",")
     );
     const blob = new Blob([[header, ...rows].join("\n")], { type: "text/csv" });
@@ -93,13 +94,7 @@ export default function RunsPage() {
     URL.revokeObjectURL(url);
   }
 
-  const wfMap = Object.fromEntries(workflows.map(w => [w.id, w]));
-
-  const filtered = runs.filter(r => {
-    const wfName = wfMap[r.workflow_id]?.name ?? "";
-    const q = search.toLowerCase();
-    return r.id.includes(q) || wfName.toLowerCase().includes(q);
-  });
+  const filtered = runs.filter(r => runShown(r, search, linked));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -186,7 +181,6 @@ export default function RunsPage() {
               </thead>
               <tbody>
                 {filtered.map((run) => {
-                  const wf = wfMap[run.workflow_id];
                   return (
                     <tr key={run.id} className="clickable" onClick={() => router.push(`/runs/${run.id}`)}>
                       <td>
@@ -198,7 +192,7 @@ export default function RunsPage() {
                         </Link>
                       </td>
                       <td>
-                        <div style={{ fontSize: 13, color: "var(--ink-1)" }}>{wf?.name ?? <span className="muted mono" style={{ fontSize: 11 }}>{run.workflow_id.slice(0, 8)}…</span>}</div>
+                        <div style={{ fontSize: 13, color: "var(--ink-1)" }}>{run.workflow_name ?? <span className="muted mono" style={{ fontSize: 11 }}>{run.workflow_id ? `${run.workflow_id.slice(0, 8)}…` : "—"}</span>}</div>
                         <div className="muted mono" style={{ fontSize: 11 }}>—</div>
                       </td>
                       <td><StatusBadge status={run.status} /></td>

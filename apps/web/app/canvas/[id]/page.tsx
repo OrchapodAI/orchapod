@@ -45,6 +45,7 @@ export default function CanvasPage() {
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance<Node<OrchaNodeData>, Edge> | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [readOnly, setReadOnly] = useState(false); // Save got a 409: the workflow has runs, so visitors save a copy
   const [starting, setStarting] = useState(false);
   const [loadError, setLoadError] = useState("");
   const dropRef = useRef<HTMLDivElement>(null);
@@ -141,8 +142,22 @@ export default function CanvasPage() {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
-      toastError("Couldn't save the workflow")(err);
+      if ((err as { status?: number }).status === 409) setReadOnly(true); // D6: a workflow with runs is read-only to visitors
+      else toastError("Couldn't save the workflow")(err);
     } finally {
+      setSaving(false);
+    }
+  }
+
+  // The edited graph as a new workflow "<name> (copy)", opened on the canvas; the original stays as it was.
+  async function handleSaveCopy() {
+    if (!workflow) return;
+    setSaving(true);
+    try {
+      const copy = await api.workflows.copy(workflow.name, buildYamlFromGraph(nodes, edges, workflow.yaml));
+      router.push(`/canvas/${copy.id}`);
+    } catch (err) {
+      toastError("Couldn't save a copy")(err);
       setSaving(false);
     }
   }
@@ -211,8 +226,13 @@ export default function CanvasPage() {
         </div>
         <span className="muted mono" style={{ fontSize: 11 }}>v{workflow.version} · {nodes.length} nodes</span>
         <div className="spacer" />
-        <button onClick={handleSave} disabled={saving} className="btn btn-sm">
-          {saving ? "Saving…" : saved ? "Saved ✓" : "Save draft"}
+        {/* always mounted, so the note is announced when a 409 fills it */}
+        <span id="read-only-note" role="status" style={{ fontSize: 12, color: "var(--amber-ink)" }}>
+          {readOnly && "This workflow has runs, so it is read-only"}
+        </span>
+        <button onClick={readOnly ? handleSaveCopy : handleSave} disabled={saving} className="btn btn-sm"
+          aria-describedby={readOnly ? "read-only-note" : undefined}>
+          {saving ? "Saving…" : readOnly ? "Save a copy" : saved ? "Saved ✓" : "Save draft"}
         </button>
         <button
           onClick={handleRun}

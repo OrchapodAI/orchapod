@@ -86,7 +86,6 @@ export default function InferencePage() {
   const [keepAliveMin, setKeepAliveMin] = useState(60);
   const [precision, setPrecision] = useState<"q4_k_m" | "q5_k_m" | "q8_0">("q4_k_m");
   const [servedModelName, setServedModelName] = useState("");
-  const [hfToken, setHfToken] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -112,7 +111,6 @@ export default function InferencePage() {
         keep_alive_min: keepAliveMin,
         precision,
         served_model_name: servedModelName || undefined,
-        hf_token: hfToken || undefined,
       });
       router.push(`/runs/${res.run_id}`);
     } catch (err: unknown) {
@@ -288,8 +286,8 @@ export default function InferencePage() {
                 </div>
               )}
 
-              {/* Advanced toggle */}
-              <div>
+              {/* Advanced toggle (serving only) */}
+              {needsServe && <div>
                 <button
                   type="button"
                   onClick={() => setShowAdvanced(v => !v)}
@@ -305,29 +303,17 @@ export default function InferencePage() {
 
                 {showAdvanced && (
                   <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
-                    {needsServe && (
-                      <Field label="Served model name" hint="overrides /v1/models response">
-                        <input
-                          value={servedModelName}
-                          onChange={e => setServedModelName(e.target.value)}
-                          placeholder="my-model"
-                          style={inputStyle}
-                        />
-                      </Field>
-                    )}
-                    <Field label="HuggingFace token" hint="for gated / private models">
+                    <Field label="Served model name" hint="overrides /v1/models response">
                       <input
-                        type="password"
-                        value={hfToken}
-                        onChange={e => setHfToken(e.target.value)}
-                        placeholder="hf_…"
+                        value={servedModelName}
+                        onChange={e => setServedModelName(e.target.value)}
+                        placeholder="my-model"
                         style={inputStyle}
-                        autoComplete="off"
                       />
                     </Field>
                   </div>
                 )}
-              </div>
+              </div>}
 
               {/* Error */}
               {error && (

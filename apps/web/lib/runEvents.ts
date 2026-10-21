@@ -31,3 +31,11 @@ export function applyCompareEvent(sides: CompareSide[], e: CompareEvent): Compar
     : "done" in e ? { ...s, done: true, usd: e.usd, error: e.error }
     : typeof e.delta === "string" ? { ...s, text: s.text + e.delta } : s);
 }
+
+/** Whether /runs shows `r`. The golden-run link (`/runs?q=<workflow name>`, `linked`) matches that name exactly and hides
+ *  runs never started, so "<name> (copy)" workflows stay out; once the box is edited, any substring of the id or name. */
+export function runShown(r: { id: string; workflow_name?: string | null; status: string }, search: string, linked: string): boolean {
+  if (linked && search === linked) return r.workflow_name === linked && r.status !== "pending";
+  const q = search.toLowerCase();
+  return r.id.includes(q) || (r.workflow_name ?? "").toLowerCase().includes(q);
+}

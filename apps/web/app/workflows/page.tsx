@@ -31,8 +31,7 @@ export default function WorkflowsPage() {
 
   // Build per-workflow run stats
   const runsByWorkflow = runs.reduce<Record<string, Run[]>>((acc, r) => {
-    if (!acc[r.workflow_id]) acc[r.workflow_id] = [];
-    acc[r.workflow_id].push(r);
+    if (r.workflow_id) (acc[r.workflow_id] ??= []).push(r);
     return acc;
   }, {});
 

@@ -4,8 +4,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { yamlValue, buildYamlFromGraph, planYaml } from "../../apps/web/lib/workflowYaml.ts";
-import { api, apiDate, capNote, demoNote, explainError, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
-import { applyCompareEvent, applyRunEvent, canRetry, finished } from "../../apps/web/lib/runEvents.ts";
+import { api, apiDate, cancelToken, capNote, demoNote, explainError, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
+import { applyCompareEvent, applyRunEvent, canRetry, finished, runShown } from "../../apps/web/lib/runEvents.ts";
 import { defaultInputs, NODE_FORMS } from "../../apps/web/lib/nodeForms.ts";
 import { datasetOf, evalOf, lossPoints, lossSources, modelRefsOf } from "../../apps/web/lib/results.ts";
 
@@ -86,6 +86,67 @@ test("explainError turns each agent failure into a readable sentence", () => {
     "502 on /compare: refs[1] (tuned) failed; the API log has the cause");
   assert.equal(explainError(http(503, "/compare", { detail: "the kill switch is on (ORCHAPOD_KILL_SWITCH)" })),
     "503 on /compare: the kill switch is on (ORCHAPOD_KILL_SWITCH)");
+  // a cancel without the run's token (the run page's toast): one sentence, not the header name the API's detail gives
+  assert.equal(explainError(http(403, "/runs/r1/cancel", { detail: "cancelling this run needs its cancel token (X-Orchapod-Cancel-Token, "
+    + "returned when it started) or the admin" })), "Only the tab that started this run can cancel it (403).");
+});
+
+/** Installs Web Storage stand-ins for one call: Node 22 (CI) has none, and Node 26's would outlive the test. */
+async function withStorage(stores: Record<string, object>, fn: () => Promise<void>) {
+  const saved = Object.keys(stores).map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)] as const);
+  for (const [name, value] of Object.entries(stores)) Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
+  try { await fn(); } finally {
+    for (const [name, d] of saved) if (d) Object.defineProperty(globalThis, name, d); else delete (globalThis as Record<string, unknown>)[name];
+  }
+}
+const storage = () => {
+  const items = new Map<string, string>();
+  return { items, getItem: (k: string) => items.get(k) ?? null, setItem: (k: string, v: string) => void items.set(k, v) };
+};
+
+test("a run's cancel token stays in this tab's sessionStorage by run id and leaves only as Cancel's X-Orchapod-Cancel-Token", async () => {
+  const session = storage(), local = storage();
+  const sent: { url: string; headers: Record<string, string> }[] = [];
+  globalThis.fetch = async (url: string, init?: RequestInit) => {
+    sent.push({ url, headers: { ...(init?.headers as Record<string, string>) } });
+    return new Response(JSON.stringify(url.endsWith("/start") ? { id: "r1", status: "provisioning_gpu", cancel_token: "tok-1" }
+      : url.endsWith("/agent/run") ? { run_id: "r2", workflow_id: "w2", estimate: {}, cancel_token: "tok-2" }
+      : { id: "r2", status: "cancelled" }));
+  };
+  await withStorage({ sessionStorage: session, localStorage: local }, async () => {
+    // start and /agent/run return it once: kept here, never handed to the page
+    assert.equal("cancel_token" in await api.runs.start("r1"), false);
+    assert.equal("cancel_token" in await api.agent.run("intent", { name: "p", nodes: [] }), false);
+    assert.deepEqual([...session.items], [["orchapod:cancel-token:r1", "tok-1"], ["orchapod:cancel-token:r2", "tok-2"]]);
+    assert.equal(local.items.size, 0);
+    assert.deepEqual([cancelToken("r1"), cancelToken("r2"), cancelToken("r3")], ["tok-1", "tok-2", null]);
+    await api.runs.cancel("r2");
+    await api.runs.cancel("r3"); // started elsewhere: no header (the run page keeps its Cancel disabled)
+    assert.deepEqual(sent.slice(2).map((s) => [s.url, s.headers["X-Orchapod-Cancel-Token"]]),
+      [["http://localhost:8001/runs/r2/cancel", "tok-2"], ["http://localhost:8001/runs/r3/cancel", undefined]]);
+    assert.ok(sent.every((s) => !s.url.includes("tok-"))); // never in a URL
+  });
+  // storage switched off (Safari's SecurityError): the run still starts, and only the admin can cancel it
+  const off = { getItem() { throw new Error("SecurityError"); }, setItem() { throw new Error("SecurityError"); } };
+  await withStorage({ sessionStorage: off }, async () => {
+    assert.equal((await api.runs.start("r1")).id, "r1");
+    assert.equal(cancelToken("r1"), null);
+  });
+});
+
+test("canvas Save on a workflow with runs gets the API's 409 (read-only to visitors); Save a copy posts the edited YAML as \"<name> (copy)\"", async () => {
+  const calls: unknown[][] = [];
+  globalThis.fetch = async (url: string, init?: RequestInit) => {
+    calls.push([init?.method, url, JSON.parse(String(init?.body))]);
+    return init?.method === "PUT"
+      ? new Response('{"detail":"this workflow has runs, so it is read-only on the public app; save a copy as a new workflow"}', { status: 409 })
+      : new Response('{"id":"w2","name":"golden (copy)"}', { status: 201 });
+  };
+  const yaml = "name: golden\nnodes:\n  - id: prep\n    type: data-prep";
+  await assert.rejects(api.workflows.update("w1", { yaml }), (e: { status: number }) => e.status === 409);
+  assert.equal((await api.workflows.copy("golden", yaml)).id, "w2");
+  assert.deepEqual(calls, [["PUT", "http://localhost:8001/workflows/w1", { yaml }],
+                           ["POST", "http://localhost:8001/workflows", { name: "golden (copy)", yaml }]]);
 });
 
 test("the run page reads GET /runs/{id}/summary and retries with POST /runs/{id}/nodes/{node_id}/retry", async () => {
@@ -243,12 +304,12 @@ test("the playground offers the run's ModelRefs: base and tuned first, deduped, 
     art("judge", "metrics_json", { win_rate: 1, base: local, tuned: { ...local, model: "f16" } })])), []);
 });
 
-test("no token reaches the browser: nothing reads meta.api_key, sends an Authorization header or calls /inference/extend", () => {
+test("no token reaches the browser: nothing reads meta.api_key, sends an Authorization header, asks for an HF token or calls /inference/extend", () => {
   const found = ["app", "components", "lib"].flatMap((dir) =>
     readdirSync(new URL(`../../apps/web/${dir}/`, import.meta.url), { recursive: true }).map(String)
       .filter((f) => /\.tsx?$/.test(f))
       .flatMap((f) => readFileSync(new URL(`../../apps/web/${dir}/${f}`, import.meta.url), "utf8")
-        .match(/\.api_key\b|["']Authorization["']|inference\/extend/g)?.map((m) => `${dir}/${f}: ${m}`) ?? []));
+        .match(/\.api_key\b|["']Authorization["']|\bhf_token\b|hfToken|inference\/extend/g)?.map((m) => `${dir}/${f}: ${m}`) ?? []));
   assert.deepEqual(found, []);
 });
 
@@ -337,4 +398,13 @@ test("live progress events append to the loss curve, and a step the curve alread
   // the curve is the node's own record: an event at the same step neither replaces it nor drops its valid_loss
   assert.deepEqual(lossPoints([{ node_id: "tune", rows: [{ step: 2, train_loss: 0.5, valid_loss: 0.6 }] }], [progress("tune", 2, 0.7)] as never),
     [{ node_id: "tune", step: 2, loss: 0.5, valid_loss: 0.6 }]);
+});
+
+test("the golden-run link matches its workflow name exactly and hides runs never started; a typed search is a substring", () => {
+  const golden = { id: "r1", workflow_name: "golden", status: "succeeded" };
+  const copy = { id: "r2", workflow_name: "golden (copy)", status: "succeeded" };
+  const pending = { id: "r3", workflow_name: "golden", status: "pending" };
+  assert.deepEqual([golden, copy, pending].filter(r => runShown(r, "golden", "golden")), [golden]);
+  assert.deepEqual([golden, copy, pending].filter(r => runShown(r, "golden", "")), [golden, copy, pending]);  // typed, not linked
+  assert.deepEqual([golden, copy].filter(r => runShown(r, "copy", "golden")), [copy]);  // the box was edited
 });

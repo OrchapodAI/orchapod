@@ -111,3 +111,52 @@ $0. No Nebius API was called, with no key and no project. WebFetch was not in my
   - polls through Nebius API blips
 
   Source: platform-w5.
+
+## Fix round 1 (e8afedc docs/contracts, b3f4438 code + tests)
+This round supersedes three statements above:
+- list() now keeps the API's order; there is no newest-first sort.
+- A lost create is recovered through find() at 0/15/45 s, not by one list().
+- wait() now also sets `Pod.error`.
+
+**Important 1: lost-create recovery.**
+- `jobs.find(name)` and `endpoints.find(name)` are on both kinds, so ml-w4 can call `endpoints.find` after a lost create.
+- They look at about 0, 15 and 45 s (`time.sleep` 0, 15, 30). Any failed lookup (a ProviderError) counts as a miss. They return get()'s view, or None.
+- `NebiusProvider.provision` adopts the job through `jobs.find`. On the final miss it raises `ProvisionError("<create's error>; job <name> may still exist, cancel it in the console")` from the create's ProviderError.
+
+**Minors.**
+1. **CLI token.** It is the last line of stdout and must fullmatch `[A-Za-z0-9._~+/=-]+`; otherwise `auth` with the fixed message "nebius iam get-access-token gave no token (exit N)". The same pattern gates `NEBIUS_IAM_TOKEN` from the env, which had the same h11-repr leak path: a malformed env token is renewed like an empty one.
+2. **url.** Only `https://`, and `http://stub.invalid` only in STUB.
+3. **Volumes.** A volume is refused (`bad_request`, before any call) when `ORCHAPOD_R2_ENDPOINT` is not https. STUB is exempt, since the compose MinIO is fine offline.
+4. **Error text.** Scheme errors no longer echo the value: "ORCHAPOD_CONTROL_URL must be an https URL for a Nebius job to reach". The contract now calls it a scheme check.
+5. **IAM token in jobs.** provision drops `NEBIUS_IAM_TOKEN` from the job's env. The backend ruling (only api nodes that rent a GPU, i.e. vllm-serve, get the token) is written into the contract's NebiusProvider line.
+6. **Contract wording.** wait() has no time limit of its own; the executor's `ORCHAPOD_NODE_TIMEOUT_S` bounds it, apart from R14's spend deadline. `jobs.get` and `endpoints.get` list the six keys.
+7. **Ponytail.** The sort, the `datetime` import and the same-second test case are gone.
+
+**Added 1: spend deadline (R14).**
+- provision stores `monotonic() + ORCHAPOD_MAX_COST_USD / $ per hour × 3600` for the job; a blank cap means no deadline.
+- wait() checks it after each poll. Once the deadline has passed it returns 1 with `Pod.error = "budget: node cap $<x> reached (<platform> at $<p>/h)"`, and the executor's finally then cancels and deletes the job.
+- It is tested with a fake clock: the fixture's asyncio.sleep records and advances `nebius.monotonic`. A $0.05 cap on an H100 is 40 s, so polls run at 0, 15, 30 and 45 s and wait() returns 1.
+
+**Added 2: failure reason.**
+- The attribute is **`Pod.error: str | None`**, a dataclass field defaulting to None in packages/providers/base.py.
+- wait() sets it on every non-zero return: `"<STATE> <code>: <message>"`, with URLs in Nebius's message replaced by `<url>` and a 300-character cap, or the budget reason. The test expects `"FAILED ContainerFailed: exit code 1, see <url>"`.
+- For backend: build the node error from `pod.error` when it is set, instead of "exit 1".
+
+**Proof.**
+- `pytest tests/providers/test_nebius.py -q` → `33 passed`. With test_prices.py and test_env_example.py → `40 passed`.
+- `make check` → exit 0: `All checks passed!`, `735 passed, 2 warnings`, web `pass 27 fail 0`, `SKIP stub e2e`.
+- Mutation check: I broke 12 fix-round rules one at a time, and each failed a test:
+  - find's three looks
+  - a failed lookup counting as a miss
+  - the ProvisionError that names the job
+  - the CLI's last line
+  - the CLI token pattern
+  - the env token pattern
+  - https-only url
+  - the https bucket rule
+  - the IAM token filter
+  - the spend deadline
+  - URL scrubbing
+  - Pod.error
+
+  The file was then restored byte for byte (`cmp` IDENTICAL). Cost $0, and no Nebius API call.

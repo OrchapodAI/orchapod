@@ -254,3 +254,4 @@ worktrees:
   - Added: a spend deadline in wait() (elapsed × price ≥ ORCHAPOD_MAX_COST_USD; R14 could exceed $3 on a hung job); pod.error carries the failure reason.
   - RULING: the IAM token goes only to api nodes with rents_gpu (vllm-serve), never to gpu-runtime Jobs (backend-w5 corrected).
   - Fix round 1 sent to afe7cf5b02abce878.
+- 2026-10-21T14:54Z platform-w5 fix round 1 landed (e8afedc contracts, b3f4438 code: find() at 0/15/45 s with a named-job error, CLI token validated, https-only URLs/buckets, IAM token filtered from Job env, spend deadline in wait(), Pod.error in base.py; make check 735; 33 Nebius tests; $0). Scoped re-review (opus) dispatched.

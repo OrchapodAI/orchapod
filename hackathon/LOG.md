@@ -288,3 +288,10 @@ worktrees:
   - deleted_at goes on the endpoint_url artifact.
   - For qa: e2e_demo's cancel-after-timeout now gets 403 silently; it must send the token.
   - Review dispatched (opus; security + accounting gate).
+- 2026-10-21T15:34Z platform-w6 review (opus, prompt-injection gate): APPROVED.
+  - The index mapping held under length-changing NFKC attacks and 20k-case fuzzing; identical output on undisguised text; strictly stronger than the three copies.
+  - Inherited flaw found: the `<\s*/?\s*` regex was cubic (8,000 hostile chars took 118 s; data-prep and judge-eval fence unbounded text).
+  - Orchestrator applied the reviewer's drop-ins in 8932170: `<[\s/\\]*` (linear: 20k chars in 0.016 s, 50k spaces 0.021 s; also catches <\/, <//, </ /); Unicode tag block read as ASCII + all C*/M* ignored in the scan; `tags` required; invisible test literals escaped (Trojan Source); the contract states the guarantee and R18 points to it.
+  - DECISION: normalisation applies only to the scanned copy, never to the text the model sees.
+  - Ledger: platform-w6 fix rounds 0/5. Merged; make check green (772 + web 27); 168 fence + container tests.
+  - Rebuild synth-distilabel/data-prep/judge-eval :dev (next E2E=1).

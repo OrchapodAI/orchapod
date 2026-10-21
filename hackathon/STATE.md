@@ -4,7 +4,7 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 ## Next actions (in order)
 1. Hari: NEBIUS_API_KEY and TAVILY_API_KEY into ~/src/orchapod-hack/.env — both lines still empty on disk (2026-10-21T02:37Z); the hidden-input command is in chat. Unblocks spikes 1–3 and every live check.
 2. Spikes 1–3 (hackathon/briefs/2026-10-22-spikes.md; worktrees spike1–3 at c164e4e) — dispatch the moment the key lands.
-3. Waves 3–4: COMPLETE. Wave 5 (hackathon/briefs/2026-10-24-wave5.md): MERGED platform-w5; IN_PROGRESS backend-w5, qa-w5, platform-w6, devrel-w5; next ml-w5 (vllm-serve find() recovery + ml-w4 minors), frontend-w5 (after backend-w5).
+3. Waves 3–4: COMPLETE. Wave 5 (hackathon/briefs/2026-10-24-wave5.md): MERGED platform-w5, qa-w5, platform-w6; REVIEW backend-w5, ml-w5, devrel-w5; next frontend-w5 (after backend-w5).
 4. After wave 3: shared fence() (platform), apps/api/config.py (platform), vllm-serve rewrite (ml), `make check E2E=1` + Playwright smoke on the merged branch, D6 hardening (anonymous budget ceiling).
 5. G1 Oct 24: golden path green from the UI (needs spike 1's deploy answer) + intent #2 from the agent chat (STUB green 2026-10-21; live waits on the key).
 
@@ -48,7 +48,7 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [x] P1 D2 unsloth-train container on spike 4's lock: bucket I/O, SDK logs + loss, --max-steps, STUB — DONE (ml-w4; not built locally: ~20 GB amd64+CUDA)
 - [ ] P1 D3 vllm-serve: test `--enable-lora` with the 8B adapter (one endpoint for base + tuned); merged weights are the proven fallback — TODO
 - [x] P0 SECURITY vllm-serve token out of meta at the source (ModelRef api_key_env) + API redaction — DONE (ml-w4, backend-w3)
-- [ ] P1 shared fence(): move the R18 fixpoint fence helper into packages/providers and use it from synth-distilabel, data-prep and judge-eval (one implementation, one test) — TODO (after wave 3 merges; platform)
+- [x] P1 shared R18 fence in packages/providers (NFKC/zero-width/bidi/tag-block aware, linear) used by synth-distilabel, data-prep, judge-eval — DONE (platform-w6)
 - [ ] P1 D3 vllm-serve spec (vllm/vllm-openai:v0.18.0-cu130, token auth) + smoke script — TODO
 - [ ] P1 D5 after G2: real Serverless Job + Endpoint; D6 eval vs base; D7 judging-window plan — TODO
 ### backend

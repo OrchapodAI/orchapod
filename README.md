@@ -7,7 +7,7 @@
 An entry in the **Nebius × NVIDIA Global AI Hackathon**, track **Best Apps and Agents**. It runs on **Nebius Token Factory** and **Nebius AI Cloud**, calls **NVIDIA Nemotron** models at runtime and uses **Tavily** for web research.
 
 - TODO(D8): links to the hosted demo, the 3-minute video and the Devpost entry, each checked logged out.
-- TODO(D8): delete this note. Status on 2026-10-21: the three canonical intents run end to end in STUB mode (deterministic stubs in place of every paid call: no key, $0), and nothing has run live yet, because the Nebius keys are not set and the hosted app is not deployed. The repository and its container images stay private until the freeze (TODO(G3)). Sections marked TODO(D8) wait for evidence from real runs (run ids, costs, win rates, screenshots) and claim nothing yet.
+- TODO(D8): delete this note. Status on 2026-10-21: the three canonical intents run end to end in STUB mode (deterministic stubs in place of every paid call: no key, $0), and nothing has run live yet, because the Nebius and Tavily keys are not set and the hosted app is not deployed. The repository and its container images stay private until the freeze (TODO(G3)). Sections marked TODO(D8) wait for evidence from real runs (run ids, costs, win rates, screenshots) and claim nothing yet.
 
 ## What it is
 
@@ -22,7 +22,7 @@ Three intents define "done"; each must run from the chat box with no manual edit
 
 | Intent | Template card | What the Agent plans |
 | --- | --- | --- |
-| "Create a fine-tuned Llama 3B over all the real estate compliance in USA." | **Llama 3B tuned on US real-estate compliance** | web-research → synth-distilabel (grounded Q&A) → data-prep → tf-finetune (Llama 3.2 3B) → vllm-serve (base and adapter on one Serverless Endpoint) → judge-eval (base vs tuned) → report |
+| "Create a fine-tuned Llama 3B over all the real estate compliance in USA." | **Llama 3B tuned on US real-estate compliance** | web-research → synth-distilabel (grounded Q&A) → data-prep → tf-finetune (Llama 3.2 3B) → vllm-serve (base and adapter on one Serverless Endpoint; TODO(D8): untested) → judge-eval (base vs tuned) → report |
 | "Create synthetic data of movie likes, shares and subscribes." | **Synthetic movie likes, shares and subscribes** | synth-distilabel (structured rows) → data-prep (validate, dedupe, stats) → dataset with a download link. No training, and the plan says so |
 | "Quantize a model which is an expert in maths." | **A maths expert quantized to GGUF** | hf-download (Qwen2.5-Math-1.5B-Instruct) → quantize (GGUF q4_k_m on CPU, keeping the f16 GGUF as the baseline) → data-prep (50 GSM8K test questions) → judge-eval (f16 vs q4_k_m: exact match on all 50, Nemotron 3 Ultra judges 20) → report |
 | "Distill a Nebius docs specialist: fine-tune Llama 3.1 8B on the Nebius AI Cloud and Token Factory docs" | **Llama 8B tuned as a Nebius docs specialist** | web-research (20 Nebius docs pages) → synth-distilabel (grounded Q&A) → data-prep → tf-finetune (Llama 3.1 8B) → tf-deploy (per-token LoRA on Token Factory, else vllm-serve; TODO(D8): spike 1) → judge-eval → report |
@@ -49,11 +49,11 @@ A typical run: research the topic, generate grounded synthetic data, prepare the
 | --- | --- | --- | --- |
 | `web-research` | cpu | queries or seed URLs → deduplicated passages of 200 to 2,000 characters with their source URLs | Tavily Search and Extract |
 | `synth-distilabel` | cpu | synthetic data: self-instruct, evol-instruct, magpie, grounded Q&A from passages, or rows that match a JSON Schema | Nemotron 3 Super |
-| `data-prep` | cpu | validate, exact and near dedupe, optional quality filter, deterministic train / eval / test split by source | Nemotron 3.5 Lightning (filter) |
+| `data-prep` | cpu | validate, exact and near dedupe, optional quality filter, seeded train / eval / test split stratified by source URL, so each source's rows spread across the splits | Nemotron 3.5 Lightning (filter) |
 | `tf-finetune` | api | LoRA fine-tune, best checkpoint by validation loss, loss curve | Token Factory fine-tuning |
 | `tf-deploy` | api | deploy the adapter as a per-token LoRA model if Token Factory accepts the base (TODO(D8): spike 1), then prove it with one completion | Token Factory |
 | `unsloth-train` | gpu | 16-bit LoRA with Unsloth on a Nemotron student, resumable checkpoints | Nebius Serverless Job |
-| `vllm-serve` | api | creates a vLLM endpoint for the base model and the adapter side by side, registers its expiry and exits; the endpoint rents a GPU, so the public caps treat it as a GPU node | Nebius Serverless Endpoint |
+| `vllm-serve` | api | creates a vLLM endpoint for the base model and the adapter side by side (TODO(D8): untested), registers its expiry and exits; the endpoint rents a GPU, so the public caps treat it as a GPU node | Nebius Serverless Endpoint |
 | `judge-eval` | api | base vs tuned on held-out questions: identical decoding, a reference-guided judge, both answer orders; GGUF files are served locally by llama.cpp | Nemotron 3 Ultra |
 | `hf-download` | cpu | Hugging Face model download with SHA-256 verification | Hugging Face Hub |
 | `quantize` | cpu | GGUF q4_k_m, q5_k_m or q8_0 on CPU, optionally keeping the f16 GGUF as a baseline (AWQ needs a GPU job) | llama.cpp |
@@ -82,19 +82,19 @@ A run planned from a sentence starts with a Nemotron call (the plan), a run star
 | Quality filter | `nvidia/Nemotron-3_5-Lightning` | `data-prep`: optional, scores each chat row 1 to 5 and drops rows below 3; the node fails if more than max(2, a tenth) of its scoring calls fail |
 | Reporter | `nvidia/Nemotron-3_5-Lightning` | Orchapod Agent: writes the run report (what ran, metrics, cost against the estimate) |
 
-No other model provider is called: the Anthropic and OpenAI code paths (the planner's Claude path, the synthetic-data teacher branches and the evaluation's judge fallback) were deleted during the build, and the executor forwards no other provider's key to the node containers.
+No other model provider is called: the Anthropic and OpenAI code paths (the planner's Claude path, the synthetic-data teacher branches and the evaluation's judge fallback) were deleted during the build, and the executor forwards no other model provider's key to the node containers.
 
 ### Token Factory fine-tuning (Lane A)
 
 `tf-finetune` uploads the train and validation files, creates a LoRA job, polls it, keeps the checkpoint with the lowest validation loss and saves the adapter and the loss curve. `tf-deploy` deploys that checkpoint as a per-token LoRA model if Token Factory accepts the base (TODO(D8): spike 1), then sends one proving completion. Token Factory fine-tunes Llama, Qwen, gpt-oss, DeepSeek and Gemma models but not Nemotron, so Lane A tunes a Llama model (3.2 3B or 3.1 8B) that Nemotron teaches and judges.
 
-TODO(D8): spike 1 decides the deploy path (per-token LoRA through `POST /v0/models`, or `vllm-serve` with the adapter on a Serverless Endpoint). State the answer and the exact base model id here.
+TODO(D8): spike 1 decides the deploy path (per-token LoRA through `POST /v0/models`, or `vllm-serve` with the adapter on a Serverless Endpoint). State the answer and the exact base model id here. No fine-tune has run yet: until spike 1 records the price per trained token, the client refuses to start an unpriced job.
 
 ### Nebius AI Cloud (Lane B)
 
 - **Serverless Jobs.** `unsloth-train` runs as a Job on `gpu-h100-sxm` with a 1-hour timeout: a 16-bit LoRA on `nvidia/Llama-3.1-Nemotron-Nano-8B-v1`. A spike on a rented A100 outside Nebius chose that student: 60 steps took 62.5 s at a 15.9 GiB peak, and the merged model served from vLLM 0.18.0. Logs and artifacts flow back through the SDK, so `ORCHAPOD_CONTROL_URL` must be a public https URL.
 - **Serverless Endpoints.** `vllm-serve` creates an Endpoint (`vllm/vllm-openai:v0.18.0-cu130`, default `gpu-l40s-a`, bearer-token auth) that serves the base model and the adapter side by side, and registers an expiry (30 minutes by default), at which the control plane is to delete it. TODO(D8): that delete is not wired to Nebius yet, and base and adapter side by side (`--enable-lora`) has not run; the spike served merged 16-bit weights.
-- **Object Storage.** Datasets, checkpoints and artifacts live in an S3-compatible bucket: `https://storage.eu-north1.nebius.cloud` on Nebius, MinIO locally. The `ORCHAPOD_R2_*` variables and the `r2://` scheme keep their historical names.
+- **Object Storage.** Datasets, checkpoints and artifacts live in an S3-compatible bucket: `https://storage.eu-north1.nebius.cloud` on Nebius, MinIO locally (TODO(D8): only MinIO so far). The `ORCHAPOD_R2_*` variables and the `r2://` scheme keep their historical names.
 - TODO(D8): GPU quota, the Job and Endpoint ids of the golden run, console screenshots.
 
 ### Tavily
@@ -118,7 +118,7 @@ make check                      # ruff + unit tests + web tests; no keys, no spe
 
 `make up` publishes those four ports, so stop anything already listening on them first. On pnpm 9 (as in CI), run `make check PNPM=pnpm`.
 
-**A first run without keys.** `python scripts/e2e_agent.py --stub` builds the node images the three canonical intents need and runs each intent through the Agent API on deterministic stubs: plan, run, report, $0. `make check E2E=1` runs it after `scripts/e2e_demo.py --stub` (intent #2 through the workflow API), and both are strict: a failed intent, or a canonical plan that names a node that does not exist, fails them. They start their own API with `STUB=1` and a throwaway database, need `make up`, and rebuild the local `orchapod/<node>:dev` images. Their API listens on 127.0.0.1, which node containers reach through Docker Desktop (macOS, Windows) but not on Linux. Recorded on NebiusHackathon @ 3b80954: `make check E2E=1` exited 0, and all three intents passed with none skipped (`hackathon/LOG.md`, 2026-10-21T14:41Z).
+**A first run without keys.** `python scripts/e2e_agent.py --stub` builds the node images the three canonical intents need and runs each intent through the Agent API on deterministic stubs: plan, run, report, $0. `make check E2E=1` runs it after `scripts/e2e_demo.py --stub` (intent #2 through the workflow API), and both are strict: a failed intent, or a canonical plan that names a node that does not exist, fails them. They start their own API with `STUB=1` and a throwaway database, need `make up`, and rebuild the local `orchapod/<node>:dev` images. Their API listens on 127.0.0.1, which node containers reach through Docker Desktop (macOS, Windows) but not on Linux; there, run the app below with `STUB=1` instead (TODO(D8): not yet tried on Linux). Recorded on NebiusHackathon @ 3b80954: `make check E2E=1` exited 0, and all three intents passed with none skipped (`hackathon/LOG.md`, 2026-10-21T14:41Z).
 
 **The app.** Two lines of `.env` decide what your browser can do:
 
@@ -129,6 +129,7 @@ Then start the API and the web app in two terminals; the API creates its tables 
 
 ```bash
 # terminal 1: the API on :8001 (docs at http://localhost:8001/docs)
+. .venv/bin/activate
 set -a; . ./.env; set +a
 PYTHONPATH=apps:packages/sdk-py uvicorn api.main:app --port 8001
 
@@ -160,7 +161,7 @@ The other templates need `hf-download quantize data-prep judge-eval` (maths), `w
 ### Results
 
 - TODO(D8): golden run id, wall time and cost; base-vs-tuned win rate and judge agreement over N held-out questions; one judged example; screenshots of the plan card, run view, eval view and playground (the full list is in `docs/video-script.md`); the video link.
-- **Intent #3 on CPU (measured, no key).** The maths template's evaluate step ran in Docker on an M1 Pro Mac with the judge turned off: the f16 and q4_k_m GGUFs of Qwen2.5-Math-1.5B-Instruct answered the 50 GSM8K test questions in 18 min 01 s in all, with no failed row. Exact match was 0.78 for f16 and 0.84 for q4_k_m, a gap of 3 questions in 50 that is within noise. The q4_k_m file is 0.99 GB, against 3.09 GB for f16. TODO(D8): the Nemotron 3 Ultra verdicts on 20 of the questions.
+- **Intent #3 on CPU (measured, no key).** The maths template's evaluate step ran in Docker on an M1 Pro Mac, a busy host, with the judge turned off: the f16 and q4_k_m GGUFs of Qwen2.5-Math-1.5B-Instruct answered the 50 GSM8K test questions in 18 min 01 s in all, with no failed row. Exact match was 0.78 for f16 and 0.84 for q4_k_m, a gap of 3 questions in 50 that is within noise. The q4_k_m file is 0.99 GB, against 3.09 GB for f16. TODO(D8): the Nemotron 3 Ultra verdicts on 20 of the questions.
 - **Stub runs ($0, no key).** Both checks run the real API, executor and node containers on deterministic stubs. `scripts/e2e_agent.py --stub` passed all three canonical intents with none skipped on NebiusHackathon @ 3b80954 (runs fb293b38, a2e22cc5 and 3ee82280). `make ui-smoke`, the Playwright smoke of the web app, passed 5 of 5 on f43fdd0, including the golden path (template card → run → eval view → compare playground) and the public-cap check (at `ORCHAPOD_ANON_SCALE=0.1`, a template above the per-run cap cannot be run and says why). Both are in `hackathon/LOG.md` (2026-10-21T14:41Z and 14:58Z).
 
 ## Costs and caps
@@ -171,7 +172,7 @@ The other templates need `hf-download quantize data-prep judge-eval` (maths), `w
 | Per UTC day | $15 | `ORCHAPOD_MAX_DAY_USD` |
 | Serverless Job timeout | 1 hour | fixed |
 | Node backstop timeout | 5,400 s | `ORCHAPOD_NODE_TIMEOUT_S` |
-| Endpoint keep-alive | 30 min, at most 120 | `keep_alive_min` on `vllm-serve` |
+| Endpoint keep-alive | 30 min, at most 120 (TODO(D8): deletion at expiry is not wired to Nebius yet, so delete a live endpoint by hand; an L40S left up costs $1.55/h) | `keep_alive_min` on `vllm-serve` |
 | Compare streams in flight | 4 | `ORCHAPOD_MAX_COMPARES` |
 | Kill switch | off | `ORCHAPOD_KILL_SWITCH=1` |
 | Anonymous visitors | caps × 0.1 | `ORCHAPOD_ANON_SCALE` |
@@ -199,7 +200,7 @@ During the period (the dated list is [CHANGELOG.md](CHANGELOG.md)):
 
 - Oct 2–8: first Nebius × NVIDIA integration: a Token Factory service, a Nebius provider, the Nemotron 3 Super teacher node (`synth-distilabel`), Token Factory model ids verified against the live catalog, and the executor fixes that let a CPU workflow run end to end.
 - Oct 20: the Orchapod Agent (one sentence in, a validated Nemotron plan with cost and time estimates out; runs monitored and reported; spend caps per run and per day); Tavily web research, grounded and structured synthetic data, and Token Factory fine-tune and deploy nodes; one Token Factory client and one Tavily client; a run engine with retry, cancel, restart recovery and cost roll-up; the Agent page and a run page with a live cost meter; the Lane B student chosen by experiment; repo clean-up, interface contracts ([docs/contracts.md](docs/contracts.md)) and a green `make check` in CI.
-- Oct 21: the evaluation (Nemotron 3 Ultra judges base against tuned in both orders) and its eval view; intent #3's CPU quantization with an f16 baseline, plus a fix for llama.cpp garbling f16 answers on Apple silicon; the compare playground; four one-click templates with reduced "Run it yourself" versions; the data-prep quality filter; the Serverless Endpoint serving node and the GPU training container; public-demo hardening (rate limits, an origin allow-list, deep health checks, GPU nodes for the admin only, secrets never stored); hosting files for one VM, not deployed yet; stub end-to-end tests of the three intents, a browser test of the golden path, and failure drills.
+- Oct 21: the evaluation (Nemotron 3 Ultra judges base against tuned in both orders) and its eval view; intent #3's CPU quantization with an f16 baseline, plus a fix for llama.cpp garbling f16 answers on Apple silicon; the compare playground; four one-click templates with reduced "Run it yourself" versions; the data-prep quality filter; the Serverless Endpoint serving node and the GPU training container; public-demo hardening (rate limits, an origin allow-list, deep health checks, GPU nodes for the admin only, secret-looking inputs never stored); hosting files for one VM, not deployed yet; stub end-to-end tests of the three intents, a browser test of the golden path, and failure drills.
 - TODO(D8): bring this list up to date with CHANGELOG.md at the freeze.
 
 ## License

@@ -100,7 +100,7 @@ def test_an_unexpected_plan_error_fails_and_a_skip_never_hides_it(capsys):
     assert "e2e FAIL intent #3" in out and "hf_split" in out and "SKIP" not in out.replace("0 SKIP", "")
 
 
-@pytest.mark.parametrize("errors", [[], ERRORS_3])
+@pytest.mark.parametrize("errors", [[], ERRORS_1])  # ERRORS_1 are named gaps of the plan it answered with: still no SKIP
 def test_a_planner_that_answers_with_another_plan_fails_even_when_its_errors_are_named_gaps(errors, capsys):
     api = fake_api({I3["intent"]: errors}, plan_for={I3["intent"]: I1["plan"]})
     assert agent.run_all(api, "3", strict=False) == 1
@@ -130,16 +130,21 @@ def test_a_missing_canonical_template_is_a_failure_not_a_skip(capsys):
 
 # --- the real run is refused without a cap -----------------------------------------------------------------------------------
 
+REFUSED = "refusing to run without --max-cost"
+
+
 @pytest.mark.parametrize("argv, message", [
-    (["--intent", "Quantize a model"], "--max-cost"),
-    (["--intent", "Quantize a model", "--max-cost", "0"], "--max-cost"),
-    (["--intent", "Quantize a model", "--max-cost", "3"], "only --stub exists"),
-    ([], "--max-cost"),
+    (["--intent", "Quantize a model"], REFUSED),
+    (["--intent", "Quantize a model", "--max-cost", "0"], REFUSED),
+    (["--intent", "Quantize a model", "--max-cost", "-1"], REFUSED),
+    ([], REFUSED),
+    (["--intent", "Quantize a model", "--max-cost", "3"], "only --stub exists"),  # capped, but the real run is not written yet
 ])
 def test_a_real_run_is_refused_without_max_cost(argv, message, capsys):
     with pytest.raises(SystemExit) as e:
         agent.main(argv)
-    assert e.value.code == 2 and message in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert e.value.code == 2 and message in err and (message == REFUSED) == (REFUSED in err), err
 
 
 # --- the report and the outputs -----------------------------------------------------------------------------------------------

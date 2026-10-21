@@ -140,3 +140,56 @@ It asserts:
   - the `DataFormat` enum alignment in models.py;
   - unpinned `datasets`.
 - Sequential scoring takes about 0.4 s per row, so 15k rows would hit the 5,400 s node timeout. The thread-pool upgrade is marked `ponytail:` in the code.
+
+## Fix round 1 (Orchestrator review): DONE in 90b305c
+This section supersedes three earlier statements:
+- Item 1a's "Errors" bullet: a failed call still keeps its row, but now behind a gate.
+- DECISION 3.
+- The spike-2 bullet: if thinking stays on, the node now fails after the 3rd failed call.
+
+**Important: failure-rate gate.**
+- **Gate.** In `quality_filter`, after `log.warn(str(e))`: `if failed > max(2, i // 10): fail(f"quality filter: {failed} of {i} scoring calls failed, last: {e}")`.
+  - An isolated failure keeps its row.
+  - When every call fails (thinking left on, an outage), the node exits 1 after the 3rd row and writes no outputs.
+  - Test: 5 rows, every reply 500. Exit 1 after 12 requests (3 rows × 4 tries), with "quality filter: 3 of 3 scoring calls failed, last: token_factory server 500…" and no write_output.
+  - The isolated-failure test is now 3 cases of 2 failures each (429 then 500; invalid JSON then score 9; `true` then `"5"`), so it stays at the gate's floor.
+- **Hang: added beyond the list.** Each scoring call passes `read_timeout=30`.
+  - A hung call now fails in 30 s per try instead of 120 s, so a hang reaches the gate in about 6 min instead of about 24 min.
+  - Tested through the request's timeout extension. It is one keyword, so drop it if unwanted.
+
+**Minors.**
+1. **Fixpoint.**
+   - The fence test injects the real reassembly cases, `<<passage/passage>` and `<<example/example>`: one pass turns them into closing tags.
+   - The comment example is corrected in data-prep and in synth-distilabel, where it was copied from. synth's own test already covered `<pas<passagesage>`.
+2. **Intent #1 test.**
+   - Refs resolve through the executor's `_resolve_inputs`: `NodeRun.outputs` is built from each node's registered URIs.
+   - The template is read inside the test, and `NODE_REF` is gone.
+3. **Cost assertion.** Calls and tokens are asserted exactly. usd is checked as `cost.total() == pytest.approx(...)` from `cost.PRICES[...][LIGHTNING]`, so platform-w3's re-pricing cannot break it.
+4. **CSV.**
+   - Added `csv.field_size_limit(sys.maxsize)`.
+   - The comment documents that a short row's missing cells are None (null).
+   - The test adds a BOM header, a quoted newline, a 200 KB cell and a short row. `skipped` is now 2: the ragged row, and the short row whose output cell is None.
+5. **Drop count.**
+   - The filter logs "quality filter dropped D of N rows (score under 3)[; F calls failed, their rows kept]".
+   - The "the quality filter dropped all 6" fatal branch has its own test (exit 1, no outputs).
+6. **Cliff.** The `ponytail:` comment now says about 0.4 s per call, 300 rows ≈ 2 min, and that about 13k rows reach the 5,400 s backstop; the thread pool is the upgrade.
+
+**Proof.**
+- `make check` on 90b305c: exit 0. ruff "All checks passed!", `541 passed, 126 warnings`, web `pass 12, fail 0`, stub e2e `SKIP`.
+  - 541 = 537 + 4: two more failure cases, the gate test, and the drop-all test.
+  - One earlier run printed `540 passed, 1 skipped`. The skip was platform's real-Docker exit-code test, which skips when it cannot build its throwaway alpine image; other agents are using the same Docker daemon. Reruns passed all 541.
+- **Mutation check:** each guard was removed in turn, and a test failed every time. 9 mutations, all caught:
+
+| Mutation | Caught by |
+|---|---|
+| no gate | the gate test |
+| `>=` instead of `>` | the isolated-failure cases |
+| floor 3 instead of 2 | the gate test's "3 of 3" message |
+| single-pass strip | the fence test |
+| no field-size limit | the CSV test |
+| `utf-8` instead of `utf-8-sig` (BOM kept) | the CSV test |
+| no `read_timeout` | the drop test |
+| no dropped-count log | the drop test |
+| no drop-all message | the drop-all test |
+
+Not in this round: moving `fence()` into packages/providers (the Orchestrator schedules it after the merge).

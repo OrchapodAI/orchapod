@@ -104,13 +104,13 @@ Selectors for qa-w3's Playwright smoke:
 - **Compare** shows the 404 state until backend-w3's `POST /compare` lands. If a stream ends without `done`, that side shows "stopped before done". The contract has no mid-stream error event; if backend-w3 adds `{i, error}`, it is a one-line change to show it.
 - **Downloaded file name:** the browser saves the dataset as `dataset`, without `.jsonl`, because the `download` attribute is ignored across origins. Fix in backend: add `ResponseContentDisposition` to `presigned_download_url`.
 - **Unreachable storage host:** presigned URLs use `ORCHAPOD_R2_ENDPOINT`. Inside compose that is `http://minio:9000`, which a browser cannot resolve. This already affects the artifact download links; it is fine when the API runs on the host (localhost:9000).
-- **Hosted samples need storage CORS:** in the hosted app, the samples fetch needs a CORS rule on the Nebius Object Storage bucket (GET from the web origin). MinIO allows any origin by default. If that rule is missing, the eval numbers still render and the samples show the readable error.
+- **Hosted samples need storage CORS:** in the hosted app, the samples fetch needs a CORS rule on the Nebius Object Storage bucket that allows GET from **any origin (`*`)**. The API's 307 is a cross-origin redirect, so the bucket sees `Origin: null`, not the web origin. Allowing `*` is acceptable because objects are reachable only through 1-hour presigned URLs. MinIO allows any origin by default. If the rule is missing, the eval numbers still render and the samples show the readable error. *(Corrected in fix round 1; I first said "GET from the web origin", which would not work.)*
 - **Out of scope, not changed:** the hidden legacy `/inference` page (off-nav, P2 deletion) still posts a user-typed `hf_token` and shows an `api_key="orchapod"` snippet.
 
 ## Open questions
 1. **ml-w3:** I render `exact_match.base` / `.tuned` as fractions from 0 to 1 (shown as %). Please confirm they are not counts. judge-eval must also call `io.write_metrics` with the eval_summary minus `samples`, **including the `base`/`tuned` ModelRefs**, as the contract says. The eval tab and Compare's model list read them from there.
-2. **Product:** should `/` redirect to `/agent` (the gallery) instead of `/workflows`, so judges land on the templates? It is a one-line change; I left it.
-3. **platform-w3 (hosting):** include the bucket CORS rule from the limits above.
+2. ~~**Product:** should `/` redirect to `/agent`?~~ Done in fix round 1.
+3. **platform-w3 (hosting):** include the bucket CORS rule from the limits above: GET from `*`.
 
 ## DECISION candidates for STATE.md
 - DECISION 2026-10-22: the eval view reads its numbers from judge-eval's `metrics_json` (DB) and fetches only the samples from the `eval_summary` file. Eval, Dataset and Compare are tabs of the run view (and so also on /agent), and a succeeded run opens its result once. — frontend-w3
@@ -120,3 +120,32 @@ Selectors for qa-w3's Playwright smoke:
 - apps/web: `app/agent/page.tsx`, `components/Callout.tsx` (moved out of the agent page), `components/canvas/NodePanel.tsx`, `components/runs/{RunView,EvalView,DatasetCard,ComparePlayground}.tsx`; `components/runs/{EndpointCountdown,TryItChat}.tsx` deleted; `lib/{api,types,nodeForms,results}.ts`
 - tests/web/web.test.ts
 - README.md (1 line)
+
+## Fix round 1 (41d87b5)
+All items from the Orchestrator's fix round 1 are done, in one commit on `hack/frontend-w3`.
+
+**Compare playground**
+- backend-w3's `/compare` ends a failed stream with `{i, done: true, usd: null, error}`. That `error` is now in the done event type and in each side's state, and the footer shows it in rose instead of "done".
+- The event reducer moved to `applyCompareEvent` in `lib/runEvents.ts` and is unit-tested. A frame without a delta now appends nothing (no more "undefined").
+- `finally { ctrl.abort(); setBusy(false) }`: a malformed frame ends the read and now also closes the stream.
+- A 502/503 outside `/agent` shows the server's detail, for example "502 on /compare: refs[1] (tuned) failed; the API log has the cause". The planner and kill-switch wording now applies only to `/agent` routes.
+
+**Templates**
+- `AgentTemplate.reduced?: {plan, estimate}`. The card shows `(t.reduced ?? t).estimate`, and one-click Run posts `(t.reduced ?? t).plan`, so it works with or without backend-w3.
+- The "Use intent" button is deleted (ponytail). One-click Run no longer writes into the intent box, so a typed draft survives.
+- `/` now redirects to `/agent`, so judges land on the gallery.
+
+**Smaller items**
+- A visible STUB pill on the eval headline (it replaces the footer text), the dataset card and the compare tab. For compare, the run counts as STUB when any node's `metrics_json` has `stub: true`.
+- The samples error message and the report now give the right CORS advice (GET from `*`; see the corrected limit above).
+- DatasetCard says "invalid" instead of "unreadable".
+- The timeout field adds `focus:invalid:border-[#DE350B]`, so the red border stays while typing; the built CSS has `.focus\:invalid\:border-\[\#DE350B\]:focus:invalid`. It sets `aria-invalid` when the value is above 85.
+
+**Proof**
+- Web tests: 22/22. The new test covers the compare reducer (done with error, delta-less frame), and the explainError test now covers `/compare` 502/503.
+- tsc: clean. `next build`: exit 0.
+- `make check`: exit 0 (ruff clean; pytest 395 passed, 2 skipped; web 22/22).
+- Headless UI check: **70/70**, no page errors. New checks: STUB pills ×3, "1 invalid", the delta-less frame, the rose error on the failed side, `/` → `/agent`, reduced estimates on the cards, no Use intent button, the reduced plan posted, the typed draft kept, the corrected CORS message, and the `/compare` 502 detail.
+- Dry-run merges stay clean against NebiusHackathon and every wave-3 branch.
+
+**Report changes:** the "Use intent" bullet under "What was built" is superseded by this section. One open question remains: ml-w3 to confirm `exact_match` values are fractions.

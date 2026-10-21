@@ -21,11 +21,6 @@ try:
 except ImportError:
     NebiusProvider = None  # type: ignore
 
-try:
-    from packages.providers.runpod import RunPodProvider
-except ImportError:
-    RunPodProvider = None  # type: ignore
-
 
 def _parse_gpu_spec(resource_str: str) -> GPUSpec:
     """
@@ -44,12 +39,10 @@ def build_providers() -> dict[str, GPUProvider]:
     Any provider whose key is missing is silently omitted.
     """
     providers: dict[str, GPUProvider] = {}
-    if os.environ.get("NEBIUS_IAM_TOKEN") and NebiusProvider:
+    if os.environ.get("NEBIUS_PROJECT_ID") and NebiusProvider:
         providers["nebius"] = NebiusProvider()
     if os.environ.get("VASTAI_API_KEY"):
         providers["vastai"] = VastAIProvider()
-    if os.environ.get("RUNPOD_API_KEY") and RunPodProvider:
-        providers["runpod"] = RunPodProvider()
     return providers
 
 
@@ -66,12 +59,13 @@ def get_providers() -> dict[str, GPUProvider]:
 
 async def pick_provider(resources) -> tuple[GPUProvider, GPUSpec]:
     """
-    Choose the first available provider from the node's preference list.
+    Choose the first available provider from the node's preference list (default ["nebius"]).
+    vastai is used only when provider_pref names it, so a gpu node never lands there silently.
     Returns (provider, gpu_spec) so the caller can use the spec for provisioning.
     Raises NoCapacity if no provider has available GPUs.
     """
     providers = get_providers()
-    pref: list[str] = getattr(resources, "provider_pref", None) or ["runpod", "vastai"]
+    pref: list[str] = getattr(resources, "provider_pref", None) or ["nebius"]
     gpu_str: str = getattr(resources, "gpu", "1xH100")
     gpu_spec = _parse_gpu_spec(gpu_str)
 
@@ -86,10 +80,7 @@ async def pick_provider(resources) -> tuple[GPUProvider, GPUSpec]:
         except Exception:
             continue
 
-    raise NoCapacity(
-        f"No provider in {pref} has available {gpu_str} capacity. "
-        "Check your API keys and provider dashboards."
-    )
+    raise NoCapacity(f"none of {pref} is configured with {gpu_str} capacity (nebius needs NEBIUS_PROJECT_ID)")
 
 
 async def get_cost_estimate(resources) -> list[dict]:

@@ -176,9 +176,12 @@ def each(phase: str, samples: list[dict], work) -> None:
         except ProviderError as e:
             s["error"] = f"{phase}: {e}"
 
-    with ThreadPoolExecutor(WORKERS) as pool:
+    pool = ThreadPoolExecutor(WORKERS)
+    try:
         for done, _ in enumerate(pool.map(one, todo), 1):
             log.progress(done, len(todo), extra={"phase": phase})
+    finally:  # on a cancel (SIGTERM) return at once: serving() then stops llama-server, ending the calls in flight
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 def ask(tf: TokenFactory, ref: dict, messages: list, decoding: dict) -> str:

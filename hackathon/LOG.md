@@ -166,3 +166,10 @@ worktrees:
   - OPEN per its report: anonymous PUT/DELETE of any workflow (incl. the golden run's); admin spend counts against the anonymous share; GPU nodes bounded only by the node timeout. One gitleaks false positive for .gitleaksignore.
   - Trial merge clean. Review dispatched (opus, security gate), reviewer id.
 - 2026-10-21T13:10Z data-w4 fix round 1 landed (a587b1f contracts, 14a3f09 data-prep keeps one test and one eval row from n ≥ 3 out of the largest source — fixes qa-w3's G1 blocker at the root (real-estate reduced STUB 2/1/1, docs 4/1/1), e73c646 seeds with Compute/Object Storage pricing + Dedicated deploy-api, manage pages last; make check 610). After merge: rebuild orchapod/data-prep:dev before the gallery check. Scoped re-review (sonnet) with edge-case probes of the split change.
+- 2026-10-21T13:13Z platform-w4 re-review (sonnet): all ADDRESSED, no new Critical/Important.
+  - The reviewer simulated the deploy against fakes: one failed pull never aborts; the export scp precedes the disk delete.
+  - Deviation accepted: only images already on the VM are re-pulled; an absent one is pulled fresh at first run.
+  - Minor fixed by the orchestrator in 9ddbdc1: smoke() uses `-p ${COMPOSE_PROJECT_NAME:?}`; Rollback notes that node images float on :latest.
+  - Ledger: platform-w4 fix rounds 1/5, 0 open. Merged; make check green (605 + web 27).
+  - DECISIONs recorded: no VASTAI_API_KEY on the VM; 14 rotating backup slots; explicit rsync excludes.
+  - Pending with backend-w4's merge: ORCHAPOD_CORS_ORIGINS + ORCHAPOD_TRUSTED_PROXIES in .env.example/compose; drop `--forwarded-allow-ips "*"`; healthcheck/watchdog → /livez.

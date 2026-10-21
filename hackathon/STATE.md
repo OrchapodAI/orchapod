@@ -4,7 +4,7 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 ## Next actions (in order)
 1. Hari: NEBIUS_API_KEY and TAVILY_API_KEY into ~/src/orchapod-hack/.env — both lines still empty on disk (2026-10-21T02:37Z); the hidden-input command is in chat. Unblocks spikes 1–3 and every live check.
 2. Spikes 1–3 (hackathon/briefs/2026-10-22-spikes.md; worktrees spike1–3 at c164e4e) — dispatch the moment the key lands.
-3. Wave 3: ALL MERGED except qa-w3 (IN_PROGRESS). Wave 4 (hackathon/briefs/2026-10-23-wave4.md): MERGED frontend-w4; FIX ROUND platform-w4; REVIEW data-w4; IN_PROGRESS backend-w4, ml-w4; queued qa-w4 (after qa-w3).
+3. Wave 3: ALL MERGED except qa-w3 (REVIEW). Wave 4 (hackathon/briefs/2026-10-23-wave4.md): MERGED frontend-w4, platform-w4; REVIEW backend-w4 (opus); RE-REVIEW data-w4; IN_PROGRESS ml-w4; queued qa-w4 (after qa-w3).
 4. After wave 3: shared fence() (platform), apps/api/config.py (platform), vllm-serve rewrite (ml), `make check E2E=1` + Playwright smoke on the merged branch, D6 hardening (anonymous budget ceiling).
 5. G1 Oct 24: golden path green from the UI (needs spike 1's deploy answer) + intent #2 from the agent chat (STUB green 2026-10-21; live waits on the key).
 
@@ -25,8 +25,8 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [x] P0 D2 LocalDocker: a fast-failing container can be removed before `docker wait` sees it → node reads as succeeded (pre-existing; found by platform-w1) — DONE (platform-w2)
 - [ ] P1 D2 nebius_serverless provider: Jobs, Endpoints, IAM refresh, Object Storage — TODO
 - [x] P0 D2 setup gaps (compose 8001 and no Anthropic/253B judge; build script loops containers/*/; ensure_bucket_exists at API start; web default 8001) — DONE (wave 2)
-- [ ] P0 D3 .env.example complete (every var + where to get it) + budget-guard settings — TODO
-- [ ] P0 D4 hosting decision (proposal for Hari; nothing created without his yes); reachable by D6 with an uptime check — IN_PROGRESS(platform-w3)
+- [x] P0 D3 .env.example complete (every var, default, where to get it, hosted-only block) + a test that every env name the code reads is listed — DONE (platform-w4)
+- [ ] P0 D4 hosting: repo side DONE (platform-w4: prod compose, Caddy, cloud-init, prod Dockerfiles, deploy/backup/watchdog, docs/HOSTING.md; local prod smoke green); cloud side waits on Hari's decision + console steps (hackathon/briefs/2026-10-22-hosting-proposal.md) — BLOCKED(Hari)
 ### data-engineering
 - [x] P0 D2 web-research node: seed URLs | query → extract → chunk → corpus.jsonl, dedupe, max_pages, STUB=1 — DONE (data-w2)
 - [x] P0 D2 synth-distilabel grounded mode (passage → short sourced Q&A, JSON schema) + price fix $0.30/$0.90 — DONE (data-w2)
@@ -102,6 +102,7 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - DECISION 2026-10-20: Lane B student = nvidia/Llama-3.1-Nemotron-Nano-8B-v1 — spike 4: 60 steps 62 s / 15.9 GiB, merge 41 s, vLLM healthy 51 s, fits an L40S; Nemotron-3-Nano-30B-A3B also works (router frozen) but is 12× slower per step and needs 80 GB — a proven option, not the default.
 - DECISION 2026-10-21: gpu-l40s-a = $1.55/h (Intel L40S; $1.82 is the AMD gpu-l40s-d) — platform-w3, nebius.com/prices + docs component math; Lane B ≈ $2.65.
 - DECISION 2026-10-21 (orchestrator ruling): ORCHAPOD_ANON_SCALE stays 0.1; real-estate's reduced template ($0.83 at the corrected L40S price) is admin-only until Hari raises the scale (≥ 0.3) inside the hosting decision.
+- DECISION 2026-10-21: hosted VM never gets VASTAI_API_KEY; backups = 14 rotating slots in the bucket; deploy keeps explicit rsync excludes (.env, nebius/, deploys.log) — platform-w4, review agreed.
 - OPEN DECISION: intent #1 deploy default (waits on spike 1) · hosting (D4: proposal being fixed, then to Hari).
 
 - DECISION 2026-10-20 (audit triage): Anthropic/OpenAI code leaves the demo path now (P0, stage-one rule); Vast.ai/RunPod/legacy Compute stack (~3,500 lines) is hidden from the demo path (P1) and deleted after G1 if still off-path (P2); other dead weight (Alembic beside create_all, second model registry, static Registry page, zero-caller modules) is P2.

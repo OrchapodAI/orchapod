@@ -263,6 +263,12 @@ async def test_anonymous_callers_never_start_a_gpu_node(client, db, monkeypatch)
     assert (await client.post(f"/runs/{pending.id}/start", headers=ADMIN)).status_code == 200
     assert started == [0.1, 1.0, 0.1, 1.0]  # anonymous retry of prep, admin /agent/run, gguf deploy, admin start
 
-    monkeypatch.setenv("ORCHAPOD_ANON_SCALE", "0.5")  # real-estate's reduced plan ($0.83) fits a $1.50 run cap ...
-    fits = [t["fits"] for t in (await client.get("/agent/templates")).json()]
-    assert fits == [False, True, True]  # ... but its vllm-serve rents a GPU
+    def template(slug, node):
+        return {"slug": slug, "title": slug, "intent": slug, "rationale": "", "reduced_inputs": {},
+                "plan": {"name": slug, "nodes": [{"id": "n", "needs": [], **node}]}}
+    monkeypatch.setattr(planner, "templates", lambda: [
+        template("gpu", {"type": "unsloth-train", "inputs": {"train_data": "r2://b/t"}}),
+        template("cpu", {"type": "data-prep", "inputs": {"dataset": "hf://x"}})])
+    monkeypatch.setenv("ORCHAPOD_ANON_SCALE", "0.9")  # a $2.70 run cap: unsloth-train's typical $1.88 fits it ...
+    assert [t["fits"] for t in (await client.get("/agent/templates")).json()] == [False, True]  # ... but rents a GPU
+    assert [t["fits"] for t in (await client.get("/agent/templates", headers=ADMIN)).json()] == [True, True]

@@ -367,8 +367,9 @@ async def test_startup_sweep_fails_orphaned_runs(db, provider):
 async def test_startup_runs_the_sweep_and_creates_the_bucket(monkeypatch):
     import threading
     from api import main
-    swept, bucket = AsyncMock(), threading.Event()
+    swept, resumed, bucket = AsyncMock(), AsyncMock(), threading.Event()
     monkeypatch.setattr(main, "sweep", swept)
+    monkeypatch.setattr(main.internal, "resume_ttls", resumed)  # endpoint expiries (tests/api/test_internal.py)
     monkeypatch.setattr(main, "create_tables", AsyncMock())
     monkeypatch.setattr(main, "register_providers", lambda **_: None)
     monkeypatch.setattr(main.storage, "ensure_bucket_exists", bucket.set)  # MinIO in dev starts without the bucket
@@ -379,6 +380,7 @@ async def test_startup_runs_the_sweep_and_creates_the_bucket(monkeypatch):
         pass
 
     swept.assert_awaited_once()
+    resumed.assert_awaited_once()
     assert await asyncio.to_thread(bucket.wait, 5)  # off the event loop: a slow store never delays startup
 
 

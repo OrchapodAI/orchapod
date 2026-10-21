@@ -9,7 +9,7 @@ Routes:
   POST /internal/log           — receive a structured log line from a container
   POST /internal/artifact      — receive artifact registration after R2 upload
   POST /internal/progress      — receive training progress (step, loss) for charts
-  POST /internal/ttl           — register endpoint + schedule pod termination
+  POST /internal/ttl           — register a Serverless Endpoint; it is deleted at its expiry
 
 The node's exit code decides its status (executor); every call carries X-Orchapod-Secret.
 """
@@ -17,14 +17,16 @@ The node's exit code decides its status (executor); every call carries X-Orchapo
 from __future__ import annotations
 
 import asyncio
+import logging
 import secrets
 import uuid
+from asyncio import sleep
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -32,17 +34,18 @@ from sqlmodel import select
 from api import config
 from api.database import get_session, AsyncSessionLocal
 from api.models.db import (
-    utcnow,
     Artifact, ArtifactKind,
     Model, ModelFormat,
     NodeRun, NodeStatus,
-    Run, RunStatus,
+    Run,
 )
 from api.services.events import event_bus
 from api.services.redact import redact
 
-# node_run_id (str) → running asyncio.Task for TTL termination.
+# endpoint_url artifact id (str) → the task that deletes its endpoint at expiry; asyncio keeps only weak references.
 _ttl_tasks: dict[str, asyncio.Task] = {}
+DELETE_RETRY_S = 300  # a failed delete is tried again: the endpoint bills until it is gone
+log = logging.getLogger("api.internal")
 
 router = APIRouter()
 
@@ -89,8 +92,9 @@ class RegisterTTLRequest(BaseModel):
     run_id:         str
     node_id:        str
     action:         str          # "register_ttl"
-    keep_alive_min: int
+    keep_alive_min: int = Field(ge=1, le=120)  # vllm-serve's bounds: no endpoint outlives 2 h of GPU time
     endpoint_url:   str
+    endpoint_id:    str          # the Serverless Endpoint deleted at expiry
 
 
 # ---------------------------------------------------------------------------
@@ -240,8 +244,8 @@ async def receive_progress(event: ProgressEvent):
 @router.post("/ttl", status_code=202, dependencies=[Depends(_verify_secret)])
 async def register_ttl(body: RegisterTTLRequest, db: Session):
     """
-    Called by vllm-serve containers once the endpoint is healthy.
-    Stores the endpoint URL and schedules pod termination after keep_alive_min.
+    Called by vllm-serve once its endpoint answers: records it (outputs.endpoint_url and an endpoint_url artifact, which
+    /compare's pair rule reads) and deletes it keep_alive_min later.
     """
     result = await db.execute(
         select(NodeRun).where(
@@ -271,6 +275,7 @@ async def register_ttl(body: RegisterTTLRequest, db: Session):
             "keep_alive_min": body.keep_alive_min,
             "registered_at":  now.isoformat(),
             "expires_at":     expires_at.isoformat(),
+            "endpoint_id":    body.endpoint_id,
         },
     )
     db.add(artifact)
@@ -284,87 +289,72 @@ async def register_ttl(body: RegisterTTLRequest, db: Session):
         "kind":       "endpoint",
         "expires_at": expires_at.isoformat(),
     })
-
-    node_run_id_str = str(node_run.id)
-    task = asyncio.create_task(
-        _terminate_after_ttl(
-            run_id=body.run_id,
-            node_run_id=node_run_id_str,
-            gpu_provider=getattr(node_run, "gpu_provider", None),
-            gpu_pod_id=getattr(node_run, "gpu_pod_id", None),
-            keep_alive_min=body.keep_alive_min,
-        )
-    )
-    _ttl_tasks[node_run_id_str] = task
-
+    _arm(artifact, node_run.run_id)
     return {"status": "ttl_registered", "keep_alive_min": body.keep_alive_min, "expires_at": expires_at.isoformat()}
 
 
-async def _terminate_after_ttl(
-    run_id:         str,
-    node_run_id:    str,
-    gpu_provider:   str | None,
-    gpu_pod_id:     str | None,
-    keep_alive_min: int,
-) -> None:
-    """Sleep, fire a T-10min warning, then terminate the pod."""
-    from packages.providers.vastai import PROVIDERS
-    from packages.providers.base import Pod
+def _arm(artifact: Artifact, run_id: uuid.UUID) -> None:
+    """Start the expiry task of a registered endpoint; _ttl_tasks holds it until it ends."""
+    key = str(artifact.id)
+    _ttl_tasks[key] = task = asyncio.create_task(_expire(artifact.id, artifact.meta["endpoint_id"],
+                                                         datetime.fromisoformat(artifact.meta["expires_at"]),
+                                                         run_id, artifact.node_run_id))
+    task.add_done_callback(lambda t: _ttl_tasks.pop(key, None) if _ttl_tasks.get(key) is t else None)
 
-    warn_after  = max(0, (keep_alive_min - 10) * 60)
-    final_after = 10 * 60
 
-    # Sleep until T-10min, then broadcast in-app warning + send email
-    if warn_after > 0:
-        await asyncio.sleep(warn_after)
-        try:
-            await event_bus.publish(uuid.UUID(run_id), {
-                "type":              "endpoint_expiry",
-                "node_run_id":       node_run_id,
-                "minutes_remaining": 10,
-            })
-        except Exception:
-            pass
-
-        # Fetch model + endpoint URL from DB for the email
-        try:
-            from api.services.email import send_endpoint_expiry_warning
-            async with AsyncSessionLocal() as _db:
-                _node_run = await _db.get(NodeRun, uuid.UUID(node_run_id))
-                if _node_run:
-                    _model        = str((_node_run.inputs or {}).get("model", "unknown"))
-                    _endpoint_url = str((_node_run.outputs or {}).get("endpoint_url", ""))
-                    await send_endpoint_expiry_warning(
-                        run_id=run_id,
-                        model=_model,
-                        endpoint_url=_endpoint_url,
-                        minutes_remaining=10,
-                    )
-        except Exception as _exc:
-            import logging
-            logging.getLogger(__name__).warning("Expiry email failed: %s", _exc)
-
-        await asyncio.sleep(final_after)
-    else:
-        await asyncio.sleep(keep_alive_min * 60)
-
-    _ttl_tasks.pop(node_run_id, None)
-
-    if gpu_provider and gpu_pod_id:
-        provider = PROVIDERS.get(gpu_provider)
-        if provider:
-            try:
-                await provider.terminate(Pod(provider=gpu_provider, pod_id=gpu_pod_id))
-            except Exception:
-                pass
-
+async def resume_ttls() -> None:
+    """At API start (R9): every registered endpoint not yet deleted gets its expiry task back (they live only in
+    memory), so one whose expiry passed while the API was down is deleted now."""
     async with AsyncSessionLocal() as db:
-        node_run = await db.get(NodeRun, uuid.UUID(node_run_id))
-        run      = await db.get(Run, uuid.UUID(run_id))
-        if node_run:
-            node_run.status      = NodeStatus.SUCCEEDED
-            node_run.finished_at = utcnow()
-        if run:
-            run.status      = RunStatus.SUCCEEDED
-            run.finished_at = utcnow()
+        rows = await db.execute(select(Artifact, NodeRun.run_id).join(NodeRun, NodeRun.id == Artifact.node_run_id)
+                                .where(Artifact.kind == ArtifactKind.ENDPOINT))
+        for artifact, run_id in rows:
+            meta = artifact.meta or {}
+            if meta.get("endpoint_id") and meta.get("expires_at") and not meta.get("deleted_at"):
+                _arm(artifact, run_id)
+
+
+def _endpoints():
+    """NebiusServerless().endpoints (contracts "NebiusServerless"): delete(endpoint_id)."""
+    from packages.providers.nebius import NebiusServerless
+    return NebiusServerless().endpoints
+
+
+async def _expire(artifact_id: uuid.UUID, endpoint_id: str, expires_at: datetime, run_id: uuid.UUID,
+                  node_run_id: uuid.UUID) -> None:
+    """10 minutes before expires_at, warn the run page and the alert email; at expires_at, delete the endpoint (a 404
+    means it is gone already; a stub-* endpoint never existed) and record meta.deleted_at. It changes no run or node
+    status: the node succeeded when it registered, and its run ends on its own."""
+    if (left := (expires_at - datetime.now(timezone.utc)).total_seconds()) > 600:
+        await sleep(left - 600)
+        await _warn(run_id, node_run_id)
+        left = 600
+    await sleep(max(0.0, left))
+    while not endpoint_id.startswith("stub-"):
+        try:
+            await asyncio.to_thread(_endpoints().delete, endpoint_id)
+            break
+        except Exception as e:
+            if getattr(e, "status", None) == 404:
+                break
+            log.error("endpoint %s not deleted (it bills until it is); retrying in %s s: %s", endpoint_id, DELETE_RETRY_S, e)
+            await sleep(DELETE_RETRY_S)
+    async with AsyncSessionLocal() as db:
+        artifact = await db.get(Artifact, artifact_id)
+        artifact.meta = {**artifact.meta, "deleted_at": datetime.now(timezone.utc).isoformat()}
         await db.commit()
+
+
+async def _warn(run_id: uuid.UUID, node_run_id: uuid.UUID) -> None:
+    """T-10 min: the run page's endpoint_expiry event and the alert email; neither may stop the delete."""
+    try:
+        await event_bus.publish(run_id, {"type": "endpoint_expiry", "node_run_id": str(node_run_id),
+                                         "minutes_remaining": 10})
+        from api.services.email import send_endpoint_expiry_warning
+        async with AsyncSessionLocal() as db:
+            node_run = await db.get(NodeRun, node_run_id)
+            await send_endpoint_expiry_warning(run_id=str(run_id), model=str((node_run.inputs or {}).get("model", "unknown")),
+                                               endpoint_url=str((node_run.outputs or {}).get("endpoint_url", "")),
+                                               minutes_remaining=10)
+    except Exception as e:
+        log.warning("endpoint expiry warning failed: %s", e)

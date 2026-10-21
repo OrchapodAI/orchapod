@@ -42,7 +42,6 @@ from api.services.events import event_bus
 from api.services.redact import redact
 
 # node_run_id (str) → running asyncio.Task for TTL termination.
-# Stored so the extend endpoint can cancel + reschedule it.
 _ttl_tasks: dict[str, asyncio.Task] = {}
 
 router = APIRouter()

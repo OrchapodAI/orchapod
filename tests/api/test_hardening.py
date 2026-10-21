@@ -212,3 +212,11 @@ async def test_workflow_yaml_with_an_alias_is_refused_before_it_expands(client, 
     assert [w.yaml for w in await db.scalars(select(Workflow))] == [ok.json()["yaml"]]
     with pytest.raises(ValueError, match="alias"):
         compile_dag(bomb, {})  # the executor and the planner compile through it too
+
+
+async def test_endpoint_extend_is_gone(client, db, seeded_node_run):
+    """It had no limit, guard, kill switch or admin check, and a signed extend_min: -60 lowered today's spend."""
+    run, _ = seeded_node_run  # a running vllm-serve node, which the route used to extend
+    assert (await client.post(f"/inference/extend/{run.id}", json={"extend_min": -60})).status_code == 404
+    await db.refresh(run)
+    assert run.cost_usd is None

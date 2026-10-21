@@ -88,7 +88,6 @@ export default function AgentPage() {
   // One-click Run: the template is the plan card, already planned (at reduced scale when the API offers it).
   // The intent box is left alone, so a typed draft survives.
   function runTemplate(t: AgentTemplate) {
-    if (capNote(t)) return; // above this caller's run cap: the API would refuse it (402)
     const { plan, estimate } = t.reduced ?? t;
     const reply: AgentPlan = { plan, rationale: t.rationale, estimate, warnings: [], errors: [] };
     setAsked(t.intent); setReply(reply); setRunId(null);

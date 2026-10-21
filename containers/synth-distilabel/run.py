@@ -162,6 +162,8 @@ def row_validator(raw):
 def generate(t: Teacher, n: int, batch, batches: int | None):
     """batch(i, rows still needed) until n rows, max_usd, `batches` calls (one pass over a corpus) or 3 batches in a
     row without a row. Returns (rows, stopped)."""
+    # ponytail: one call at a time (1,000 intent #2 rows ≈ 60k output tokens ≈ minutes); a thread pool is the upgrade
+    # (cost.add is thread-safe; the max_usd check would then reserve each in-flight call's worst case)
     rows, empty, i = [], 0, 0
     while len(rows) < n and not t.stopped and empty < 3 and (batches is None or i < batches):
         got = batch(i, n - len(rows))

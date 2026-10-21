@@ -75,7 +75,7 @@ def chat(q: str, a: str, **extra) -> dict:
 
 
 def fence(tag: str, text: str) -> str:
-    while FENCE_TAGS.search(text):  # to a fixpoint: "</pas</passage>sage>" must not reassemble a tag
+    while FENCE_TAGS.search(text):  # to a fixpoint: one pass turns "<<passage/passage>" into "</passage>"
         text = FENCE_TAGS.sub("", text)
     return f"<{tag}>\n{text}\n</{tag}>\n{UNTRUSTED}\n"
 

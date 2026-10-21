@@ -1,10 +1,15 @@
 """Unit tests for containers/synth-distilabel/run.py (docs/contracts.md "Data nodes → synth-distilabel")."""
 
+import importlib
+import itertools
 import json
 import re
+import tempfile
 import time
 import urllib.request
+from collections import Counter
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -220,21 +225,91 @@ def test_grounded_questions_that_lean_on_the_source_are_invalid(teacher, synth, 
     assert [r["messages"][0]["content"] for r in rows] == ["Who holds escrow funds?"] and m["invalid_rows"] == 2
 
 
-def test_stub_chain_web_research_to_grounded_to_data_prep(monkeypatch, synth, run_main, files):
-    monkeypatch.setenv("STUB", "1")
-    research, _ = run_main(wr, queries=["fair housing act", "respa closing disclosure"], max_pages=4)
-    files[CORPUS] = research["corpus"]
-    passages = read_jsonl(research["corpus"])
-    rows, m = synth(pipeline_template="grounded", corpus=CORPUS, n_samples=10)
-    assert len(rows) == len(passages) == 4 and m["stopped"] == "exhausted"  # the stub answers one pair per call
-    assert [(r["context"], r["source_url"]) for r in rows] == [(p["text"], p["url"]) for p in passages]
-    assert all(dp.tf_valid(r["messages"]) for r in rows)
+DATA_NODES = {"web-research": wr, "synth-distilabel": sd, "data-prep": dp}
 
-    out, _ = run_main(sd, pipeline_template="grounded", corpus=CORPUS, n_samples=10)
-    files[DATASET] = out["dataset"]
-    prep, pm = run_main(dp, dataset=DATASET, format="chatml", train_split=0.5, test_split=0.25)
-    assert pm["total"] == 4 and len(read_jsonl(prep["train_jsonl"])) == 2
-    assert all({"context", "source_url"} <= set(r) for r in read_jsonl(prep["test_jsonl"]))
+
+@pytest.fixture
+def sdk(monkeypatch, tmp_path):
+    """(run, read): run(node_id, module, inputs) -> {output: (uri, kind, metadata)} through the real orchapod.io
+    (ORCHAPOD_NODE_INPUTS, write_output, write_metrics, download_input) over an in-memory bucket, the control plane's
+    registration recorded; read(uri) -> the JSONL rows stored there."""
+    sdk_io, bucket, registered = importlib.import_module("orchapod.io"), {}, {}
+    for module in DATA_NODES.values():
+        monkeypatch.setattr(module, "io", sdk_io)  # replaces the conftest's mock
+    monkeypatch.setattr(sdk_io, "_armed", True)  # no atexit cost_json, SIGTERM handler or excepthook under pytest
+    monkeypatch.setattr(sdk_io, "_upload_to_r2", lambda local_path, r2_key: bucket.update({r2_key: local_path.read_bytes()}))
+    monkeypatch.setattr(sdk_io, "_download_from_r2", lambda r2_key, dest: dest.write_bytes(bucket[r2_key]))
+    monkeypatch.setattr(sdk_io, "_notify_control_plane",
+                        lambda name, uri, kind, metadata: registered.update({name: (uri, kind, metadata)}))
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))  # download_input's mkdtemp
+    monkeypatch.setenv("ORCHAPOD_RUN_ID", "intent1")
+
+    def run(node_id, module, inputs):
+        registered.clear()
+        monkeypatch.setenv("ORCHAPOD_NODE_ID", node_id)
+        monkeypatch.setenv("ORCHAPOD_NODE_OUTPUTS_DIR", str(tmp_path / node_id))
+        monkeypatch.setenv("ORCHAPOD_NODE_INPUTS", json.dumps(inputs))
+        module.main()
+        return dict(registered)
+
+    return run, lambda uri: [json.loads(line) for line in bucket[uri.split("/", 3)[3]].decode().splitlines()]
+
+
+def five_pairs():
+    """A teacher that answers every grounded call with five distinct pairs, as a live one does (the STUB teacher
+    answers one)."""
+    calls = itertools.count()
+
+    def handler(request):
+        i = next(calls)
+        return replies({"pairs": [{"question": f"{w} applies rule {i}-{j} of the regulation?", "answer": f"Rule {i}-{j}."}
+                                  for j, w in enumerate(("Who", "What", "When", "Where", "How"))]})(request)
+    return handler
+
+
+@pytest.mark.parametrize("pairs", [1, 5], ids=["stub-teacher", "five-pair-teacher"])
+def test_intent1_data_half_through_the_real_sdk(monkeypatch, sdk, teacher, pairs):
+    """Intent #1's template, its three data nodes in STUB, each reading the URIs the previous one registered. The STUB
+    teacher answers one pair per passage, so every source has one row; the five-pair teacher (MockTransport, synth
+    only) gives every source five rows, which is where the split's source_url stratification shows."""
+    from api.executor.run_workflow import _resolve_inputs  # the executor's own ref resolution
+
+    run, read = sdk
+    if pairs == 5:
+        teacher(five_pairs())
+    template = json.loads((ROOT / "apps/api/agent/templates/1-real-estate-compliance.json").read_text())
+    nodes = [n for n in template["plan"]["nodes"] if n["type"] in DATA_NODES]
+    assert [n["id"] for n in nodes] == ["research", "synth", "prep"]
+    out = {}
+    for n in nodes:
+        if n["id"] == "synth" and pairs == 5:
+            monkeypatch.delenv("STUB", raising=False)
+        else:
+            monkeypatch.setenv("STUB", "1")
+        upstream = {node: SimpleNamespace(outputs={name: uri for name, (uri, _, _) in registered.items()})
+                    for node, registered in out.items()}  # NodeRun.outputs: the URIs each node registered
+        out[n["id"]] = run(n["id"], DATA_NODES[n["type"]], _resolve_inputs(n["inputs"], SimpleNamespace(inputs={}), upstream))
+
+    corpus, dataset = read(out["research"]["corpus"][0]), read(out["synth"]["dataset"][0])
+    urls = {p["url"] for p in corpus}
+    assert len(corpus) == len(urls) == 20  # 5 queries × ⌈20 / 5⌉ stub pages of one passage each
+    assert len(dataset) == 20 * pairs and {(r["context"], r["source_url"]) for r in dataset} == {(p["text"], p["url"]) for p in corpus}
+
+    prep = out["prep"]
+    kept, train, ev, test = (read(prep[name][0]) for name in ("dataset", "train_jsonl", "eval_jsonl", "test_jsonl"))
+    assert kept == dataset and (len(train), len(ev), len(test)) == (16 * pairs, 2 * pairs, 2 * pairs)  # 0.8/0.1/0.1
+    assert all(set(r) == {"messages"} and dp.tf_valid(r["messages"]) for r in train + ev)  # tf-finetune's files
+    assert all(r in dataset for r in test)  # judge-eval's rows keep context and source_url
+    source = {json.dumps(r["messages"]): r["source_url"] for r in dataset}
+    spread = Counter((source[json.dumps(r["messages"])], part) for part, rows in (("train", train), ("held", ev + test))
+                     for r in rows)
+    assert Counter((spread[u, "train"], spread[u, "held"]) for u in urls) == (
+        {(4, 1): 20} if pairs == 5 else {(1, 0): 16, (0, 1): 4})  # five-row sources: 4 train + 1 held out, every one
+    _, kind, metrics = prep["metrics_json"]
+    assert (kind, metrics["stub"], metrics["total"], metrics["near_dupes"]) == ("metrics", True, 20 * pairs, 0)
+    assert {name: kind for name, (_, kind, _) in prep.items()} == {
+        "dataset": "dataset", "test_jsonl": "dataset", "train_jsonl": "dataset", "eval_jsonl": "dataset",
+        "metrics_json": "metrics"}
 
 
 # --- budget and errors --------------------------------------------------------

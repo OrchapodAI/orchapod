@@ -43,8 +43,8 @@ _inflight: dict[uuid.UUID, set[asyncio.Future]] = {}
 _SDK_LINE = re.compile(r"\[[^\]]+\] \[(INFO|WARN|ERROR|PROGRESS)\] ")
 _REF = re.compile(r"\$\{\{\s*(?:inputs\.(\w+)|nodes\.([^.\s}]+)\.outputs\.(\w+))\s*\}\}")
 
-# contracts "Config": exactly these reach containers, with config's defaults.
-FORWARD = ("NEBIUS_API_KEY NEBIUS_BASE_URL TAVILY_API_KEY HF_TOKEN NEBIUS_PROJECT_ID NEBIUS_IAM_TOKEN ORCHAPOD_ENDPOINT_TOKEN "
+# contracts "Config": exactly these reach containers, with config's defaults; NEBIUS_IAM_TOKEN only nodes that rent a GPU.
+FORWARD = ("NEBIUS_API_KEY NEBIUS_BASE_URL TAVILY_API_KEY HF_TOKEN NEBIUS_PROJECT_ID ORCHAPOD_ENDPOINT_TOKEN "
            "ORCHAPOD_R2_ENDPOINT ORCHAPOD_R2_REGION ORCHAPOD_R2_ACCESS_KEY ORCHAPOD_R2_SECRET_KEY ORCHAPOD_R2_BUCKET "
            "ORCHAPOD_CONTROL_URL STUB").split()
 
@@ -207,6 +207,8 @@ async def _execute_node(
         raise NodeFailed(f"no {runtime} provider: {e}")
 
     env = _build_env(node_run, max_cost)
+    if budget.gpu_nodes([dag_node.type]) and config.env("STUB") != "1":  # it creates Nebius resources: for it alone
+        env["NEBIUS_IAM_TOKEN"] = await _iam_token()
     image = f"{config.env('ORCHAPOD_IMAGE_PREFIX')}/{dag_node.type}:latest"
     prov = asyncio.ensure_future(provider.provision(gpu_spec=gpu_spec, image=image, env=env))
     try:
@@ -305,6 +307,31 @@ def _build_env(node_run: NodeRun, max_cost_usd: float) -> dict[str, str]:
     if checkpoints:
         env["ORCHAPOD_RESUME_CHECKPOINT_URI"] = node_run.outputs[checkpoints[-1]]
     return env
+
+
+IAM_TIMEOUT_S = 10
+
+
+async def _iam_token() -> str:
+    """NEBIUS_IAM_TOKEN for a node that rents a GPU: the API's own when set, else a fresh one (tokens expire) from the
+    nebius CLI on the API host (R15's profile; node images have no CLI). Never logged; NodeFailed when there is none."""
+    if token := config.env("NEBIUS_IAM_TOKEN").strip():
+        return token
+    try:
+        cli = await asyncio.create_subprocess_exec("nebius", "iam", "get-access-token", stdout=asyncio.subprocess.PIPE,
+                                                   stderr=asyncio.subprocess.PIPE)
+    except OSError:
+        raise NodeFailed("no Nebius IAM token: NEBIUS_IAM_TOKEN is blank and the API host has no nebius CLI")
+    try:
+        out, err = await asyncio.wait_for(cli.communicate(), IAM_TIMEOUT_S)
+    except TimeoutError:
+        cli.kill()
+        await cli.wait()
+        raise NodeFailed(f"no Nebius IAM token: nebius iam get-access-token took over {IAM_TIMEOUT_S:g} s")
+    if cli.returncode or not out.strip():
+        raise NodeFailed(f"no Nebius IAM token: nebius iam get-access-token exited {cli.returncode}: "
+                         f"{err.decode(errors='replace').strip()[-200:]}")
+    return out.decode().strip()
 
 
 def node_order(workflow: Workflow | None, run: Run) -> list[str]:

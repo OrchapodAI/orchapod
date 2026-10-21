@@ -267,24 +267,28 @@ def five_pairs():
     return handler
 
 
-SPLITS = {20: (16, 2, 2), 100: (80, 10, 10), 6: (5, 0, 1), 30: (24, 3, 3)}  # rows → train/eval/test at 0.8/0.1/0.1
+SPLITS = {20: (16, 2, 2), 100: (80, 10, 10), 4: (2, 1, 1), 6: (4, 1, 1), 30: (24, 3, 3)}  # rows → train/eval/test, 0.8/0.1/0.1
 
 
 @pytest.mark.parametrize("pairs", [1, 5], ids=["stub-teacher", "five-pair-teacher"])
-@pytest.mark.parametrize("slug, reduced", [("1-real-estate-compliance", False), ("4-nebius-docs-specialist", False),
-                                           ("4-nebius-docs-specialist", True)], ids=["intent1", "docs", "docs-reduced"])
-def test_template_data_half_through_the_real_sdk(monkeypatch, sdk, teacher, pairs, slug, reduced):
-    """A template's three data nodes in STUB (intent #1; the Nebius docs specialist, also with its reduced_inputs as
-    "Run it yourself" posts it), each reading the URIs the previous one registered. The STUB teacher answers one pair
+@pytest.mark.parametrize("slug, reduced, pages", [  # stub pages: queries × ⌈max_pages / queries⌉, or one per seed
+    ("1-real-estate-compliance", False, 20), ("1-real-estate-compliance", True, 4),
+    ("4-nebius-docs-specialist", False, 20), ("4-nebius-docs-specialist", True, 6)],
+    ids=["intent1", "intent1-reduced", "docs", "docs-reduced"])
+def test_template_data_half_through_the_real_sdk(monkeypatch, sdk, teacher, pairs, slug, reduced, pages):
+    """A template's three data nodes in STUB (intent #1 and the Nebius docs specialist, each also at the reduced scale
+    "Run it yourself" posts), each reading the URIs the previous one registered. The STUB teacher answers one pair
     per passage, so every source has one row; the five-pair teacher (MockTransport, synth only) gives every source five
     rows, which is where the split's source_url stratification shows."""
+    from api.agent import planner
     from api.executor.run_workflow import _resolve_inputs  # the executor's own ref resolution
 
     run, read = sdk
     if pairs == 5:
         teacher(five_pairs())
     template = json.loads((ROOT / f"apps/api/agent/templates/{slug}.json").read_text())
-    nodes = [n for n in template["plan"]["nodes"] if n["type"] in DATA_NODES]
+    plan = planner.reduced(template)["plan"] if reduced else template["plan"]
+    nodes = [n for n in plan["nodes"] if n["type"] in DATA_NODES]
     assert [n["id"] for n in nodes] == ["research", "synth", "prep"]
     out = {}
     for n in nodes:
@@ -294,12 +298,11 @@ def test_template_data_half_through_the_real_sdk(monkeypatch, sdk, teacher, pair
             monkeypatch.setenv("STUB", "1")
         upstream = {node: SimpleNamespace(outputs={name: uri for name, (uri, _, _) in registered.items()})
                     for node, registered in out.items()}  # NodeRun.outputs: the URIs each node registered
-        inputs = {**n["inputs"], **(template["reduced_inputs"].get(n["id"], {}) if reduced else {})}  # planner.reduced
-        out[n["id"]] = run(n["id"], DATA_NODES[n["type"]], _resolve_inputs(inputs, SimpleNamespace(inputs={}), upstream))
+        out[n["id"]] = run(n["id"], DATA_NODES[n["type"]], _resolve_inputs(n["inputs"], SimpleNamespace(inputs={}), upstream))
 
     corpus, dataset = read(out["research"]["corpus"][0]), read(out["synth"]["dataset"][0])
-    urls, pages, seeds = {p["url"] for p in corpus}, 6 if reduced else 20, nodes[0]["inputs"].get("seed_urls")
-    assert len(corpus) == len(urls) == pages  # stub pages of one passage each: 5 queries × ⌈20 / 5⌉, or one per seed
+    urls, seeds = {p["url"] for p in corpus}, nodes[0]["inputs"].get("seed_urls")
+    assert len(corpus) == len(urls) == pages  # stub pages of one passage each
     assert not seeds or urls == set(seeds[:pages])  # max_pages reads the first seeds
     assert len(dataset) == pages * pairs and {(r["context"], r["source_url"]) for r in dataset} == {(p["text"], p["url"]) for p in corpus}
 

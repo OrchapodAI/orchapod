@@ -187,11 +187,12 @@ def quality_filter(rows: list[dict]) -> tuple[list[dict], int]:
 
 
 def split(rows: list[dict], train: float, test: float) -> tuple[list, list, list]:
-    """Seed-42 split stratified by source_url: each source's shuffled rows spread evenly over one order, cut
-    train|eval|test at round(n × share). Counts always add up to n, but small n can leave a split empty (n=5 at
-    0.9/0.1 → 4/1/0), and a source needs about 1/share rows to reach eval and test. One-row sources all sit
-    mid-order: they stay in train while they are at most 2 × train − 1 of the rows (60 % at 0.8), and only the
-    excess spills into eval and test."""
+    """Seed-42 split stratified by source_url: each source's shuffled rows spread evenly over one order (at equal
+    positions the larger source comes later), cut train|eval|test at round(n × share). From 3 rows on, a requested
+    test split, and an eval share above 0, keep at least one row each; they come off the end of the order, the
+    largest sources' last rows (n=4 at 0.8/0.1 → 2/1/1, so judge-eval gets a row). Below 3 rows a split can be
+    empty, and a source needs about 1/share rows to reach eval and test. One-row sources all sit mid-order: they
+    stay in train while they are at most 2 × train − 1 of the rows (60 % at 0.8), and only the excess spills."""
     rng = random.Random(SEED)
     groups = defaultdict(list)
     for r in rows:
@@ -199,11 +200,14 @@ def split(rows: list[dict], train: float, test: float) -> tuple[list, list, list
     keyed = []
     for g in groups.values():
         rng.shuffle(g)
-        keyed += [((i + 0.5) / len(g), rng.random(), r) for i, r in enumerate(g)]
-    ordered = [r for *_, r in sorted(keyed, key=lambda x: x[:2])]
+        keyed += [((i + 0.5) / len(g), len(g), rng.random(), r) for i, r in enumerate(g)]
+    ordered = [r for *_, r in sorted(keyed, key=lambda x: x[:3])]
     n = len(ordered)
     n_train = round(n * train)
     n_test = min(round(n * test), n - n_train)
+    if n >= 3:  # floors: a requested split never rounds to nothing (1 − 0.9 − 0.1 is 3e-17, not a share)
+        n_test = max(n_test, int(test > 0))
+        n_train = min(n_train, n - n_test - int(1 - train - test > 1e-9))
     return ordered[:n_train], ordered[n_train:n - n_test], ordered[n - n_test:]
 
 

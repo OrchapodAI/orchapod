@@ -169,14 +169,24 @@ def test_split_is_deterministic_and_stratified_by_source():
 
 
 @pytest.mark.parametrize("n, train, test, sizes", [
-    (4, 0.8, 0.1, (3, 1, 0)),     # a requested test split can round to nothing
-    (5, 0.9, 0.1, (4, 1, 0)),     # round() goes to even: 0.5 → 0
+    (2, 0.8, 0.1, (2, 0, 0)),     # under 3 rows a requested split can still round to nothing
+    (3, 0.8, 0.1, (1, 1, 1)),
+    (4, 0.8, 0.1, (2, 1, 1)),     # was 3/1/0: real-estate's reduced plan in STUB had no test row for judge-eval
+    (4, 0.9, 0.0, (3, 1, 0)),     # no test split requested; eval's share 0.1 still gets its row
+    (5, 0.9, 0.1, (4, 0, 1)),     # eval's share is 0 (round() goes to even: 0.5 → 0, then the floor)
+    (6, 0.8, 0.1, (4, 1, 1)),     # the docs specialist's reduced plan in STUB
     (12, 0.8, 0.1, (10, 1, 1)),
     (20, 0.8, 0.1, (16, 2, 2)),
 ])
-def test_small_inputs_can_leave_a_split_empty(n, train, test, sizes):
+def test_from_3_rows_every_requested_split_keeps_a_row(n, train, test, sizes):
     rows = [chat(f"q{i}", source_url=f"https://example.com/{i % 3}") for i in range(n)]
     assert tuple(map(len, dp.split(rows, train, test))) == sizes
+
+
+def test_the_rows_a_small_split_holds_out_come_from_the_largest_source():
+    big, single = [chat(f"b{i}", source_url="https://big.example") for i in range(3)], chat("s", source_url="https://one.example")
+    train, ev, test = dp.split([single] + big, 0.8, 0.1)  # the floors move 1 train row to test: 3/1/0 → 2/1/1
+    assert (len(train), len(ev), len(test)) == (2, 1, 1) and single in train and all(r in big for r in ev + test)
 
 
 def test_one_row_sources_land_in_train_while_they_are_few():  # here 10 of 50 rows; over 60 % they spill
@@ -234,7 +244,7 @@ def test_counts_are_logged_before_near_dedupe(run_node, monkeypatch):
 
 
 def test_an_empty_requested_test_split_is_warned(run_node):
-    outs, _ = run_node([json.dumps(chat(f"Question {i} about escrow?")) for i in range(5)], test_split=0.1)
+    outs, _ = run_node([json.dumps(chat(f"Question {i} about escrow?")) for i in range(2)], test_split=0.1)
     assert outs["test_jsonl"] == []
     assert "test_jsonl is empty" in dp.log.warn.call_args.args[0]
 

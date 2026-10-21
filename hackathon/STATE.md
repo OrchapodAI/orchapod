@@ -4,7 +4,7 @@ Updated: 2026-10-21T15:45Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 ## Next actions (in order)
 1. Hari — decisions waiting (details in LOG "Ruling:" lines since 2026-10-21T02:50Z): NEBIUS_API_KEY + TAVILY_API_KEY into .env (unblocks spikes 1–3 and every live run); hosting (hackathon/briefs/2026-10-22-hosting-proposal.md, reply line inside; option + domain by Oct 24); golden-run topic by D6 (docs specialist vs real estate; both templates exist); ~10 GB of ml-w3 test artifacts in the local MinIO — delete?; AI-build disclosure; the two stopped vast.ai instances.
 2. Spikes 1–3 (hackathon/briefs/2026-10-22-spikes.md; worktrees spike1–3) — dispatch the moment a key lands; spike 1 decides tf-deploy vs vllm-serve for the golden path.
-3. Wave 5: COMPLETE (platform-w5/w6, qa-w5, devrel-w5, ml-w5, backend-w5, frontend-w5 merged). Next: qa-w6 (e2e_demo sends the cancel token; preempted-Job pin → Pod.error; a page-level 409 copy smoke; e2e on Linux).
+3. Wave 5: COMPLETE incl. qa-w6 (24e234a; E2E 3/3, ui-smoke 5/5). Backend backlog (small): a cancel within ms of start on SQLite logs PendingRollbackError; a startup sweep for local containers left by a cancel mid-provision + API shutdown; the anonymous cancel of others' runs is closed by cancel tokens.
 4. G1 Oct 24 holds in STUB: e2e_agent 3/3, ui-smoke golden path green. Live G1 waits on the key + spike 1.
 
 ## Board (status ∈ TODO | IN_PROGRESS(<agent>, <branch>) | REVIEW | DONE | BLOCKED(<why>))
@@ -134,6 +134,6 @@ Updated: 2026-10-21T15:45Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 ## Spend to date (per day, per key)
 - 2026-10-20: $1.29 (vast.ai A100 SXM4 80 GB at $1.2485/h, 48 min, spike 4; instance destroyed)
 ## Golden path status (last real run: id, date, cost, result)
-- 2026-10-21T17:05Z: G1 STUB green on d80d368 (wave 5 complete) — e2e_agent 3/3, demo e2e, ui-smoke 4/4 incl. golden path + public-cap check. Live runs wait on NEBIUS_API_KEY.
+- 2026-10-21T17:53Z: G1 STUB green on 24e234a — e2e_agent 3/3, demo e2e, ui-smoke 5/5 (golden path, public-cap check, Save a copy). Live runs wait on NEBIUS_API_KEY.
 - 2026-10-21: intent #2 STUB e2e PASS (`make check E2E=1` on 1c0b746): run 9214965e succeeded in 4 s, $0, dataset/train_jsonl/eval_jsonl registered, 500 rows downloadable. Live (non-STUB) runs wait on NEBIUS_API_KEY.
 - Live: never run (waits on the key). `make check` green at 3d250c5 (519 passed, 126 warnings; web tests pass); gitleaks clean at bootstrap (1 triaged false positive).

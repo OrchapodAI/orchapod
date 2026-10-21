@@ -628,6 +628,7 @@ async def test_cancel_during_provision_terminates_the_pod_once_it_exists(db, pro
     assert provider.terminated == ["a"] and run.id not in budget._granted
     rows = await nodes(db, run)
     assert (rows["a"].status, rows["a"].error) == (NodeStatus.FAILED, "cancelled")
+    assert rows["a"].inputs == {"dataset": "hf://x"}  # resolved: stored with running, so the cancel's rollback keeps it
 
 
 async def test_a_second_cancel_cannot_interrupt_teardown(db, provider):
@@ -650,6 +651,49 @@ async def test_a_second_cancel_cannot_interrupt_teardown(db, provider):
     assert provider.terminated == ["a"] and not ex.busy(run.id) and run.id not in budget._granted
     rows = await nodes(db, run)
     assert (rows["a"].status, rows["a"].error) == (NodeStatus.FAILED, "cancelled")
+
+
+PENDING_BC = {"b": (NodeStatus.PENDING, None), "c": (NodeStatus.PENDING, None)}
+
+
+@pytest.mark.parametrize("statement, left", [
+    ("sum(run.cost_usd)", {"a": (NodeStatus.FAILED, "cancelled"), **PENDING_BC}),  # qa-w6: the budget check's read
+    ("UPDATE noderun", {"a": (NodeStatus.FAILED, "cancelled"), **PENDING_BC}),     # the flush that marks a running
+    ("INSERT INTO noderun", {}),  # the first commit: no row exists yet, as for a run cancelled before it started
+])
+async def test_a_cancel_that_lands_mid_statement_still_ends_the_run_cancelled(provider, tmp_path, statement, left):
+    """qa-w6 (SQLite, a cancel within ms of start): SQLAlchemy invalidates a connection whose statement a cancel interrupts,
+    or rolls the flush back, and the session then refuses to write until it is rolled back. The executor recorded the
+    cancel through it anyway: PendingRollbackError, the node left pending."""
+    from sqlalchemy import event
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlmodel import SQLModel
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'cancel.db'}")  # a connection per session, as in dev
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+    sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with sessions() as s:
+        run = await seed(s)
+    reached = asyncio.Event()
+
+    def before(conn, cursor, sql, *_):
+        if statement in sql:
+            reached.set()
+
+    event.listen(engine.sync_engine, "before_cursor_execute", before)
+    async with sessions() as db:
+        task = asyncio.create_task(ex.run_workflow(run.id, db, AsyncMock(), 1.0))
+        await asyncio.wait_for(reached.wait(), 5)
+        task.cancel()  # lands while the executor awaits that statement
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 5)
+
+    async with sessions() as s:
+        assert (await s.get(Run, run.id)).status == RunStatus.CANCELLED
+        rows = await s.scalars(select(NodeRun).where(NodeRun.run_id == run.id))
+        assert {n.node_id: (n.status, n.error) for n in rows} == left
+    await engine.dispose()
 
 
 async def test_a_failing_setup_broadcast_still_fails_the_run(db, provider):

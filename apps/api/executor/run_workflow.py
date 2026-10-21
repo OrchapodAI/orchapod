@@ -142,11 +142,12 @@ async def run_workflow(run_id: uuid.UUID, db: AsyncSession, broadcast: Broadcast
             if max_cost <= 0:
                 raise NodeFailed(f"budget: {which} cap ${cap:g} reached")
             try:
+                node_run.inputs = _resolve_inputs(node.inputs, run, rows)  # resolved inputs = lineage, stored with running
                 node_run.status, node_run.error = NodeStatus.RUNNING, None
                 node_run.started_at, node_run.finished_at = utcnow(), None
                 await db.commit()
                 await broadcast(run_id, {"type": "node_status", "node_id": node.id, "status": "running"})
-                outputs = await _execute_node(node_run, node, run, rows, db, broadcast, max_cost)
+                outputs = await _execute_node(node_run, node, run, db, broadcast, max_cost)
             finally:
                 _release(run_id)
             node_run.status, node_run.finished_at, node_run.error = NodeStatus.SUCCEEDED, utcnow(), None
@@ -154,6 +155,11 @@ async def run_workflow(run_id: uuid.UUID, db: AsyncSession, broadcast: Broadcast
             await broadcast(run_id, {"type": "node_status", "node_id": node.id, "status": "succeeded", "outputs": outputs})
     except (Exception, asyncio.CancelledError) as e:
         cancelled = isinstance(e, asyncio.CancelledError)
+        # A cancel (or a database error) that lands mid-statement leaves the transaction unusable: SQLAlchemy invalidates
+        # the connection or rolls the flush back, and the session writes nothing until it is rolled back (qa-w6).
+        await db.rollback()
+        await db.refresh(run)
+        rows = {n.node_id: n for n in await db.scalars(select(NodeRun).where(NodeRun.run_id == run_id))}
         first = next((rows[n.id] for n in order if n.id in rows and rows[n.id].status != NodeStatus.SUCCEEDED), None)
         await _stop(db, run, first, RunStatus.CANCELLED if cancelled else RunStatus.FAILED,
                     "cancelled" if cancelled else str(e) if isinstance(e, NodeFailed) else f"internal: {e}", broadcast)
@@ -187,7 +193,6 @@ async def _execute_node(
     node_run: NodeRun,
     dag_node: DAGNode,
     run: Run,
-    rows: dict[str, NodeRun],
     db: AsyncSession,
     broadcast: Broadcast,
     max_cost: float,
@@ -201,7 +206,6 @@ async def _execute_node(
     from packages.workflow_schema.models import NODE_REGISTRY, NodeType, ResourceSpec
 
     timeout = float(config.env("ORCHAPOD_NODE_TIMEOUT_S"))  # backstop above node-level timeouts
-    node_run.inputs = _resolve_inputs(dag_node.inputs, run, rows)  # resolved inputs = lineage
 
     # cpu and api nodes run on LocalDocker; gpu nodes on a GPU provider
     row = NODE_REGISTRY.get(NodeType(dag_node.type), {})

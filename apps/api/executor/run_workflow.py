@@ -36,7 +36,7 @@ log = logging.getLogger("api.executor")
 
 # run_id → the task executing it. One API worker (see ORCHAPOD_INTERNAL_SECRET).
 running_tasks: dict[uuid.UUID, asyncio.Task] = {}
-_background: set[asyncio.Task] = set()  # startup-sweep terminations, referenced until done
+_background: set[asyncio.Task] = set()  # pod terminations, referenced until done
 
 # SDK-formatted stdout lines already reached the UI through /internal/log or /internal/progress.
 _SDK_LINE = re.compile(r"\[[^\]]+\] \[(INFO|WARN|ERROR|PROGRESS)\] ")
@@ -63,7 +63,10 @@ class NodeFailed(Exception):
 # ---------------------------------------------------------------------------
 
 def launch(run_id: uuid.UUID) -> asyncio.Task:
-    """The one way to start a run (start, retry, /inference/deploy), so cancel finds its task."""
+    """The one way to start a run (start, retry, /inference/deploy): cancel finds its task, and a
+    concurrent start or retry joins the running executor instead of starting a second one."""
+    if (task := running_tasks.get(run_id)) and not task.done():
+        return task
     task = asyncio.create_task(_run_in_own_session(run_id))
     running_tasks[run_id] = task
     task.add_done_callback(lambda t: running_tasks.pop(run_id) if running_tasks.get(run_id) is t else None)
@@ -77,8 +80,6 @@ async def _run_in_own_session(run_id: uuid.UUID) -> None:
     async with database.AsyncSessionLocal() as db:
         try:
             await run_workflow(run_id, db, event_bus.publish)
-        except asyncio.CancelledError:
-            raise
         except Exception:
             log.exception("run %s crashed", run_id)
 
@@ -99,38 +100,44 @@ async def run_workflow(run_id: uuid.UUID, db: AsyncSession, broadcast: Broadcast
     await db.commit()
     await broadcast(run_id, {"type": "run_status", "status": "running"})
 
-    for node in order:
-        node_run = rows[node.id]
-        if node_run.status == NodeStatus.SUCCEEDED:
-            continue
-        try:
+    try:
+        for node in order:
+            node_run = rows[node.id]
+            if node_run.status == NodeStatus.SUCCEEDED:
+                continue
             node_run.status, node_run.error = NodeStatus.RUNNING, None
             node_run.started_at, node_run.finished_at = utcnow(), None
             await db.commit()
             await broadcast(run_id, {"type": "node_status", "node_id": node.id, "status": "running"})
             outputs = await _execute_node(node_run, node, run, rows, db, broadcast)
-        except asyncio.CancelledError:
-            await _stop(db, run, node_run, RunStatus.CANCELLED, "cancelled", broadcast)
+            node_run.status, node_run.finished_at, node_run.error = NodeStatus.SUCCEEDED, utcnow(), None
+            await db.commit()
+            await broadcast(run_id, {"type": "node_status", "node_id": node.id, "status": "succeeded", "outputs": outputs})
+    except (Exception, asyncio.CancelledError) as e:
+        cancelled = isinstance(e, asyncio.CancelledError)
+        first = next((rows[n.id] for n in order if rows[n.id].status != NodeStatus.SUCCEEDED), None)
+        await _stop(db, run, first, RunStatus.CANCELLED if cancelled else RunStatus.FAILED,
+                    "cancelled" if cancelled else str(e) if isinstance(e, NodeFailed) else f"internal: {e}", broadcast)
+        if cancelled:
             raise
-        except Exception as e:
-            await _stop(db, run, node_run, RunStatus.FAILED, str(e) if isinstance(e, NodeFailed) else f"internal: {e}", broadcast)
-            return
-        node_run.status, node_run.finished_at, node_run.error = NodeStatus.SUCCEEDED, utcnow(), None
-        await db.commit()
-        await broadcast(run_id, {"type": "node_status", "node_id": node.id, "status": "succeeded", "outputs": outputs})
+        return
 
     run.status, run.finished_at = RunStatus.SUCCEEDED, utcnow()
     await db.commit()
     await broadcast(run_id, {"type": "run_status", "status": "succeeded"})
 
 
-async def _stop(db: AsyncSession, run: Run, node_run: NodeRun, status: RunStatus, error: str, broadcast: Broadcast) -> None:
-    """The node is the run's one failed node; its error is the run's error."""
-    node_run.status, node_run.error, node_run.finished_at = NodeStatus.FAILED, error, utcnow()
-    run.status, run.finished_at = status, node_run.finished_at
+async def _stop(db: AsyncSession, run: Run, node_run: NodeRun | None, status: RunStatus, error: str,
+                broadcast: Broadcast) -> None:
+    """The first unfinished node is the run's one failed node; its error is the run's error."""
+    run.status, run.finished_at = status, utcnow()
+    events = [{"type": "run_status", "status": status.value, "error": error}]
+    if node_run:
+        node_run.status, node_run.error, node_run.finished_at = NodeStatus.FAILED, error, run.finished_at
+        events.insert(0, {"type": "node_status", "node_id": node_run.node_id, "status": "failed", "error": error})
     await db.commit()
-    await broadcast(run.id, {"type": "node_status", "node_id": node_run.node_id, "status": "failed", "error": error})
-    await broadcast(run.id, {"type": "run_status", "status": status.value, "error": error})
+    for event in events:
+        await broadcast(run.id, event)
 
 
 # ---------------------------------------------------------------------------
@@ -164,18 +171,22 @@ async def _execute_node(
 
     env = _build_env(node_run, await _budget_left(db, run))
     image = f"{os.environ.get('ORCHAPOD_IMAGE_PREFIX') or 'ghcr.io/bangadpurva'}/{dag_node.type}:latest"
+    prov = asyncio.ensure_future(provider.provision(gpu_spec=gpu_spec, image=image, env=env))
     try:
-        pod = await provider.provision(gpu_spec=gpu_spec, image=image, env=env)
+        pod = await asyncio.shield(prov)  # a cancel mid-provision (image pull, jobs.create) leaves it running
+    except asyncio.CancelledError:
+        # terminate the pod once it exists, even if this task is cancelled again
+        prov.add_done_callback(lambda f: f.cancelled() or f.exception() or _terminate(provider, f.result()))
+        raise
     except Exception as e:
         raise NodeFailed(f"provision failed: {e}")
-
-    node_run.gpu_provider = run.gpu_provider = provider.name
-    node_run.gpu_pod_id = run.gpu_pod_id = pod.pod_id
-    await db.commit()
 
     timeout = float(os.environ.get("ORCHAPOD_NODE_TIMEOUT_S") or 5400)  # backstop above node-level timeouts
     stream = asyncio.create_task(_stream_stdout(provider, pod, node_run, broadcast))
     try:
+        node_run.gpu_provider = run.gpu_provider = provider.name
+        node_run.gpu_pod_id = run.gpu_pod_id = pod.pod_id
+        await db.commit()
         exit_code = await asyncio.wait_for(provider.wait(pod), timeout)
     except TimeoutError:
         raise NodeFailed(f"timeout after {timeout:g} s")
@@ -190,7 +201,16 @@ async def _execute_node(
     return node_run.outputs or {}
 
 
-async def _terminate(provider, pod) -> None:
+def _terminate(provider, pod) -> asyncio.Future:
+    """Teardown runs as its own referenced task and is awaited through shield, so a second cancel
+    cannot interrupt the SIGTERM grace; it never raises."""
+    task = asyncio.ensure_future(_terminate_now(provider, pod))
+    _background.add(task)
+    task.add_done_callback(_background.discard)
+    return asyncio.shield(task)
+
+
+async def _terminate_now(provider, pod) -> None:
     try:
         await provider.terminate(pod)
     except Exception as e:
@@ -291,6 +311,4 @@ async def sweep(db: AsyncSession) -> None:
         run.status, run.finished_at = RunStatus.FAILED, now
     await db.commit()
     for provider, pod in pods:  # in the background: the API must be serving when the nodes post their last cost_json
-        task = asyncio.create_task(_terminate(provider, pod))
-        _background.add(task)
-        task.add_done_callback(_background.discard)
+        _terminate(provider, pod)

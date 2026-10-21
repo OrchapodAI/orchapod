@@ -45,9 +45,13 @@ class FakeProvider:
     def __init__(self, db):
         self.db, self.script, self.logs = db, {}, []
         self.envs, self.provisioned, self.terminated = {}, [], []
-        self.started = asyncio.Event()
+        self.started, self.provisioning, self.terminating = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        self.provision_gate = self.terminate_gate = None  # an asyncio.Event blocks that call until set
 
     async def provision(self, gpu_spec, image, env):
+        self.provisioning.set()
+        if self.provision_gate:
+            await self.provision_gate.wait()  # docker run still pulling the image
         self.provisioned.append((env["ORCHAPOD_NODE_ID"], image))
         self.envs[env["ORCHAPOD_NODE_ID"]] = env
         return Pod(provider="local-docker", pod_id=env["ORCHAPOD_NODE_ID"])
@@ -70,6 +74,9 @@ class FakeProvider:
         return step.get("exit", 0)
 
     async def terminate(self, pod):
+        self.terminating.set()
+        if self.terminate_gate:
+            await self.terminate_gate.wait()  # inside the 30 s SIGTERM grace
         self.terminated.append(pod.pod_id)
 
 
@@ -107,6 +114,12 @@ async def nodes(db, run):
 
 def events(broadcast):
     return [c.args[1] for c in broadcast.await_args_list]
+
+
+async def drain():
+    """Wait for background pod terminations."""
+    while ex._background:
+        await asyncio.wait(set(ex._background))
 
 
 async def test_success_resolves_refs_and_records_lineage(db, provider, monkeypatch):
@@ -260,7 +273,7 @@ async def test_startup_sweep_fails_orphaned_runs(db, provider):
 
     await ex.sweep(db)  # a workflow that no longer compiles must not stop the API from starting
     assert provider.terminated == []  # terminations run after startup, once the API can take the nodes' last posts
-    await asyncio.wait(set(ex._background))
+    await drain()
 
     for r in (run, between, done, stale):
         await db.refresh(r)
@@ -285,6 +298,78 @@ async def test_startup_runs_the_sweep(monkeypatch):
         pass
 
     swept.assert_awaited_once()
+
+
+async def test_cancel_during_provision_terminates_the_pod_once_it_exists(db, provider):
+    provider.provision_gate = asyncio.Event()
+    run = await seed(db)
+    task = asyncio.create_task(ex.run_workflow(run.id, db, AsyncMock()))
+    await asyncio.wait_for(provider.provisioning.wait(), 5)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 5)
+    provider.provision_gate.set()  # the container comes up after the cancel
+    await asyncio.wait_for(provider.terminating.wait(), 5)
+    await drain()
+
+    assert provider.terminated == ["a"]
+    rows = await nodes(db, run)
+    assert (rows["a"].status, rows["a"].error) == (NodeStatus.FAILED, "cancelled")
+
+
+async def test_a_second_cancel_cannot_interrupt_teardown(db, provider):
+    provider.script = {"a": {"exit": None}}
+    provider.terminate_gate = asyncio.Event()
+    run = await seed(db)
+    task = asyncio.create_task(ex.run_workflow(run.id, db, AsyncMock()))
+    await asyncio.wait_for(provider.started.wait(), 5)
+
+    task.cancel()
+    await asyncio.wait_for(provider.terminating.wait(), 5)  # SIGTERM sent, grace running
+    task.cancel()                                            # a second click on Cancel
+    provider.terminate_gate.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 5)
+    await drain()
+
+    assert provider.terminated == ["a"]
+    rows = await nodes(db, run)
+    assert (rows["a"].status, rows["a"].error) == (NodeStatus.FAILED, "cancelled")
+
+
+async def test_pod_is_terminated_even_if_recording_it_fails(db, provider, monkeypatch):
+    run = await seed(db)
+    real_commit, failed = db.commit, []
+
+    async def commit():
+        if provider.provisioned and not failed:  # the commit that records the pod
+            failed.append(True)
+            raise RuntimeError("db down")
+        await real_commit()
+
+    monkeypatch.setattr(db, "commit", commit)
+    await ex.run_workflow(run.id, db, AsyncMock())
+
+    rows = await nodes(db, run)
+    assert provider.terminated == ["a"] and rows["a"].error == "internal: db down"
+
+
+async def test_an_error_between_nodes_still_leaves_one_failed_node(db, provider):
+    provider.script = {"a": {"outputs": {"train_jsonl": "r2://bk/a"}}}
+    run = await seed(db)
+
+    async def broadcast(run_id, event):
+        if event.get("node_id") == "a" and event["status"] == "succeeded":
+            raise ConnectionError("redis down")
+
+    await ex.run_workflow(run.id, db, broadcast)
+
+    await db.refresh(run)
+    rows = await nodes(db, run)
+    assert run.status == RunStatus.FAILED  # retryable: exactly one failed node, the first unfinished one
+    assert [rows[i].status for i in "abc"] == [NodeStatus.SUCCEEDED, NodeStatus.FAILED, NodeStatus.PENDING]
+    assert rows["b"].error == "internal: redis down"
 
 
 # --- run control API ---------------------------------------------------------
@@ -331,6 +416,15 @@ async def test_cancel_a_run_that_never_started(client, db):
     assert (r.status_code, r.json()["status"]) == (200, "cancelled")
 
 
+async def test_cancel_rereads_the_run_before_deciding(client, db):
+    run = await seed(db, status=RunStatus.RUNNING)
+    async with async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)() as other:
+        (await other.get(Run, run.id)).status = RunStatus.SUCCEEDED  # finished meanwhile, elsewhere
+        await other.commit()
+    r = await client.post(f"/runs/{run.id}/cancel")
+    assert r.json()["status"] == "succeeded"
+
+
 async def test_retry_reruns_the_failed_node_and_continues(client, db, provider, launched):
     provider.script = {"a": {"outputs": {"train_jsonl": "r2://bk/a"}}, "b": {"exit": 2}}
     run = await seed(db)
@@ -351,6 +445,31 @@ async def test_retry_reruns_the_failed_node_and_continues(client, db, provider, 
     assert {n.status for n in rows.values()} == {NodeStatus.SUCCEEDED}
     assert [n for n, _ in provider.provisioned] == ["a", "b", "b", "c"]  # a is not re-run
     assert (await client.post(f"/runs/{run.id}/nodes/b/retry")).status_code == 409   # run succeeded
+
+
+async def test_concurrent_retries_launch_one_executor(client, db, provider, launched):
+    from api.database import get_session
+    from api.main import app
+    provider.script = {"a": {"outputs": {"train_jsonl": "r2://bk/a"}}, "b": {"exit": 2}}
+    run = await seed(db)
+    await ex.run_workflow(run.id, db, AsyncMock())
+    provider.script = {"b": {"outputs": {"train_jsonl": "r2://bk/b"}}}
+    sessions = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
+
+    async def per_request():  # one session per request, as in production
+        async with sessions() as s:
+            yield s
+            await s.commit()
+
+    app.dependency_overrides[get_session] = per_request
+    r1, r2 = await asyncio.gather(*(client.post(f"/runs/{run.id}/nodes/b/retry") for _ in range(2)))
+    await asyncio.wait(set(launched))
+
+    assert sorted([r1.status_code, r2.status_code]) in ([202, 202], [202, 409])
+    assert [n for n, _ in provider.provisioned] == ["a", "b", "b", "c"]  # b re-ran once
+    task = ex.launch(run.id)
+    assert ex.launch(run.id) is task  # a double-click joins the running executor
+    await task
 
 
 async def test_summary_rolls_up_nodes_cost_and_artifacts(client, db):
@@ -411,6 +530,13 @@ async def test_error_log_line_is_kept_for_the_node_error(client, db, seeded_node
                                                  "level": level, "message": message})
     await db.refresh(node_run)
     assert node_run.error == "tavily quota 432: out of credits"
+
+    node_run.status, node_run.error = NodeStatus.FAILED, "cancelled"
+    await db.commit()
+    await client.post("/internal/log", json={"run_id": str(run.id), "node_id": "node", "ts": "t",
+                                             "level": "ERROR", "message": "late line after SIGTERM"})
+    await db.refresh(node_run)
+    assert node_run.error == "cancelled"
 
 
 async def test_cost_json_adds_to_run_cost(client, db, seeded_node_run):

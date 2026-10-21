@@ -26,6 +26,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -105,7 +106,7 @@ async def receive_log(event: LogEvent, db: Session):
     from fastapi import Response
     if event.level == "ERROR":
         node_run = await db.scalar(select(NodeRun).where(NodeRun.run_id == event.run_id, NodeRun.node_id == event.node_id))
-        if node_run:
+        if node_run and node_run.status == NodeStatus.RUNNING:  # a late line must not replace "cancelled"
             node_run.error = event.message
     await event_bus.publish(event.run_id, {
         "type": "log",
@@ -165,10 +166,11 @@ async def receive_artifact(event: ArtifactEvent, db: Session):
 
     # The SDK's cost_json carries the node's spend as metadata {"usd"}; it rolls up into Run.cost_usd.
     if art_data["name"] == "cost_json":
-        run = await db.get(Run, event.run_id)
-        run.cost_usd = (run.cost_usd or Decimal(0)) + Decimal(str(artifact.meta.get("usd", 0)))
-        await db.flush()
-        await event_bus.publish(event.run_id, {"type": "run_cost", "cost_usd": float(run.cost_usd)})
+        cost_usd = await db.scalar(
+            update(Run).where(Run.id == event.run_id)
+            .values(cost_usd=func.coalesce(Run.cost_usd, 0) + Decimal(str(artifact.meta.get("usd", 0))))
+            .returning(Run.cost_usd).execution_options(synchronize_session=False))
+        await event_bus.publish(event.run_id, {"type": "run_cost", "cost_usd": float(cost_usd)})
 
     await event_bus.publish(event.run_id, {
         "type": "artifact",

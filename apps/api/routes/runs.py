@@ -141,7 +141,7 @@ async def cancel_run(run_id: uuid.UUID, db: Session):
         # The executor terminates the pod (SIGTERM, 30 s grace) and marks the node failed "cancelled".
         task.cancel()
         await asyncio.wait({task}, timeout=60)
-        await db.refresh(run)
+    await db.refresh(run)
     if run.status not in TERMINAL:  # never started (or still stopping after 60 s)
         run.status = RunStatus.CANCELLED
         run.finished_at = utcnow()

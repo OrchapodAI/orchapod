@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -42,16 +43,9 @@ def posts(monkeypatch):
     """Every request the SDK sends to the control plane, answered 200."""
     sent = []
 
-    class _Resp:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
     def fake_urlopen(req, timeout=None):
         sent.append({"url": req.full_url, "secret": req.get_header("X-orchapod-secret"), "body": json.loads(req.data)})
-        return _Resp()
+        return contextlib.nullcontext()
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     return sent

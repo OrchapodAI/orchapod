@@ -7,10 +7,12 @@ Spend of one node. Clients pass on_usage=cost.add; io writes the summary as cost
 from __future__ import annotations
 
 import os
+import threading
 
 from orchapod.prices import PRICES
 
 _items: dict[tuple[str, str], dict] = {}
+_lock = threading.Lock()  # nodes may bill from worker threads
 
 
 class BudgetExceeded(RuntimeError):
@@ -23,17 +25,19 @@ def add(provider: str, model: str, in_tokens: int = 0, out_tokens: int = 0,
     extra: credits (tavily), gpu_hours (nebius_serverless), trained_tokens (fine-tune)."""
     if usd is None:
         usd = _price(provider, model, in_tokens, out_tokens, **extra)
-    item = _items.setdefault((provider, model), {
-        "provider": provider, "model": model, "calls": 0, "in_tokens": 0, "out_tokens": 0, "usd": 0.0})
-    item["calls"] += calls
-    item["in_tokens"] += in_tokens
-    item["out_tokens"] += out_tokens
-    item["usd"] += usd
-    for k, v in extra.items():
-        item[k] = item.get(k, 0) + v
+    with _lock:
+        item = _items.setdefault((provider, model), {
+            "provider": provider, "model": model, "calls": 0, "in_tokens": 0, "out_tokens": 0, "usd": 0.0})
+        item["calls"] += calls
+        item["in_tokens"] += in_tokens
+        item["out_tokens"] += out_tokens
+        item["usd"] += usd
+        for k, v in extra.items():
+            item[k] = item.get(k, 0) + v
+        spent = total()
     cap = os.environ.get("ORCHAPOD_MAX_COST_USD")
-    if cap and total() > float(cap):
-        raise BudgetExceeded(f"node spend ${total():.4f} passed ORCHAPOD_MAX_COST_USD ${float(cap):.4f}")
+    if cap and spent > float(cap):
+        raise BudgetExceeded(f"node spend ${spent:.4f} passed ORCHAPOD_MAX_COST_USD ${float(cap):.4f}")
 
 
 def _price(provider: str, model: str, in_tokens: int, out_tokens: int,
@@ -57,4 +61,5 @@ def total() -> float:
 
 def summary() -> dict:
     """The cost_json envelope: {"usd", "items": [{provider, model, calls, in_tokens, out_tokens, usd, ...}]}."""
-    return {"usd": round(total(), 6), "items": [{**i, "usd": round(i["usd"], 6)} for i in _items.values()]}
+    with _lock:
+        return {"usd": round(total(), 6), "items": [{**i, "usd": round(i["usd"], 6)} for i in _items.values()]}

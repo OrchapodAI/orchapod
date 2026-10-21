@@ -39,6 +39,7 @@ from api.models.db import (
     Run, RunStatus,
 )
 from api.services.events import event_bus
+from api.services.redact import redact
 
 # node_run_id (str) → running asyncio.Task for TTL termination.
 # Stored so the extend endpoint can cancel + reschedule it.
@@ -149,7 +150,7 @@ async def receive_artifact(event: ArtifactEvent, db: Session):
         kind=kind,
         uri=art_data["uri"],
         size_bytes=art_data.get("size_bytes"),
-        meta=art_data.get("metadata", {}),
+        meta=redact(art_data.get("metadata") or {}),  # R10: a token in it is never stored
     )
     db.add(artifact)
 

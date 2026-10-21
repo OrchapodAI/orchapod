@@ -72,30 +72,19 @@ test("/agent: intent #2 is planned, run and reported", async ({ page }, testInfo
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
-// frontend-w3 and the golden path. Written from docs/contracts.md and frontend-w3's uncommitted components (EvalView,
-// ComparePlayground, DatasetCard): UNRUN until they merge, so the selectors may need one pass. Each SKIPs, naming its piece.
+// The template gallery, the dataset card, the eval view and the compare playground (frontend-w3, merged: a missing piece is a
+// regression and fails), and the golden path, which SKIPs only for what is not merged yet (judge-eval, vllm-serve, POST /compare).
 // ---------------------------------------------------------------------------------------------------------------------
 
-const GALLERY = ["/", "/templates", "/agent"]; // where frontend-w3 may put the template gallery (GET /agent/templates)
-
-/** Opens the page that lists the template with a Run button and clicks it; a SKIP when no page does. */
+/** One click on a template card of the gallery (under the chat box on /agent; its button is named "Run template: <title>"). */
 async function runFromGallery(page: Page, t: Template): Promise<void> {
-  const title = page.getByText(t.title, { exact: true }).first();
-  let found = false;
-  for (const route of GALLERY) {
-    await page.goto(route);
-    await page.waitForLoadState("networkidle").catch(() => {}); // the gallery loads the templates after the page: a slow machine must not read as "not merged"
-    if ((found = await title.isVisible())) break;
-  }
-  if (!found) pending(`frontend-w3 is not merged: none of ${GALLERY.join(", ")} lists the template "${t.title}" (the gallery)`);
-  // the card is the nearest ancestor of the title that holds a Run button
-  await title.locator("xpath=ancestor::*[.//button[contains(., 'Run')]][1]").getByRole("button", { name: /run/i }).click();
+  await page.goto("/agent");
+  await page.getByRole("button", { name: `Run template: ${t.title}` }).click();
 }
 
 test("templates: one click runs intent #2 to a finished run with its dataset card", async ({ page }) => {
   const problems = watch(page);
   const t = await template(2);
-  if (PENDING["2"]) pending(PENDING["2"]);
   await runFromGallery(page, t);
 
   // DatasetCard (frontend-w3): the download link of data-prep's dataset and the stats card from its metrics `fields`
@@ -171,10 +160,6 @@ test("run page: eval view and compare playground on a run served from a fixture"
   });
 
   await page.goto(`/runs/${RUN}`);
-  await expect(page.getByRole("button", { name: "logs", exact: true })).toBeVisible({ timeout: 60_000 }); // the run page has loaded the run
-  if ((await page.getByRole("button", { name: "eval", exact: true }).count()) === 0) { // tabs and run arrive in one render
-    pending("frontend-w3 is not merged: the run page has no eval tab (EvalView, ComparePlayground)");
-  }
   await checkEvalView(page);
   await expect(page.getByText("75%").first()).toBeVisible(); // win rate = (1 win + 0.5 x 1 tie) / 2
   await checkPlayground(page);
@@ -192,7 +177,7 @@ test("golden path: template, run, eval view, compare playground", async ({ page 
   if (probe.status === 404 || probe.status === 405) pending(`backend-w3 is not merged: POST /compare answers ${probe.status}`);
   await runFromGallery(page, t);
 
-  await checkEvalView(page); // EvalView (frontend-w3) on the judge-eval node's real STUB result
-  await checkPlayground(page); // ComparePlayground over POST /compare: one prompt, two models, streamed side by side
+  await checkEvalView(page); // the eval view on the judge-eval node's real STUB result
+  await checkPlayground(page); // the playground over POST /compare: one prompt, two models, streamed side by side
   expect(problems).toEqual([]);
 });

@@ -5,11 +5,12 @@
 It starts the API (STUB=1, throwaway DB, full caps: the UI is anonymous) and `next dev` on the first free port from 3100, builds
 the node images of the canonical intents that can run, and runs tests/ui (Playwright, version pinned in tests/ui/package.json,
 headless Chromium) against them. The tests: /agent intent #2 to a finished report; the template gallery's one-click Run of
-intent #2; the golden path (intent #1) through its eval view and the compare playground.
+intent #2 with its dataset card; the eval view and the compare playground on a run served from a fixture; the golden path
+(intent #1: one click, the run, its eval view, the playground).
 
-A step whose piece is not merged yet (the template gallery, the eval view and the playground: frontend-w3; judge-eval and
-vllm-serve for intent #1: see e2e_agent.PENDING; POST /compare: backend-w3) prints SKIP with its reason and does not fail;
---strict fails it. The pieces the API still lacks are found here, from the planner's own errors, and passed on in E2E_PENDING.
+A step whose piece is not merged yet (judge-eval and vllm-serve for intent #1: see e2e_agent.PENDING; POST /compare: backend-w3)
+prints SKIP with its reason and does not fail; --strict fails it. The pieces the API still lacks are found here, from the
+planner's own errors, and passed on in E2E_PENDING. The UI is on NebiusHackathon: a missing UI piece fails.
 """
 
 import argparse

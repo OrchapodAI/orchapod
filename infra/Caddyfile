@@ -1,0 +1,11 @@
+# Caddy for infra/docker-compose.prod.yml. Automatic HTTPS (Let's Encrypt) for both names once their A records point here.
+# reverse_proxy passes WebSockets (/ws/runs/{id}) through as they are, and flushes SSE (text/event-stream) at once.
+# It also replaces any X-Forwarded-For a client sends, so the API (which trusts it, apps/api/Dockerfile) sees the real IP.
+
+app.{$DOMAIN} {
+	reverse_proxy web:3000
+}
+
+api.{$DOMAIN} {
+	reverse_proxy api:8000
+}

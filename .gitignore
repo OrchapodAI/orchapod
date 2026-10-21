@@ -27,6 +27,9 @@ apps/web/pnpm-workspace.yaml
 .env
 .env.local
 .env.*.local
+# Hosted VM only (docs/HOSTING.md): the nebius CLI profile (a private key) and the deploy log never belong in git
+/nebius/
+/deploys.log
 
 # Local databases
 *.db

@@ -10,6 +10,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 ENV_EXAMPLE = ROOT / ".env.example"
 COMPOSE = ROOT / "infra" / "docker-compose.dev.yml"
+PROD = ROOT / "infra" / "docker-compose.prod.yml"
 
 CONFIG = {  # name → the value .env.example ships ("" = none; you fill it in)
     "NEBIUS_API_KEY": "", "NEBIUS_BASE_URL": "https://api.tokenfactory.nebius.com/v1", "TAVILY_API_KEY": "",
@@ -71,3 +72,14 @@ def test_compose_api_gets_the_contract_config_on_8001():
     assert set(services["api"]["environment"]) == set(CONFIG) | {"VASTAI_API_KEY"}  # spikes may set it locally
     assert services["web"]["environment"]["NEXT_PUBLIC_API_URL"] == "http://localhost:8001"
     assert [name for name in REMOVED + ["253B"] if name in text] == []
+
+
+def test_prod_compose_api_gets_the_config_and_only_caddy_publishes_ports():
+    services = yaml.safe_load(PROD.read_text())["services"]
+    env = services["api"]["environment"]
+    # VASTAI_API_KEY never reaches the hosted API; ORCHAPOD_CORS_ORIGINS is derived from DOMAIN for backend's allow-list
+    assert set(env) == set(CONFIG) | {"ORCHAPOD_CORS_ORIGINS"}
+    assert env["ORCHAPOD_INTERNAL_SECRET"].startswith("${ORCHAPOD_INTERNAL_SECRET:?")  # R17: required once public
+    assert set(services["web"]["build"]["args"]) == {"NEXT_PUBLIC_API_URL", "NEXT_PUBLIC_WS_URL", "NEXT_PUBLIC_SITE_URL"}
+    assert {name: s["ports"] for name, s in services.items() if "ports" in s} == {"caddy": ["80:80", "443:443"]}
+    assert not [name for name, s in services.items() if s.get("network_mode") == "host"]

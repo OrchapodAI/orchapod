@@ -160,3 +160,8 @@ worktrees:
   - vllm-serve STUB must register via /internal/ttl → sent to ml-w4.
   - PROCESS NOTE: qa-w3 started Docker Desktop and ran `make up` itself, explaining the earlier 'Docker back up'. No harm (complychip2 did not start), but future briefs say: never start Docker Desktop.
   - Trial merge into NebiusHackathon: clean. Review dispatched (sonnet), reviewer id; qa-w3 told about the 4th template (test_e2e_agent.py:45).
+- 2026-10-21T13:06Z backend-w4 reported DONE: 12 commits ef3276e..1b6f216 on 9578c48; make check 596, or 613 + 1 skipped merged; live smoke 200×5 then 429; /health 503 names redis+storage; 13/13 mutations caught; $0.
+  - Done: CORS allow-list (never credentials); per-IP buckets incl. /workflows/from-prompt and /inference/deploy; deep /health + /livez; kill switch per request; an admin run in flight no longer blocks anonymous callers; config.env() per call (contract line amended); hf_token out of stored YAML; GET /runs and /workflows capped at 500.
+  - New env: ORCHAPOD_CORS_ORIGINS, ORCHAPOD_TRUSTED_PROXIES. Platform must drop `--forwarded-allow-ips "*"` and point the watchdog/healthcheck at /livez.
+  - OPEN per its report: anonymous PUT/DELETE of any workflow (incl. the golden run's); admin spend counts against the anonymous share; GPU nodes bounded only by the node timeout. One gitleaks false positive for .gitleaksignore.
+  - Trial merge clean. Review dispatched (opus, security gate), reviewer id.

@@ -51,6 +51,7 @@ _ttl_tasks: dict[str, asyncio.Task] = {}
 DELETE_RETRY_S = 300  # a failed delete is tried again: the endpoint bills until it is gone
 # A Nebius resource id; it becomes a REST path segment, so /endpoints/../jobs/x could otherwise delete any job.
 ENDPOINT_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+STUB_URL = "http://stub.invalid"  # contracts: a STUB endpoint runs here, and nothing exists at Nebius
 log = logging.getLogger("api.internal")
 
 router = APIRouter()
@@ -152,6 +153,8 @@ async def receive_artifact(event: ArtifactEvent, db: Session):
     except ValueError:
         raise HTTPException(422, f"Unknown artifact kind '{art_data['kind']}'. "
                             f"Valid: {[k.value for k in ArtifactKind]}")
+    if kind == ArtifactKind.ENDPOINT:  # a forged live row could steer expiry and /compare's pair rule
+        raise HTTPException(422, "endpoints are registered through /internal/ttl only")
 
     meta = redact(art_data.get("metadata") or {})  # R10: a token in it is never stored
     cost = art_data["name"] == "cost_json"
@@ -213,12 +216,14 @@ async def _reconcile(db: AsyncSession, node_run: NodeRun, meta: dict) -> tuple[d
         reported = float(meta.get("usd") or 0)
     except (TypeError, ValueError):
         reported = math.nan
-    if not math.isfinite(reported) or reported > 2 * budget.run_cap(1.0):
-        log.warning("refused a cost_json of %r from run %s node %s", meta.get("usd"), node_run.run_id, node_run.node_id)
-        raise HTTPException(422, "cost_json usd must be a finite amount, at most twice ORCHAPOD_MAX_RUN_USD")
-    reported, seq = max(0.0, reported), meta.get("seq")
     attempt = meta.get("attempt") if isinstance(meta.get("attempt"), str) and meta["attempt"] else budget.attempt_of(node_run)
     earlier = await budget.attempt_costs(db, node_run.id, attempt)
+    if not math.isfinite(reported) or budget.reported_cost(earlier + [{**meta, "reported_usd": max(0.0, reported)}]) \
+            > 2 * budget.run_cap(1.0):
+        log.warning("refused a cost_json of %r from run %s node %s", meta.get("usd"), node_run.run_id, node_run.node_id)
+        raise HTTPException(422, "cost_json usd must be a finite amount, and an attempt's reports at most twice "
+                                 "ORCHAPOD_MAX_RUN_USD")
+    reported, seq = max(0.0, reported), meta.get("seq")
     if isinstance(seq, int) and any(m.get("seq") == seq and m.get("billed_by") != "executor"
                                     and float(m.get("reported_usd", m.get("usd", 0))) >= reported for m in earlier):
         return None, 0.0
@@ -293,6 +298,9 @@ async def register_ttl(body: RegisterTTLRequest, db: Session):
     node_run = result.scalar_one_or_none()
     if node_run is None:
         raise HTTPException(404, f"NodeRun not found: run_id={body.run_id}, node_id={body.node_id}")
+    url = await _nebius_url(body.endpoint_id)  # the URL /compare will send ORCHAPOD_ENDPOINT_TOKEN to: never the node's
+    if url is None or url != body.endpoint_url:
+        raise HTTPException(422, f"endpoint {body.endpoint_id} is not running at {body.endpoint_url}")
 
     now        = datetime.now(timezone.utc)
     expires_at = now + timedelta(minutes=body.keep_alive_min)
@@ -301,16 +309,15 @@ async def register_ttl(body: RegisterTTLRequest, db: Session):
     # otherwise keep an endpoint billing forever. A sooner one takes over; else the earlier timer stands.
     earlier = [a for a in await db.scalars(select(Artifact).where(Artifact.kind == ArtifactKind.ENDPOINT))
                if _live(a.meta) and a.meta["endpoint_id"] == body.endpoint_id]
-    first = min((datetime.fromisoformat(a.meta["expires_at"]) for a in earlier), default=None)
+    first = min((_expiry(a.meta) for a in earlier), default=None)
     takes_over = first is None or expires_at < first
-    for a in earlier if takes_over else ():
+    superseded = earlier if takes_over else []
+    for a in superseded:
         a.meta = {**a.meta, "superseded_at": now.isoformat()}
-        if task := _ttl_tasks.pop(str(a.id), None):
-            task.cancel()
     expires_at = expires_at if takes_over else first
 
     outputs = dict(node_run.outputs or {})
-    outputs["endpoint_url"] = body.endpoint_url
+    outputs["endpoint_url"] = url
     outputs["expires_at"]   = expires_at.isoformat()
     node_run.outputs = outputs
     db.add(node_run)
@@ -319,7 +326,7 @@ async def register_ttl(body: RegisterTTLRequest, db: Session):
         node_run_id=node_run.id,
         name="endpoint_url",
         kind=ArtifactKind.ENDPOINT,
-        uri=body.endpoint_url,
+        uri=url,
         meta={
             "keep_alive_min": body.keep_alive_min,
             "registered_at":  now.isoformat(),
@@ -329,26 +336,50 @@ async def register_ttl(body: RegisterTTLRequest, db: Session):
         },
     )
     db.add(artifact)
-    await db.commit()  # before the event: subscribers re-read the run on it
+    await db.commit()  # before the timers change (a failed commit leaves the live one) and before the event
+    for a in superseded:
+        if task := _ttl_tasks.pop(str(a.id), None):
+            task.cancel()
+    if takes_over:
+        _arm(artifact, node_run.run_id)
 
     await event_bus.publish(uuid.UUID(body.run_id), {
         "type":       "artifact",
         "node_id":    body.node_id,
         "name":       "endpoint_url",
-        "uri":        body.endpoint_url,
+        "uri":        url,
         "kind":       "endpoint",
         "expires_at": expires_at.isoformat(),
     })
-    if takes_over:
-        _arm(artifact, node_run.run_id)
     return {"status": "ttl_registered", "keep_alive_min": body.keep_alive_min, "expires_at": expires_at.isoformat()}
 
 
+async def _nebius_url(endpoint_id: str) -> str | None:
+    """The URL Nebius reports for the endpoint (None until it runs); a STUB endpoint's, with no call. 502 when Nebius
+    does not answer: the node then deletes its endpoint."""
+    if endpoint_id.startswith("stub-"):
+        return STUB_URL
+    try:
+        return (await asyncio.to_thread(_endpoints().get, endpoint_id))["url"]
+    except Exception as e:
+        log.warning("endpoint %s not confirmed by Nebius: %s", endpoint_id, e)
+        raise HTTPException(502, f"Nebius did not confirm endpoint {endpoint_id}, so it is not registered")
+
+
+def _expiry(meta: dict) -> datetime | None:
+    """A row's expires_at as an aware datetime; None when it is missing or not one."""
+    try:
+        at = datetime.fromisoformat(meta["expires_at"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return at if at.tzinfo else None
+
+
 def _live(meta: dict | None) -> bool:
-    """A registered endpoint that is neither deleted nor superseded by a later registration of the same id."""
+    """A registered endpoint, with a readable expiry, neither deleted nor superseded by a later registration."""
     meta = meta or {}
-    return bool(meta.get("endpoint_id") and meta.get("expires_at")) and not (meta.get("deleted_at")
-                                                                              or meta.get("superseded_at"))
+    return bool(meta.get("endpoint_id")) and _expiry(meta) is not None and not (meta.get("deleted_at")
+                                                                                 or meta.get("superseded_at"))
 
 
 def _arm(artifact: Artifact, run_id: uuid.UUID) -> None:
@@ -359,8 +390,7 @@ def _arm(artifact: Artifact, run_id: uuid.UUID) -> None:
         return
     key = str(artifact.id)
     _ttl_tasks[key] = task = asyncio.create_task(_expire(artifact.id, artifact.meta["endpoint_id"],
-                                                         datetime.fromisoformat(artifact.meta["expires_at"]),
-                                                         run_id, artifact.node_run_id))
+                                                         _expiry(artifact.meta), run_id, artifact.node_run_id))
     task.add_done_callback(lambda t: _ttl_tasks.pop(key, None) if _ttl_tasks.get(key) is t else None)
 
 
@@ -371,8 +401,11 @@ async def resume_ttls() -> None:
         rows = await db.execute(select(Artifact, NodeRun.run_id).join(NodeRun, NodeRun.id == Artifact.node_run_id)
                                 .where(Artifact.kind == ArtifactKind.ENDPOINT))
         for artifact, run_id in rows:
-            if _live(artifact.meta):
-                _arm(artifact, run_id)
+            try:  # a row it cannot read is skipped: it never stops the API from starting
+                if _live(artifact.meta):
+                    _arm(artifact, run_id)
+            except Exception:
+                log.exception("endpoint_url %s not re-armed", artifact.id)
 
 
 def _endpoints():

@@ -76,9 +76,10 @@ async def ledger(db) -> list[float]:
 
 
 async def register(db, node_run, uri, minutes=30, **meta):
+    """The row /internal/ttl records for an endpoint (it alone writes them)."""
     expires = datetime.now(timezone.utc) + timedelta(minutes=minutes)
     db.add(Artifact(node_run_id=node_run.id, name="endpoint_url", kind=ArtifactKind.ENDPOINT, uri=uri,
-                    meta={"expires_at": expires.isoformat(), **meta}))
+                    meta={"endpoint_id": "ep-1", "expires_at": expires.isoformat(), **meta}))
     await db.commit()
 
 

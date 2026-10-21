@@ -33,11 +33,9 @@ _granted: dict[uuid.UUID, tuple[float, float]] = {}
 cost_lock = asyncio.Lock()
 
 
-def attempt_cost(metas: list[dict]) -> float:
-    """What one attempt of a node costs, from its cost_json metas (contracts "Run state machine"): what the node
-    reported (a seq counts once, at its largest: a re-send after a broken POST), or the executor's wall-time bill of
-    its gpu pod when that is more."""
-    walls = [float(m.get("wall_usd", 0)) for m in metas if m.get("billed_by") == "executor"]
+def reported_cost(metas: list[dict]) -> float:
+    """What the node reported in one attempt's cost_json metas: a seq counts once, at its largest (a re-send after a
+    broken POST)."""
     seqs, reported = {}, 0.0
     for m in metas:
         if m.get("billed_by") != "executor":
@@ -46,7 +44,13 @@ def attempt_cost(metas: list[dict]) -> float:
                 seqs[m["seq"]] = max(seqs.get(m["seq"], 0.0), usd)
             else:
                 reported += usd
-    return max([reported + sum(seqs.values()), *walls])
+    return reported + sum(seqs.values())
+
+
+def attempt_cost(metas: list[dict]) -> float:
+    """What one attempt of a node costs (contracts "Run state machine"): what the node reported, or the executor's
+    wall-time bill of its gpu pod when that is more."""
+    return max([reported_cost(metas), *(float(m.get("wall_usd", 0)) for m in metas if m.get("billed_by") == "executor")])
 
 
 def attempt_of(node_run) -> str:

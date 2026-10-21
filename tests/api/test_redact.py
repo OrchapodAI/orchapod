@@ -34,7 +34,7 @@ def test_secret_looking_keys_are_redacted_at_any_depth():
 async def test_no_route_returns_an_artifact_secret(client, db, seeded_node_run):
     run, node_run = seeded_node_run
     r = await client.post("/internal/artifact", json={"run_id": str(run.id), "node_id": "node", "artifact": {  # old vllm-serve
-        "name": "openai_api_key", "uri": "r2://orchapod-artifacts/runs/x/node/openai_api_key", "kind": "endpoint",
+        "name": "openai_api_key", "uri": "r2://orchapod-artifacts/runs/x/node/openai_api_key", "kind": "metrics",
         "metadata": {"api_key": "sk-live-1", "model": "m"}}})
     assert r.status_code == 201
     stored = await db.scalar(select(Artifact).where(Artifact.name == "openai_api_key"))

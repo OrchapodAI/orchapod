@@ -68,8 +68,9 @@ async def test_register_artifact_unknown_kind_returns_422(client, seeded_node_ru
 # POST /internal/ttl
 # ---------------------------------------------------------------------------
 
-async def test_register_ttl_stores_endpoint_url_in_outputs(client, db, seeded_node_run, no_bg_tasks):
+async def test_register_ttl_stores_endpoint_url_in_outputs(client, db, seeded_node_run, no_bg_tasks, endpoints):
     run, node_run = seeded_node_run
+    endpoints.urls["ep-1"] = "https://pod-abc-8000.proxy.runpod.net/v1"
 
     resp = await client.post("/internal/ttl", json={
         "run_id":         str(run.id),
@@ -87,11 +88,12 @@ async def test_register_ttl_stores_endpoint_url_in_outputs(client, db, seeded_no
     assert node_run.outputs["endpoint_url"] == "https://pod-abc-8000.proxy.runpod.net/v1"
 
 
-async def test_register_ttl_creates_endpoint_artifact(client, db, seeded_node_run, no_bg_tasks):
+async def test_register_ttl_creates_endpoint_artifact(client, db, seeded_node_run, no_bg_tasks, endpoints):
     from sqlmodel import select
     from api.models.db import Artifact, ArtifactKind
 
     run, node_run = seeded_node_run
+    endpoints.urls["ep-1"] = "https://pod-abc-8000.proxy.runpod.net/v1"
 
     await client.post("/internal/ttl", json={
         "run_id":         str(run.id),
@@ -148,11 +150,15 @@ async def test_log_endpoint_returns_204(client):
 # ---------------------------------------------------------------------------
 
 class Endpoints:
-    """NebiusServerless().endpoints as expiry uses it (contracts "NebiusServerless", platform-w5): delete(endpoint_id).
-    `errors` are raised by the first deletes, in turn."""
+    """NebiusServerless().endpoints as the TTL routes use it (contracts "NebiusServerless", platform-w5): get(id) reports
+    the endpoint's URL (`urls`, else https://ep.example); delete(id) raises `errors`, in turn, first."""
 
     def __init__(self):
-        self.deleted, self.errors = [], []
+        self.deleted, self.errors, self.got, self.urls = [], [], [], {}
+
+    def get(self, endpoint_id):
+        self.got.append(endpoint_id)
+        return {"id": endpoint_id, "state": "RUNNING", "url": self.urls.get(endpoint_id, "https://ep.example")}
 
     def delete(self, endpoint_id):
         self.deleted.append(endpoint_id)
@@ -225,9 +231,11 @@ async def test_a_404_is_done_a_stub_endpoint_is_never_called_and_a_failed_delete
     run, _ = seeded_node_run
     endpoints.errors = [ProviderError("nebius_serverless", "server", 503, "busy"),
                         ProviderError("nebius_serverless", "bad_request", 404, "not found")]
-    for endpoint_id in ("ep-gone", "stub-orchapod-1234-serve"):
-        await client.post("/internal/ttl", json={**TTL, "run_id": str(run.id), "endpoint_id": endpoint_id})
-    await expiries()
+    for endpoint_id, url in (("ep-gone", "https://ep.example"), ("stub-orchapod-1234-serve", "http://stub.invalid")):
+        await client.post("/internal/ttl", json={**TTL, "run_id": str(run.id), "endpoint_id": endpoint_id,
+                                                 "endpoint_url": url})
+        await expiries()  # one at a time: the in-memory database shares one connection between their sessions
+    assert endpoints.got == ["ep-gone"]  # a stub endpoint never exists at Nebius
 
     assert endpoints.deleted == ["ep-gone", "ep-gone"]  # the 503 is tried again, then the 404 means it is gone
     rows = (await db.scalars(select(Artifact).where(Artifact.name == "endpoint_url"))).all()
@@ -381,3 +389,100 @@ async def test_a_cost_json_must_be_a_finite_amount_within_twice_the_run_cap(clie
         "name": "cost_json", "uri": "r2://b/runs/x/node/cost_json", "kind": "metrics", "metadata": {"usd": 6.0, "seq": 2}}})
     await db.refresh(run)
     assert (ok.status_code, float(run.cost_usd)) == (201, 6.0)  # twice the cap is still accepted
+
+
+async def test_timers_change_only_after_the_registration_is_committed(client, db, seeded_node_run, endpoints, monkeypatch):
+    """A sooner re-register whose commit fails (the reviewer sent an endpoint_url that SQLite cannot encode) must leave
+    the live timer alone; one whose event then fails (Redis down) is already armed."""
+    from api.routes import internal
+    from api.services.events import event_bus
+    run_id = str(seeded_node_run[0].id)  # read now: the rollback below expires the test's objects
+    monkeypatch.setattr(internal, "_expire", lambda *a: asyncio.sleep(3600))  # timers that wait, as they would for real
+    await client.post("/internal/ttl", json={**TTL, "run_id": run_id, "keep_alive_min": 30})
+    (live,) = internal._ttl_tasks.values()
+
+    commit = db.commit
+
+    async def broken():
+        raise RuntimeError("cannot encode the row")
+
+    monkeypatch.setattr(db, "commit", broken)
+    with pytest.raises(RuntimeError):
+        await client.post("/internal/ttl", json={**TTL, "run_id": run_id, "keep_alive_min": 1})
+    monkeypatch.setattr(db, "commit", commit)
+    await db.rollback()
+    await asyncio.sleep(0)
+    assert list(internal._ttl_tasks.values()) == [live] and not live.cancelled()
+
+    event_bus.publish.side_effect = ConnectionError("redis down")
+    with pytest.raises(ConnectionError):
+        await client.post("/internal/ttl", json={**TTL, "run_id": run_id, "keep_alive_min": 1})
+    await asyncio.sleep(0)
+    assert live.cancelled() and len(internal._ttl_tasks) == 1  # the sooner registration's timer, armed before the event
+
+
+async def test_only_internal_ttl_records_an_endpoint(client, db, seeded_node_run):
+    """A node forging a live endpoint row through /internal/artifact could make the real registration supersede
+    nothing, crash /internal/ttl or the startup sweep, or have /compare send the endpoint token to its own URL."""
+    from sqlmodel import select
+    from api.models.db import Artifact
+    run, _ = seeded_node_run
+    r = await client.post("/internal/artifact", json={"run_id": str(run.id), "node_id": "node", "artifact": {
+        "name": "endpoint_url", "uri": "https://attacker.example", "kind": "endpoint",
+        "metadata": {"endpoint_id": "ep-1", "expires_at": "2099-01-01T00:00:00+00:00"}}})
+    assert r.status_code == 422 and (await db.scalars(select(Artifact))).all() == []
+
+
+@pytest.mark.parametrize("reported, status", [
+    ({"url": "https://attacker.example"}, 422),  # not the URL Nebius reports: the token would go there
+    ({"url": None}, 422),                         # not running yet
+    (RuntimeError("nebius down"), 502),
+])
+async def test_a_registration_stores_the_url_nebius_reports(client, db, seeded_node_run, endpoints, monkeypatch,
+                                                           reported, status):
+    from sqlmodel import select
+    from api.models.db import Artifact
+    from api.routes import internal
+    run, node_run = seeded_node_run
+
+    def get(endpoint_id):
+        if isinstance(reported, Exception):
+            raise reported
+        return {"id": endpoint_id, **reported}
+
+    monkeypatch.setattr(endpoints, "get", get)
+    r = await client.post("/internal/ttl", json={**TTL, "run_id": str(run.id)})  # the node says https://ep.example
+    assert (r.status_code, (await db.scalars(select(Artifact))).all(), internal._ttl_tasks) == (status, [], {})
+
+
+async def test_a_registered_endpoint_is_the_url_nebius_reports(client, db, seeded_node_run, endpoints, monkeypatch):
+    from api.routes import internal
+    run, node_run = seeded_node_run
+    monkeypatch.setattr(internal, "_expire", lambda *a: asyncio.sleep(3600))
+    r = await client.post("/internal/ttl", json={**TTL, "run_id": str(run.id), "endpoint_url": "https://ep.example"})
+    await db.refresh(node_run)
+    assert (r.status_code, endpoints.got, node_run.outputs["endpoint_url"]) == (202, ["ep-1"], "https://ep.example")
+
+
+async def test_the_startup_sweep_skips_a_row_it_cannot_read(db, seeded_node_run, endpoints, monkeypatch):
+    """A junk or timezone-less expires_at (stored before endpoint rows came only from /internal/ttl) is logged and
+    skipped: it never stops the API from starting, nor makes /compare fail."""
+    from datetime import datetime, timedelta, timezone
+    from api.models.db import Artifact, ArtifactKind
+    from api.routes import compare, internal
+    _, node_run = seeded_node_run
+    later = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    for endpoint_id, expires_at in (("ep-junk", "soon"), ("ep-naive", "2099-01-01T00:00:00"), ("ep-good", later)):
+        db.add(Artifact(node_run_id=node_run.id, name="endpoint_url", kind=ArtifactKind.ENDPOINT,
+                        uri=f"https://{endpoint_id}.example", meta={"endpoint_id": endpoint_id, "expires_at": expires_at}))
+    db.add(Artifact(node_run_id=node_run.id, name="endpoint_url", kind=ArtifactKind.ENDPOINT, uri="https://x.example",
+                    meta=["not", "a", "dict"]))
+    await db.commit()
+    armed = []
+    monkeypatch.setattr(internal, "_arm", lambda a, run_id: armed.append(a.meta["endpoint_id"]))
+
+    await internal.resume_ttls()
+
+    assert armed == ["ep-good"]
+    assert not await compare._registered(db, "https://ep-naive.example")  # no 500 either
+    assert await compare._registered(db, "https://ep-good.example")

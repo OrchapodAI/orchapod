@@ -483,6 +483,15 @@ async def test_a_cost_json_racing_the_executors_bill_is_counted_once(client, pro
         await engine.dispose()
 
 
+async def test_an_attempts_reports_add_up_to_at_most_twice_the_run_cap(client, db, seeded_node_run):
+    """Three $6 reports under new seqs once put $18 on one run: an attempt's reported total is capped at 2 x $3."""
+    run, _ = seeded_node_run
+    for usd, seq, status in ((4.0, 1, 201), (2.0, 2, 201), (0.01, 3, 422), (2.0, 2, 201)):  # the last: a re-send
+        assert (await client.post("/internal/artifact", json=cost_json(run, "node", usd, seq))).status_code == status
+    await db.refresh(run)
+    assert float(run.cost_usd) == 6.0
+
+
 async def test_a_late_flush_counts_toward_its_own_attempt_after_a_quick_retry(client, db, provider, gpu, monkeypatch):
     """Arrival time used to split the attempts, so attempt 1's flush landing after Retry had started attempt 2 was
     reconciled against attempt 2. The SDK echoes ORCHAPOD_ATTEMPT, so it counts toward its own attempt."""

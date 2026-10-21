@@ -1,5 +1,5 @@
 #!/bin/sh
-# Restart the hosted api once Docker marks it unhealthy, i.e. after 3 failed /health in a row (its healthcheck in
+# Restart the hosted api once Docker marks it unhealthy, i.e. after 3 failed /livez in a row (its healthcheck in
 # infra/docker-compose.prod.yml). orchapod-watchdog.timer runs this every minute (infra/cloud-init.yaml); the restarts
 # show in `journalctl -u orchapod-watchdog`. A stopped api is left alone: someone stopped it on purpose.
 set -eu

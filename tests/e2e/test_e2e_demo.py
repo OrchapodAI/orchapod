@@ -201,10 +201,10 @@ def test_the_intent2_template_runs_on_the_nodes_that_exist():
 # --- qa-w2 review carry-overs ---------------------------------------------------------------------------------------------
 
 def test_paid_names_every_key_and_token_the_executor_forwards_to_containers():
-    """A new secret in _FORWARD that PAID misses would reach a stub run's API through the shell."""
-    from api.executor.run_workflow import _FORWARD
+    """A new secret in FORWARD that PAID misses would reach a stub run's API through the shell."""
+    from api.executor.run_workflow import FORWARD
 
-    secrets = {k for k in _FORWARD if k.endswith(("_KEY", "_TOKEN"))} - {"ORCHAPOD_R2_ACCESS_KEY", "ORCHAPOD_R2_SECRET_KEY"}
+    secrets = {k for k in FORWARD if k.endswith(("_KEY", "_TOKEN"))} - {"ORCHAPOD_R2_ACCESS_KEY", "ORCHAPOD_R2_SECRET_KEY"}
     assert {"NEBIUS_API_KEY", "TAVILY_API_KEY", "HF_TOKEN"} <= secrets  # the filter still finds the real ones
     assert secrets <= set(e2e.PAID), f"add to PAID in scripts/e2e_demo.py: {sorted(secrets - set(e2e.PAID))}"
 

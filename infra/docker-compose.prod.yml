@@ -72,11 +72,12 @@ services:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
     healthcheck:
-      # once backend-w4 makes /health deep, point this at its shallow /livez, or a Postgres outage restarts the api every minute
-      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8000/health"]
+      # the shallow /livez: /health is deep (Postgres, Redis, storage), and a restart fixes none of those, so probing it would
+      # restart the api, and fail every run in flight, on any dependency blip
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8000/livez"]
       interval: 30s
       timeout: 5s
-      retries: 3   # unhealthy after 3 failed /health in a row; scripts/watchdog.sh then restarts it
+      retries: 3   # unhealthy after 3 failed /livez in a row; scripts/watchdog.sh then restarts it
       start_period: 60s
 
   web:

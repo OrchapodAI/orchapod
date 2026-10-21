@@ -36,13 +36,15 @@ NOT_IN_ENV_EXAMPLE = {  # read by code, set by nobody's .env
     "NEBIUS_SUBNET_ID": "removed from Config; only the legacy Compute code in nebius.py reads it, until its rewrite",
 }
 READ = re.compile(r"""os\.(?:environ\.get|getenv|environ\.setdefault)\(\s*["']([A-Z][A-Z0-9_]*)["']"""
-                  r"""|os\.environ\[\s*["']([A-Z][A-Z0-9_]*)["']\s*\]""")
+                  r"""|os\.environ\[\s*["']([A-Z][A-Z0-9_]*)["']\s*\]"""
+                  r"""|\benv\(\s*["']([A-Z][A-Z0-9_]*)["']""")  # the API reads through api.config.env
 
 
 def names_read() -> set[str]:
     """Every env name the Python under apps/ and packages/ reads (apps/web is TypeScript)."""
     files = [*ROOT.glob("apps/api/**/*.py"), *ROOT.glob("packages/**/*.py")]
-    return {a or b for f in files for a, b in READ.findall(f.read_text())}
+    from api.config import DEFAULTS  # every name the API reads through config.env, literal or not
+    return {a or b or c for f in files for a, b, c in READ.findall(f.read_text())} | set(DEFAULTS)
 
 
 def test_env_example_is_the_contract_config():
@@ -79,3 +81,4 @@ def test_prod_compose_api_gets_the_config_and_only_caddy_publishes_ports():
     assert set(services["web"]["build"]["args"]) == {"NEXT_PUBLIC_API_URL", "NEXT_PUBLIC_WS_URL", "NEXT_PUBLIC_SITE_URL"}
     assert {name: s["ports"] for name, s in services.items() if "ports" in s} == {"caddy": ["80:80", "443:443"]}
     assert not [name for name, s in services.items() if s.get("network_mode") == "host"]
+    assert services["api"]["healthcheck"]["test"][-1].endswith("/livez")  # not the deep /health: a restart fixes no dependency

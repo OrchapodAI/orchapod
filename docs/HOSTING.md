@@ -14,7 +14,7 @@ app, Postgres and Redis. Artifacts live in Nebius Object Storage. The design, th
 | `apps/api/Dockerfile`, `apps/web/Dockerfile` | the prod images; every deploy builds them on the VM |
 | `scripts/deploy-hosted.sh` | copies this checkout to the VM, rebuilds, restarts |
 | `scripts/backup-db.sh` | nightly `pg_dump` into the bucket, 14 rotating slots |
-| `scripts/watchdog.sh` | restarts the API after 3 failed `/health` in a row |
+| `scripts/watchdog.sh` | restarts the API after 3 failed `/livez` in a row (the deep `/health` is for the uptime monitor) |
 | `infra/docker-compose.smoke.yml` | a local rehearsal of the stack; never on the VM |
 
 ## Bring-up (once, after Hari's yes)

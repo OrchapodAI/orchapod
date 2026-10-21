@@ -43,7 +43,7 @@ _inflight: dict[uuid.UUID, set[asyncio.Future]] = {}
 _SDK_LINE = re.compile(r"\[[^\]]+\] \[(INFO|WARN|ERROR|PROGRESS)\] ")
 _REF = re.compile(r"\$\{\{\s*(?:inputs\.(\w+)|nodes\.([^.\s}]+)\.outputs\.(\w+))\s*\}\}")
 
-# contracts "Config": exactly these reach containers, with config's defaults; NEBIUS_IAM_TOKEN only nodes that rent a GPU.
+# contracts "Config": exactly these reach containers, with config's defaults; NEBIUS_IAM_TOKEN only vllm-serve (_iam_token).
 FORWARD = ("NEBIUS_API_KEY NEBIUS_BASE_URL TAVILY_API_KEY HF_TOKEN NEBIUS_PROJECT_ID ORCHAPOD_ENDPOINT_TOKEN "
            "ORCHAPOD_R2_ENDPOINT ORCHAPOD_R2_REGION ORCHAPOD_R2_ACCESS_KEY ORCHAPOD_R2_SECRET_KEY ORCHAPOD_R2_BUCKET "
            "ORCHAPOD_CONTROL_URL STUB").split()
@@ -199,7 +199,8 @@ async def _execute_node(
     node_run.inputs = _resolve_inputs(dag_node.inputs, run, rows)  # resolved inputs = lineage
 
     # cpu and api nodes run on LocalDocker; gpu nodes on a GPU provider
-    runtime = NODE_REGISTRY.get(NodeType(dag_node.type), {}).get("runtime", "gpu")
+    row = NODE_REGISTRY.get(NodeType(dag_node.type), {})
+    runtime = row.get("runtime", "gpu")
     resources = ResourceSpec(**dag_node.resources) if isinstance(dag_node.resources, dict) and dag_node.resources else ResourceSpec()
     try:
         provider, gpu_spec = await (pick_local_docker if runtime in ("cpu", "api") else pick_provider)(resources)
@@ -207,7 +208,9 @@ async def _execute_node(
         raise NodeFailed(f"no {runtime} provider: {e}")
 
     env = _build_env(node_run, max_cost)
-    if budget.gpu_nodes([dag_node.type]) and config.env("STUB") != "1":  # it creates Nebius resources: for it alone
+    # Only an api node whose container creates Nebius endpoints (vllm-serve) gets a token: gpu nodes run third-party model
+    # code as Nebius Jobs, and a project-wide token there could rent more GPUs.
+    if runtime == "api" and row.get("rents_gpu") and config.env("STUB") != "1":
         env["NEBIUS_IAM_TOKEN"] = await _iam_token()
     image = f"{config.env('ORCHAPOD_IMAGE_PREFIX')}/{dag_node.type}:latest"
     prov = asyncio.ensure_future(provider.provision(gpu_spec=gpu_spec, image=image, env=env))
@@ -313,8 +316,9 @@ IAM_TIMEOUT_S = 10
 
 
 async def _iam_token() -> str:
-    """NEBIUS_IAM_TOKEN for a node that rents a GPU: the API's own when set, else a fresh one (tokens expire) from the
-    nebius CLI on the API host (R15's profile; node images have no CLI). Never logged; NodeFailed when there is none."""
+    """NEBIUS_IAM_TOKEN for an api node that creates Nebius endpoints: the API's own when set, else a fresh one (tokens
+    expire) from the nebius CLI on the API host (R15's profile; node images have no CLI). Never logged; NodeFailed when
+    there is none."""
     if token := config.env("NEBIUS_IAM_TOKEN").strip():
         return token
     try:

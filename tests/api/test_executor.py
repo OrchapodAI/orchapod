@@ -126,17 +126,22 @@ def nebius_cli(tmp_path, monkeypatch):
     return SimpleNamespace(path=cli, calls=tmp_path / "calls")
 
 
-CPU_THEN_GPU = """
+EVERY_RUNTIME = """
 name: g
 nodes:
-  - id: prep
-    type: data-prep
-    inputs: {dataset: "hf://x"}
-  - id: train
-    type: unsloth-train
-    needs: [prep]
-    inputs: {train_data: "r2://b/train"}
+  - {id: prep, type: data-prep, inputs: {dataset: "hf://x"}}
+  - {id: finetune, type: tf-finetune, needs: [prep], inputs: {train_data: "r2://b/train"}}
+  - {id: serve, type: vllm-serve, needs: [finetune], inputs: {model: m}}
+  - {id: train, type: unsloth-train, needs: [serve], inputs: {train_data: "r2://b/train"}}
 """
+
+
+@pytest.fixture
+def endpoint_node(monkeypatch):
+    """vllm-serve as ml-w4 registers it: an api node (LocalDocker) whose container creates a Nebius endpoint."""
+    from packages.workflow_schema.models import NODE_REGISTRY, NodeType
+    monkeypatch.setitem(NODE_REGISTRY[NodeType.VLLM_SERVE], "runtime", "api")
+    monkeypatch.setitem(NODE_REGISTRY[NodeType.VLLM_SERVE], "rents_gpu", True)
 
 
 async def seed(db, yaml=CHAIN, inputs=None, status=RunStatus.PROVISIONING_GPU, **run_fields):
@@ -286,25 +291,31 @@ async def test_build_env_forwards_exactly_the_contract_vars(db, monkeypatch):
     assert env["ORCHAPOD_RESUME_CHECKPOINT_URI"] == "r2://b/200"  # retry reuses the row: newest checkpoint
 
 
-async def test_only_a_node_that_rents_a_gpu_gets_a_fresh_iam_token(db, provider, gpu, nebius_cli, caplog, monkeypatch):
-    """The API host's nebius CLI signs a token at each start of a node that creates Nebius resources (the hosted VM sets
-    no NEBIUS_IAM_TOKEN, and node images have no CLI); a cpu node never gets one, nor does any log, input or meta."""
-    provider.script = {"prep": {"outputs": {"dataset": "r2://bk/prep"}}}
-    run = await seed(db, CPU_THEN_GPU)
+async def test_only_an_api_node_that_creates_endpoints_gets_a_fresh_iam_token(db, provider, gpu, nebius_cli,
+                                                                              endpoint_node, caplog, monkeypatch):
+    """The API host's nebius CLI signs a token at each start of vllm-serve (rents_gpu, api), whose container creates the
+    endpoint (the hosted VM sets no NEBIUS_IAM_TOKEN, and node images have no CLI). No other node gets one: not cpu or
+    api nodes, and not gpu nodes, which run third-party model code as Nebius Jobs; nor does any log, input or meta."""
+    run = await seed(db, EVERY_RUNTIME)
 
     await ex.run_workflow(run.id, db, AsyncMock(), 1.0)
 
-    assert gpu.envs["train"]["NEBIUS_IAM_TOKEN"] == "iam-token-1"
-    assert "NEBIUS_IAM_TOKEN" not in provider.envs["prep"]  # the cpu node
-    assert nebius_cli.calls.read_text() == "iam get-access-token\n"  # once per start of a node that rents a GPU
+    assert provider.envs["serve"]["NEBIUS_IAM_TOKEN"] == "iam-token-1"
+    assert [n for n, env in {**provider.envs, **gpu.envs}.items() if "NEBIUS_IAM_TOKEN" in env] == ["serve"]
+    assert set(gpu.envs) == {"train"} and set(provider.envs) == {"prep", "finetune", "serve"}  # every runtime ran
+    assert nebius_cli.calls.read_text() == "iam get-access-token\n"  # once per start of vllm-serve
     rows = await nodes(db, run)
     assert "iam-token-1" not in caplog.text + json.dumps([r.inputs for r in rows.values()])
 
     monkeypatch.setenv("NEBIUS_IAM_TOKEN", "iam-set")  # an explicit token wins (contracts "Config": CLI fallback)
-    again = await seed(db, CPU_THEN_GPU)
+    again = await seed(db, EVERY_RUNTIME)
     await ex.run_workflow(again.id, db, AsyncMock(), 1.0)
-    assert (gpu.envs["train"]["NEBIUS_IAM_TOKEN"], "NEBIUS_IAM_TOKEN" in provider.envs["prep"]) == ("iam-set", False)
+    assert [(n, env["NEBIUS_IAM_TOKEN"]) for n, env in {**provider.envs, **gpu.envs}.items()
+            if "NEBIUS_IAM_TOKEN" in env] == [("serve", "iam-set")]
     assert nebius_cli.calls.read_text() == "iam get-access-token\n"
+
+
+SERVE_ONLY = "name: s\nnodes:\n  - {id: serve, type: vllm-serve, inputs: {model: m}}\n"
 
 
 @pytest.mark.parametrize("cli, error", [
@@ -312,22 +323,22 @@ async def test_only_a_node_that_rents_a_gpu_gets_a_fresh_iam_token(db, provider,
     ('echo "not logged in" >&2\nexit 3', "no Nebius IAM token: nebius iam get-access-token exited 3: not logged in"),
     ("exec sleep 5", "no Nebius IAM token: nebius iam get-access-token took over 0.2 s"),
 ])
-async def test_a_node_that_rents_a_gpu_without_a_token_fails_before_provisioning(db, provider, gpu, nebius_cli,
-                                                                                  monkeypatch, cli, error):
+async def test_an_endpoint_node_without_a_token_fails_before_it_starts(db, provider, nebius_cli, endpoint_node,
+                                                                       monkeypatch, cli, error):
     monkeypatch.setattr(ex, "IAM_TIMEOUT_S", 0.2)
     if cli is None:
         nebius_cli.path.unlink()
     else:
         nebius_cli.path.write_text(f"#!/bin/sh\n{cli}\n")
-    run = await seed(db, "name: t\nnodes:\n  - {id: train, type: unsloth-train, inputs: {train_data: r2://b/t}}\n")
+    run = await seed(db, SERVE_ONLY)
 
     await ex.run_workflow(run.id, db, AsyncMock(), 1.0)
 
-    assert ((await nodes(db, run))["train"].error, gpu.provisioned) == (error, [])
+    assert ((await nodes(db, run))["serve"].error, provider.provisioned) == (error, [])
     monkeypatch.setenv("STUB", "1")  # STUB never creates a Nebius resource, so it needs no token
-    stub = await seed(db, "name: t\nnodes:\n  - {id: train, type: unsloth-train, inputs: {train_data: r2://b/t}}\n")
+    stub = await seed(db, SERVE_ONLY)
     await ex.run_workflow(stub.id, db, AsyncMock(), 1.0)
-    assert (await nodes(db, stub))["train"].status == NodeStatus.SUCCEEDED
+    assert (await nodes(db, stub))["serve"].status == NodeStatus.SUCCEEDED
 
 
 async def test_one_node_run_per_run_and_node(db):

@@ -174,6 +174,10 @@ test("golden path: template, run, eval view, compare playground", async ({ page 
   if (PENDING["1"]) pending(PENDING["1"]);
   await runFromGallery(page, t);
 
+  // a failed node shows at once ("Run failed", with its error): do not wait out the eval tab
+  const failed = page.getByText(/Run failed|Couldn't start the run/);
+  await expect(page.getByRole("button", { name: "eval", exact: true }).or(failed)).toBeVisible({ timeout: 180_000 });
+  await expect(failed, "the run failed: its node error is in the screenshot").toHaveCount(0, { timeout: 2_000 });
   await checkEvalView(page); // the eval view on the judge-eval node's real STUB result
   await checkPlayground(page); // the playground over POST /compare: one prompt, two models, streamed side by side
   expect(problems).toEqual([]);

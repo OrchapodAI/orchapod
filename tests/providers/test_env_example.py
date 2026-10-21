@@ -32,8 +32,6 @@ NOT_IN_ENV_EXAMPLE = {  # read by code, set by nobody's .env
     **dict.fromkeys(["ORCHAPOD_NODE_INPUTS", "ORCHAPOD_NODE_OUTPUTS_DIR", "ORCHAPOD_RUN_ID", "ORCHAPOD_NODE_ID",
                      "ORCHAPOD_MAX_COST_USD", "ORCHAPOD_RESUME_CHECKPOINT_URI"], "the executor sets it per node"),
     "ORCHAPOD_CHECKPOINT_STEPS": "SDK default 100; the executor does not forward it",
-    "NEBIUS_FOLDER_ID": "removed from Config; only the legacy Compute code in nebius.py reads it, until its rewrite",
-    "NEBIUS_SUBNET_ID": "removed from Config; only the legacy Compute code in nebius.py reads it, until its rewrite",
 }
 READ = re.compile(r"""os\.(?:environ\.get|getenv|environ\.setdefault)\(\s*["']([A-Z][A-Z0-9_]*)["']"""
                   r"""|os\.environ\[\s*["']([A-Z][A-Z0-9_]*)["']\s*\]"""

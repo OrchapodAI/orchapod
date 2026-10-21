@@ -4,6 +4,7 @@ import json
 import re
 import socket
 import sys
+import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -299,7 +300,8 @@ def test_stub_runs_offline_with_gguf_inputs_and_starts_no_server(node, monkeypat
 # --- GGUF inputs served by llama-server (a fake one on PATH: real process, real HTTP) ------------------------
 
 FAKE_LLAMA_SERVER = '''
-import json, pathlib, sys
+import json, pathlib, signal, sys
+signal.signal(signal.SIGTERM, signal.SIG_IGN)  # like llama-server with busy slots: still up 60 s after SIGTERM
 from http.server import BaseHTTPRequestHandler, HTTPServer
 args = sys.argv[1:]
 arg = lambda k: args[args.index(k) + 1]
@@ -355,8 +357,10 @@ def llama(node, monkeypatch, tmp_path):
 
 def test_gguf_inputs_are_served_by_llama_server_without_a_key(llama):
     llama.objects[GGUF_F16] = llama.objects[GGUF_Q4] = b"GGUF and weights"
+    start = time.monotonic()
     out = llama([row("q1", "#### 72"), row("q2", "#### 72")], base_model_ref=GGUF_F16, tuned_model_ref=GGUF_Q4,
                 exact_match=True, n_judge=0, max_tokens=128)
+    assert time.monotonic() - start < 20  # each server is killed at its phase's end, not waited on for 30 s
     ports = je.LLAMA_PORTS
     assert out["tuned"] == {"base_url": f"http://127.0.0.1:{ports['tuned']}/v1", "model": GGUF_Q4, "api_key_env": "",
                             "base_model": None}

@@ -136,13 +136,9 @@ def serving(side: str, ref: dict, max_tokens: int):
             time.sleep(0.5)
         log.info(f"llama-server is serving {ref['model']} for {side} on port {port}")
         yield served
-    finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=30)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
+    finally:  # SIGKILL: with busy slots llama-server ignores SIGTERM for over a minute, and it keeps no state
+        proc.kill()
+        proc.wait()
 
 
 def read_rows(uri) -> list:

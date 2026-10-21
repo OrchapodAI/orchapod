@@ -1,10 +1,18 @@
 import type {
   Workflow, Run, BaseModel, PublicDataset, NodeTypeMeta, NodeType, TrainingMethod,
-  DeployRequest, DeployResponse, InferenceEndpoint, ExtendResponse, RegisteredModel, ArtifactListItem,
-  AgentPlan, AgentRunOut, AgentReport, Plan, RunSummary,
+  DeployRequest, DeployResponse, InferenceEndpoint, RegisteredModel, ArtifactListItem,
+  AgentPlan, AgentRunOut, AgentReport, AgentTemplate, Plan, RunSummary, ModelRef, CompareEvent,
 } from "./types";
 
 export const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
+
+/** A non-2xx reply as an Error carrying its status, path and parsed body (explainError reads them). */
+async function httpError(res: Response, path: string): Promise<Error> {
+  const text = await res.text();
+  let body: unknown = text;
+  try { body = JSON.parse(text); } catch { /* not JSON: keep the text */ }
+  return Object.assign(new Error(`${res.status} ${path}: ${text}`), { status: res.status, path, body });
+}
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   // headers last: spreading init after them would drop Content-Type whenever a caller passes headers
@@ -12,12 +20,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: { "Content-Type": "application/json", ...init?.headers },
   });
-  if (!res.ok) {
-    const text = await res.text();
-    let body: unknown = text;
-    try { body = JSON.parse(text); } catch { /* not JSON: keep the text */ }
-    throw Object.assign(new Error(`${res.status} ${path}: ${text}`), { status: res.status, path, body });
-  }
+  if (!res.ok) throw await httpError(res, path);
   return res.json() as Promise<T>;
 }
 
@@ -35,8 +38,10 @@ export function explainError(err: unknown): string {
     : typeof raw === "string" ? raw : JSON.stringify(raw);
   if (status === 404 && detail === "Not Found") return `The API at ${BASE} has no ${path} route yet (404).`;
   if (status === 402) return `Over budget: ${detail}`;
-  if (status === 502) return `Nemotron on Token Factory did not answer after retries (502): ${detail}`;
-  if (status === 503) return `The agent is switched off: the kill switch is on or NEBIUS_API_KEY is missing (503: ${detail})`;
+  // On the agent's routes a 502/503 is the planner or reporter; elsewhere (e.g. /compare) the detail says what failed.
+  const agent = path?.startsWith("/agent");
+  if (agent && status === 502) return `Nemotron on Token Factory did not answer after retries (502): ${detail}`;
+  if (agent && status === 503) return `The agent is switched off: the kill switch is on or NEBIUS_API_KEY is missing (503: ${detail})`;
   return status === 422 ? detail : `${status} on ${path}: ${detail}`;
 }
 
@@ -103,20 +108,6 @@ export const api = {
     endpoints(): Promise<InferenceEndpoint[]> {
       return req("/inference/endpoints");
     },
-    /** Extend a live endpoint by extend_min (default 60). */
-    extend(runId: string, extendMin = 60): Promise<ExtendResponse> {
-      return req(`/inference/extend/${runId}`, {
-        method: "POST",
-        body:   JSON.stringify({ extend_min: extendMin }),
-      });
-    },
-    /** Dry-run: returns cost estimate without changing anything. */
-    extendPreview(runId: string, extendMin = 60): Promise<ExtendResponse> {
-      return req(`/inference/extend/${runId}?preview=1`, {
-        method: "POST",
-        body:   JSON.stringify({ extend_min: extendMin }),
-      });
-    },
   },
 
   /** Trained/quantized models auto-registered from runs. */
@@ -144,6 +135,12 @@ export const api = {
         : "";
       return req(`/artifacts${qs}`);
     },
+    /** A JSON artifact through its download_url (a 307 to object storage). No headers, so the browser sends no preflight. */
+    async content<T>(downloadUrl: string): Promise<T> {
+      const res = await fetch(`${BASE}${downloadUrl}`);
+      if (!res.ok) throw await httpError(res, downloadUrl);
+      return res.json() as Promise<T>;
+    },
   },
 
   /** Orchapod Agent (docs/contracts.md "Agent API"). */
@@ -157,6 +154,33 @@ export const api = {
     report(runId: string): Promise<AgentReport> {
       return req(`/agent/runs/${runId}/report`);
     },
+    templates(): Promise<AgentTemplate[]> {
+      return req("/agent/templates");
+    },
+  },
+
+  /** POST /compare: one prompt to two ModelRefs, streamed as SSE. The server resolves each api_key_env; no key is sent. */
+  async compare(
+    body: { messages: { role: string; content: string }[]; refs: [ModelRef, ModelRef]; max_tokens: number },
+    onEvent: (e: CompareEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const res = await fetch(`${BASE}/compare`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal,
+    });
+    if (!res.ok || !res.body) throw await httpError(res, "/compare");
+    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      const lines = (buf + (value ?? "")).split("\n");
+      buf = done ? "" : lines.pop() ?? ""; // a line split across chunks waits for the rest
+      for (const line of lines) {
+        const data = line.startsWith("data:") ? line.slice(5).trim() : "";
+        if (data.startsWith("{")) onEvent(JSON.parse(data)); // other SSE lines (comments, event:, id:) carry nothing here
+      }
+      if (done) return;
+    }
   },
 
   registry: {

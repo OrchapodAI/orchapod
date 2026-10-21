@@ -208,14 +208,69 @@ export interface ArtifactListItem {
   created_at:    string;
 }
 
-// ── Extend endpoint (KAN-30) ──────────────────────────────────────────────────
+// ── Results (docs/contracts.md "ML nodes" and "data-prep") ────────────────────
 
-export interface ExtendResponse {
-  run_id:            string;
-  expires_at:        string;   // ISO-8601
-  extend_min:        number;
-  cost_estimate_usd: number;
+/** An OpenAI-compatible target. api_key_env names an env var on the server; no key ever reaches the browser. */
+export interface ModelRef {
+  base_url: string;
+  model: string;
+  api_key_env: string;
+  base_model: string | null;
 }
+
+/** One judged test row, from tuned's side: a win needs both answer orders to pick tuned. */
+export interface Verdict {
+  i: number;
+  question: string;
+  reference: string;
+  context?: string | null;
+  source_url?: string | null;
+  base: string;
+  tuned: string;
+  base_correct: boolean | null;
+  tuned_correct: boolean | null;
+  verdict: "win" | "tie" | "loss" | null;
+  judgments: { order: "tuned_first" | "base_first"; winner: "tuned" | "base" | "tie"; reasoning: string }[];
+  error: string | null;
+}
+
+/** judge-eval's eval_summary; its metrics_json is the same without `samples`. */
+export interface EvalSummary {
+  n: number;
+  judged: number;
+  wins: number;
+  ties: number;
+  losses: number;
+  errors: number;
+  win_rate: number | null;
+  consistency: number | null;
+  exact_match: { base: number; tuned: number } | null;
+  base: ModelRef;
+  tuned: ModelRef;
+  judge_model: string;
+  decoding: { temperature: number; max_tokens: number };
+  stub: boolean;
+  samples: Verdict[];
+}
+
+/** data-prep's metrics_json; `fields` only for structured rows (min/max for numeric and ISO-8601 fields). */
+export interface DataPrepMetrics {
+  total: number;
+  train: number;
+  eval: number;
+  test: number;
+  skipped: number;
+  exact_dupes: number;
+  near_dupes: number;
+  quality_dropped: number;
+  stub?: boolean;
+  fields?: Record<string, { distinct: number; nulls: number; top: [unknown, number][]; min?: unknown; max?: unknown }>;
+}
+
+/** POST /compare streams these per side i: deltas, then one done (with `error` when the stream failed mid-answer). */
+export type CompareEvent =
+  | { i: 0 | 1; delta: string }
+  | { i: 0 | 1; done: true; usd: number | null; error?: string };
 
 // ── Agent (docs/contracts.md "Agent API") ────────────────────────────────────
 
@@ -243,6 +298,18 @@ export interface AgentPlan {
   estimate: Estimate;
   warnings: string[];
   errors: string[];
+}
+
+/** GET /agent/templates: the three canonical intents with ready plans; one-click Run posts one to /agent/run. */
+export interface AgentTemplate {
+  slug: string;
+  title: string;
+  intent: string;
+  rationale: string;
+  plan: Plan;
+  estimate: Estimate;
+  /** "Run it yourself": the same plan at reduced scale, sized for the anonymous caps; one-click Run posts it. */
+  reduced?: { plan: Plan; estimate: Estimate };
 }
 
 export interface AgentRunOut {

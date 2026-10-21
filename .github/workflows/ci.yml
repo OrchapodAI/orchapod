@@ -123,6 +123,7 @@ jobs:
           - synth-distilabel
           - tf-finetune
           - tf-deploy
+          - web-research
 
     steps:
       - uses: actions/checkout@v4

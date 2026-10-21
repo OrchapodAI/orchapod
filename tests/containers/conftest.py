@@ -10,11 +10,11 @@ We load them with importlib using unique module names to avoid collisions.
 from __future__ import annotations
 
 import importlib.util
-import os
+import itertools
 import sys
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -60,6 +60,33 @@ def mock_orchapod_io(monkeypatch):
                 monkeypatch.setattr(mod, "log", mock_log)
 
     return mock_io
+
+
+@pytest.fixture
+def files(mock_orchapod_io) -> dict:
+    """{uri: local path} that io.download_input serves; tests chain nodes by adding an output under a URI."""
+    served: dict = {}
+    mock_orchapod_io.download_input.side_effect = lambda uri, *_: served[uri]
+    return served
+
+
+@pytest.fixture
+def run_main(mock_orchapod_io, tmp_path):
+    """run_main(module, **inputs) -> ({output name: local path}, metrics): one main() run in a fresh output dir."""
+    runs = itertools.count()
+
+    def run(module, **inputs):
+        out = tmp_path / f"run{next(runs)}"
+        out.mkdir()
+        mock_orchapod_io.local_path.side_effect = lambda name: out / name
+        mock_orchapod_io.write_output.reset_mock()
+        mock_orchapod_io.write_metrics.reset_mock()
+        mock_orchapod_io.read_inputs.return_value = inputs
+        module.main()
+        (metrics,), _ = mock_orchapod_io.write_metrics.call_args
+        return {c.args[0]: c.args[1] for c in mock_orchapod_io.write_output.call_args_list}, metrics
+
+    return run
 
 
 @pytest.fixture

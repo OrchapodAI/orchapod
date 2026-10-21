@@ -24,6 +24,7 @@ class NodeType(str, Enum):
     HF_IMPORT            = "hf-import"
     FILE_UPLOAD          = "file-upload"
     S3_IMPORT            = "s3-import"
+    WEB_RESEARCH         = "web-research"
     # Data processing
     DATA_PREP            = "data-prep"
     AUTO_LABEL_CLEANLAB  = "auto-label-cleanlab"
@@ -142,30 +143,36 @@ class AutoLabelCleanlabOutputs(BaseModel):
 
 
 class SynthDistilabelInputs(BaseModel):
-    """KAN-10 — Generate synthetic ChatML rows via a teacher LLM.
-
-    Default teacher is NVIDIA Nemotron Super via Nebius Token Factory.
-    Falls back to OpenAI or Anthropic if NEBIUS_API_KEY is not set.
-    """
-    pipeline_template: Literal["self-instruct", "evol-instruct", "magpie"] = Field(
+    """Synthetic data from a Nemotron teacher on Token Factory: chat rows (self-instruct, evol-instruct, magpie,
+    grounded Q&A from a web-research corpus) or rows matching row_schema (structured)."""
+    pipeline_template: Literal["self-instruct", "evol-instruct", "magpie", "grounded", "structured"] = Field(
         default="self-instruct",
     )
-    teacher_kind: Literal["nebius", "openai", "anthropic"] = Field(
-        default="nebius",
-        description="Teacher LLM provider — 'nebius' uses Nemotron Super via Token Factory",
-    )
-    teacher_model: str = Field(
-        default="nvidia/nemotron-3-super-120b-a12b",
-        description="Model ID. Nemotron Super 49B is the default teacher.",
-    )
+    teacher_model: str = Field(default="nvidia/nemotron-3-super-120b-a12b", description="Token Factory model id")
     n_samples: int = Field(default=1000, ge=10)
     seed_prompts: str | None = Field(default=None, description="R2 URI to seed prompts JSONL")
     temperature: float = Field(default=0.8, ge=0.0, le=2.0)
-    max_tokens: int = Field(default=512, ge=64)
+    max_tokens: int = Field(default=512, ge=64, description="Per call; a batch asks for what fits "
+                                                             "(150 tokens per grounded pair, 100 per structured row)")
+    corpus: str | None = Field(default=None, description="r2 URI of a web-research corpus: required for grounded, "
+                                                         "real values for structured")
+    row_schema: dict | str | None = Field(default=None, description="JSON Schema of one structured row; "
+                                                                    "a string is parsed as JSON")
+    instructions: str = Field(default="", description="Domain, audience and style hints; for structured, "
+                                                      "the target value distributions")
+    max_usd: float = Field(default=1.0, description="Stop before a call whose worst case would pass "
+                                                    "min(max_usd, the node budget); what was made is kept")
+
+    @model_validator(mode="after")
+    def _template_inputs(self):
+        if self.pipeline_template == "grounded" and not self.corpus:
+            raise ValueError("grounded needs corpus")
+        if self.pipeline_template == "structured" and not self.row_schema:
+            raise ValueError("structured needs row_schema")
+        return self
 
 class SynthDistilabelOutputs(BaseModel):
-    dataset: str          # R2 URI to generated ChatML JSONL
-    cost_summary_json: str
+    dataset: str  # JSONL: chat rows {"messages"} (grounded adds context, source_url) or row_schema objects
 
 
 class UnslothTrainInputs(BaseModel):
@@ -343,7 +350,9 @@ NODE_REGISTRY: dict[NodeType, dict] = {
         "hidden": True,  # the agent never plans it: no container
     },
     NodeType.SYNTH_DISTILABEL: {
-        "description": "Generate synthetic training data via a teacher LLM (default: Nemotron Super via Nebius Token Factory).",
+        "description": "Synthetic data from Nemotron 3 Super on Token Factory: self-instruct, evol-instruct, magpie, "
+                       "grounded Q&A from a web-research corpus (rows keep context and source_url), or structured "
+                       "rows matching a JSON Schema (row_schema).",
         "inputs_schema": SynthDistilabelInputs,
         "outputs_schema": SynthDistilabelOutputs,
         "runtime": "cpu",
@@ -381,6 +390,35 @@ NODE_REGISTRY: dict[NodeType, dict] = {
         "runtime": "gpu",
         "long_running": True,  # pod stays alive after container exits
     },
+}
+
+
+# ---------------------------------------------------------------------------
+# web-research (owner: data-engineering; contracts "Data nodes → web-research")
+# ---------------------------------------------------------------------------
+
+class WebResearchInputs(BaseModel):
+    """Tavily search and extract → a corpus of passages with source URLs."""
+    queries: list[str] = Field(default=[], description="Each runs a Tavily advanced search with raw page content, "
+                                                       "⌈max_pages / len(queries)⌉ results (Tavily caps 20)")
+    seed_urls: list[str] = Field(default=[], description="Read with Tavily extract, before the searches")
+    max_pages: int = Field(default=20, ge=1, le=100, description="Caps the pages read, and with them the credits")
+
+    @model_validator(mode="after")
+    def _a_source(self):
+        if not self.queries and not self.seed_urls:
+            raise ValueError("give at least one of queries and seed_urls")
+        return self
+
+class WebResearchOutputs(BaseModel):
+    corpus: str  # JSONL {"url", "text"}: passages of 200–2,000 chars, URLs normalised and deduped
+
+NODE_REGISTRY[NodeType.WEB_RESEARCH] = {
+    "description": "Research the web with Tavily (advanced search per query, extract for seed URLs, at most max_pages "
+                   "pages) → corpus: passages of 200–2,000 chars with their source URL, deduped.",
+    "inputs_schema": WebResearchInputs,
+    "outputs_schema": WebResearchOutputs,
+    "runtime": "cpu",
 }
 
 

@@ -23,12 +23,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Awaitable, Callable
 
-from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from api.executor.dag import DAGNode, compile_dag
 from api.models.db import NodeRun, NodeStatus, Run, RunStatus, Workflow, utcnow
+from api.services import budget
 
 Broadcast = Callable[[uuid.UUID, dict], Awaitable[None]]
 
@@ -63,12 +63,13 @@ class NodeFailed(Exception):
 # Entry points
 # ---------------------------------------------------------------------------
 
-def launch(run_id: uuid.UUID) -> asyncio.Task:
-    """The one way to start a run (start, retry, /inference/deploy): cancel finds its task, and a
-    concurrent start or retry joins the running executor instead of starting a second one."""
+def launch(run_id: uuid.UUID, scale: float = 1.0) -> asyncio.Task:
+    """The one way to start a run (start, retry, /agent/run, /inference/deploy): cancel finds its task, and a
+    concurrent start or retry joins the running executor instead of starting a second one. `scale` is the
+    caller's budget scale (R7); the executor lives only in this process, so it is never persisted."""
     if (task := running_tasks.get(run_id)) and not task.done():
         return task
-    task = asyncio.create_task(_run_in_own_session(run_id))
+    task = asyncio.create_task(_run_in_own_session(run_id, scale))
     running_tasks[run_id] = task
     task.add_done_callback(lambda t: running_tasks.pop(run_id) if running_tasks.get(run_id) is t else None)
     return task
@@ -92,19 +93,20 @@ def _track(run_id: uuid.UUID, future: asyncio.Future) -> asyncio.Future:
     return future
 
 
-async def _run_in_own_session(run_id: uuid.UUID) -> None:
+async def _run_in_own_session(run_id: uuid.UUID, scale: float) -> None:
     from api import database
     from api.services.events import event_bus
 
     async with database.AsyncSessionLocal() as db:
         try:
-            await run_workflow(run_id, db, event_bus.publish)
+            await run_workflow(run_id, db, event_bus.publish, scale)
         except Exception:
             log.exception("run %s crashed", run_id)
 
 
-async def run_workflow(run_id: uuid.UUID, db: AsyncSession, broadcast: Broadcast) -> None:
-    """Execute (or, after a retry, resume) a run: succeeded nodes are skipped."""
+async def run_workflow(run_id: uuid.UUID, db: AsyncSession, broadcast: Broadcast, scale: float = 1.0) -> None:
+    """Execute (or, after a retry, resume) a run: succeeded nodes are skipped. Every node boundary checks
+    the kill switch and the budget (caps × scale)."""
     run = await db.get(Run, run_id)
     order, rows = [], {}
     try:
@@ -124,11 +126,16 @@ async def run_workflow(run_id: uuid.UUID, db: AsyncSession, broadcast: Broadcast
             node_run = rows[node.id]
             if node_run.status == NodeStatus.SUCCEEDED:
                 continue
+            if budget.kill_switch():
+                raise NodeFailed("kill switch")
+            max_cost, which, cap = await budget.left(db, run, scale)
+            if max_cost <= 0:
+                raise NodeFailed(f"budget: {which} cap ${cap:g} reached")
             node_run.status, node_run.error = NodeStatus.RUNNING, None
             node_run.started_at, node_run.finished_at = utcnow(), None
             await db.commit()
             await broadcast(run_id, {"type": "node_status", "node_id": node.id, "status": "running"})
-            outputs = await _execute_node(node_run, node, run, rows, db, broadcast)
+            outputs = await _execute_node(node_run, node, run, rows, db, broadcast, max_cost)
             node_run.status, node_run.finished_at, node_run.error = NodeStatus.SUCCEEDED, utcnow(), None
             await db.commit()
             await broadcast(run_id, {"type": "node_status", "node_id": node.id, "status": "succeeded", "outputs": outputs})
@@ -170,10 +177,12 @@ async def _execute_node(
     rows: dict[str, NodeRun],
     db: AsyncSession,
     broadcast: Broadcast,
+    max_cost: float,
 ) -> dict:
     """
     Provision the node's container, stream its stdout, wait for exit (or the timeout), terminate.
-    Returns the outputs collected from /internal/artifact webhooks.
+    Returns the outputs collected from /internal/artifact webhooks. max_cost = the budget left, which
+    the node gets as ORCHAPOD_MAX_COST_USD.
     """
     from api.services.provider_selector import pick_local_docker, pick_provider
     from packages.workflow_schema.models import NODE_REGISTRY, NodeType, ResourceSpec
@@ -189,7 +198,7 @@ async def _execute_node(
     except Exception as e:
         raise NodeFailed(f"no {runtime} provider: {e}")
 
-    env = _build_env(node_run, await _budget_left(db, run))
+    env = _build_env(node_run, max_cost)
     image = f"{os.environ.get('ORCHAPOD_IMAGE_PREFIX') or 'ghcr.io/bangadpurva'}/{dag_node.type}:latest"
     prov = asyncio.ensure_future(provider.provision(gpu_spec=gpu_spec, image=image, env=env))
     try:
@@ -269,16 +278,6 @@ def _resolve_inputs(inputs: dict, run: Run, rows: dict[str, NodeRun]) -> dict:
             value = found
         resolved[key] = value
     return resolved
-
-
-async def _budget_left(db: AsyncSession, run: Run) -> float:
-    """ORCHAPOD_MAX_COST_USD for the next node: the smaller of the run and UTC-day budgets left."""
-    await db.refresh(run)  # Run.cost_usd grows as nodes register cost_json
-    day = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    spent_today = await db.scalar(select(func.sum(Run.cost_usd)).where(Run.created_at >= day)) or 0
-    run_left = float(os.environ.get("ORCHAPOD_MAX_RUN_USD") or 3) - float(run.cost_usd or 0)
-    day_left = float(os.environ.get("ORCHAPOD_MAX_DAY_USD") or 15) - float(spent_today)
-    return max(0.0, min(run_left, day_left))
 
 
 def _build_env(node_run: NodeRun, max_cost_usd: float) -> dict[str, str]:

@@ -120,6 +120,14 @@ class Artifact(SQLModel, table=True):
     created_at:  datetime = Field(default_factory=utcnow)
 
 
+class Spend(SQLModel, table=True):
+    """Control-plane spend (planner, reporter, /compare): the per-UTC-day ledger the day cap counts (R6)."""
+    id:         Optional[int] = Field(default=None, primary_key=True)
+    source:     str                          # planner | reporter | compare
+    usd:        Decimal
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 class Model(SQLModel, table=True):
     """
     Canonical model record — the searchable, shareable unit of a trained/quantized model.

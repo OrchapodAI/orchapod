@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from datetime import timedelta
 from decimal import Decimal
 from unittest.mock import AsyncMock
 
@@ -16,7 +15,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.executor import run_workflow as ex
-from api.models.db import Artifact, ArtifactKind, NodeRun, NodeStatus, Run, RunStatus, Workflow, utcnow
+from api.models.db import Artifact, ArtifactKind, NodeRun, NodeStatus, Run, RunStatus, Workflow
 from packages.providers.base import Pod
 
 CHAIN = """
@@ -241,16 +240,6 @@ async def test_build_env_forwards_exactly_the_contract_vars(db, monkeypatch):
     assert env["ORCHAPOD_RESUME_CHECKPOINT_URI"] == "r2://b/200"  # retry reuses the row: newest checkpoint
 
 
-async def test_budget_left_is_the_smaller_of_run_and_day(db, monkeypatch):
-    for k in ("ORCHAPOD_MAX_RUN_USD", "ORCHAPOD_MAX_DAY_USD"):
-        monkeypatch.delenv(k, raising=False)
-    run = await seed(db, cost_usd=Decimal("1.0"))
-    assert await ex._budget_left(db, run) == pytest.approx(2.0)                         # $3 run cap
-    await seed(db, cost_usd=Decimal("13.5"))
-    await seed(db, cost_usd=Decimal("9"), created_at=utcnow() - timedelta(days=1))
-    assert await ex._budget_left(db, run) == pytest.approx(0.5)                         # $15 day cap
-
-
 async def test_one_node_run_per_run_and_node(db):
     run = await seed(db)
     db.add(NodeRun(run_id=run.id, node_id="a", node_type="data-prep"))
@@ -408,7 +397,7 @@ def launched(db, monkeypatch):
     monkeypatch.setattr("api.database.AsyncSessionLocal",
                         async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False))
     tasks, real = [], ex.launch
-    monkeypatch.setattr(ex, "launch", lambda run_id: tasks.append(real(run_id)) or tasks[-1])
+    monkeypatch.setattr(ex, "launch", lambda run_id, scale=1.0: tasks.append(real(run_id, scale)) or tasks[-1])
     return tasks
 
 

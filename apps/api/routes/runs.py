@@ -34,11 +34,13 @@ from sqlmodel import select
 from api.database import get_session
 from api.executor import run_workflow as executor
 from api.models.db import Run, NodeRun, RunStatus, NodeStatus, Workflow, Artifact, ArtifactKind, utcnow
+from api.services import budget
 from api.services.events import event_bus
 
 router = APIRouter()
 
 Session = Annotated[AsyncSession, Depends(get_session)]
+Scale = Annotated[float, Depends(budget.scale)]  # 1 for X-Orchapod-Admin, else ORCHAPOD_ANON_SCALE (R7)
 
 TERMINAL = (RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED)
 
@@ -113,14 +115,17 @@ async def create_run(body: RunCreate, db: Session):
 
 
 @router.post("/{run_id}/start", response_model=RunOut)
-async def start_run(run_id: uuid.UUID, db: Session):
+async def start_run(run_id: uuid.UUID, db: Session, scale: Scale):
+    """409 unless pending; 503 kill switch; 402 when no budget is left (caps × the caller's scale)."""
     run = await db.get(Run, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
+    if run.status == RunStatus.PENDING:
+        await budget.guard(db, scale, run)
     if run.status != RunStatus.PENDING or not await _move(db, run, [RunStatus.PENDING]):
         await db.refresh(run)
         raise HTTPException(status_code=409, detail=f"Run is {run.status.value}; only pending runs can be started")
-    executor.launch(run_id)
+    executor.launch(run_id, scale)
     return _run_out(run)
 
 
@@ -147,7 +152,7 @@ async def cancel_run(run_id: uuid.UUID, db: Session):
 
 
 @router.post("/{run_id}/nodes/{node_id}/retry", response_model=RunOut, status_code=status.HTTP_202_ACCEPTED)
-async def retry_node(run_id: uuid.UUID, node_id: str, db: Session):
+async def retry_node(run_id: uuid.UUID, node_id: str, db: Session, scale: Scale):
     """Re-run the run's failed node (same row, outputs kept), then continue downstream."""
     run = await db.get(Run, run_id)
     node_run = await db.scalar(select(NodeRun).where(NodeRun.run_id == run_id, NodeRun.node_id == node_id))
@@ -156,6 +161,7 @@ async def retry_node(run_id: uuid.UUID, node_id: str, db: Session):
     if run.status not in (RunStatus.FAILED, RunStatus.CANCELLED) or node_run.status != NodeStatus.FAILED:
         raise HTTPException(status_code=409, detail=f"Only the failed node of a failed or cancelled run "
                                                     f"can be retried (run {run.status.value}, node {node_run.status.value})")
+    await budget.guard(db, scale, run)
     if executor.busy(run_id):  # its executor, or a container it started, is still stopping
         raise HTTPException(status_code=409, detail="Run is still stopping; retry in a moment")
 
@@ -164,7 +170,7 @@ async def retry_node(run_id: uuid.UUID, node_id: str, db: Session):
     if reset.rowcount != 1 or not await _move(db, run, [RunStatus.FAILED, RunStatus.CANCELLED]):
         await db.rollback()
         raise HTTPException(status_code=409, detail="Run changed meanwhile; reload it")
-    executor.launch(run_id)
+    executor.launch(run_id, scale)
     return _run_out(run)
 
 

@@ -301,3 +301,8 @@ worktrees:
   - Minors: SIGTERM ignored in finally; a labelled failure when the leftover delete fails; contract overclaims; token-not-logged assertion.
   - RULING R14: Lane B plans set keep_alive_min 25 (an L40S endpoint billed from creation: ≤ 15 min start + 25 keep ≈ $1.03; with 25 min of H100 ≈ $2.90 < $3); amend R14 at merge.
   - Fix round 1 → ac6133b1abd392165.
+- 2026-10-21T15:38Z devrel-w5 review (sonnet): Needs fixes (small).
+  - Accurate and honest almost everywhere; every number traced to a record; both honesty catches real.
+  - Important: README:52 'split by source' (it is stratified by source URL, so each source appears in every split; CHANGELOG fixed by the orchestrator); devpost:38 overstated Lightning's quality filter (opt-in, no template enables it).
+  - Minors: propagate the endpoint-expiry TODO (an L40S left up costs $1.55/h); hedge 'base + adapter' (untested); 'busy host'; hedge 'secrets'; honesty-pinning tests; setup nits.
+  - Fix round 1 → af39c612fcbfcd91c.

@@ -98,7 +98,11 @@ export type NodeType =
   | "distill-sft"
   | "quantize"
   | "lm-eval"
-  | "vllm-serve";
+  | "vllm-serve"
+  | "web-research"
+  | "tf-finetune"
+  | "tf-deploy"
+  | "judge-eval";
 
 export interface BaseModel {
   id: string;
@@ -212,6 +216,51 @@ export interface ExtendResponse {
   expires_at:        string;   // ISO-8601
   extend_min:        number;
   cost_estimate_usd: number;
+}
+
+// ── Agent (docs/contracts.md "Agent API") ────────────────────────────────────
+
+export interface PlanNode {
+  id: string;
+  type: NodeType;
+  needs?: string[];
+  inputs?: Record<string, unknown>;
+}
+
+export interface Plan {
+  name: string;
+  nodes: PlanNode[];
+}
+
+export interface Estimate {
+  usd: number;
+  minutes: number;
+  by_node: Record<string, { usd: number; minutes: number }>;
+}
+
+export interface AgentPlan {
+  plan: Plan;
+  rationale: string;
+  estimate: Estimate;
+  warnings: string[];
+  errors: string[];
+}
+
+export interface AgentRunOut {
+  run_id: string;
+  workflow_id: string;
+  estimate: Estimate;
+}
+
+export interface AgentReport {
+  run_id: string;
+  status: RunStatus;
+  cost_usd: number | null;
+  error: string | null;
+  intent: string;
+  estimate: Estimate;
+  ready: boolean;
+  markdown: string | null;
 }
 
 // ── WebSocket events ──────────────────────────────────────────────────────────

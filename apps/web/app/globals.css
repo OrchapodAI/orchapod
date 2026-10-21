@@ -184,6 +184,7 @@ h1, h2, h3, h4, p { margin: 0; font-weight: 500; letter-spacing: -0.01em; }
   cursor: pointer; transition: all .12s; white-space: nowrap;
 }
 .btn:hover { background: var(--bg-2); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-primary {
   background: var(--brand); border-color: var(--brand); color: white;
   box-shadow: 0 1px 0 oklch(1 0 0 / 0.2) inset, 0 1px 2px oklch(0.20 0.015 280 / 0.15);

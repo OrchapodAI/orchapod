@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { WsEvent } from "./types";
 
-const WS_BASE = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000";
+const WS_BASE = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8001";
 
 export function useRunStream(runId: string) {
   const [events, setEvents] = useState<WsEvent[]>([]);

@@ -55,6 +55,8 @@ Deploy as OpenAI-compatible endpoint via vLLM. Pod stays alive after training.
 | `${{ inputs.name }}` | Value provided by user at run time |
 | `${{ nodes.node_id.outputs.artifact_name }}` | R2 URI of artifact from completed node |
 
+Object and list inputs (synth-distilabel `row_schema`, tf-finetune `hyperparameters`, web-research `queries`) are written as JSON, which YAML reads as flow mappings and sequences; the canvas does this on save (ruling R13), and JSON-quotes strings a plain scalar would misread (empty, `key: value`, ` #`).
+
 ## Demo workflow (the YC demo)
 
 ```

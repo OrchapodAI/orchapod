@@ -3,7 +3,7 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import clsx from "clsx";
 import type { NodeType } from "@/lib/types";
-import { Database, Zap, GitMerge, Package, BarChart2, Globe, Download, Upload, Cloud, Sparkles, Tag, HardDrive } from "lucide-react";
+import { Database, Zap, GitMerge, Package, BarChart2, Globe, Download, Upload, Cloud, Sparkles, Tag, HardDrive, Telescope, Flame, Rocket, Scale } from "lucide-react";
 
 export interface OrchaNodeData extends Record<string, unknown> {
   node_type: NodeType;
@@ -13,7 +13,7 @@ export interface OrchaNodeData extends Record<string, unknown> {
   status?: "pending" | "running" | "succeeded" | "failed";
 }
 
-const NODE_META: Record<NodeType, {
+export const NODE_META: Record<NodeType, {
   label: string;
   icon: React.ElementType;
   accent: string;   // left border + icon color
@@ -25,15 +25,19 @@ const NODE_META: Record<NodeType, {
   "file-upload":          { label: "File Upload",    icon: Upload,    accent: "#0065FF", iconBg: "#DEEBFF" },
   "s3-import":            { label: "S3 Import",      icon: Cloud,     accent: "#00B8D9", iconBg: "#E6FCFF" },
   // Data processing
+  "web-research":         { label: "Research",       icon: Telescope, accent: "#00B8D9", iconBg: "#E6FCFF" },
   "data-prep":            { label: "Data Prep",      icon: Database,  accent: "#0065FF", iconBg: "#DEEBFF" },
   "auto-label-cleanlab":  { label: "Auto-Label",     icon: Tag,       accent: "#6554C0", iconBg: "#EAE6FF" },
   "synth-distilabel":     { label: "Synth Data",     icon: Sparkles,  accent: "#00875A", iconBg: "#E3FCEF" },
   // Training
   "unsloth-train":        { label: "Train",          icon: Zap,       accent: "#6554C0", iconBg: "#EAE6FF" },
   "distill-sft":          { label: "Distill",        icon: GitMerge,  accent: "#00B8D9", iconBg: "#E6FCFF" },
+  "tf-finetune":          { label: "Fine-tune",      icon: Flame,     accent: "#6554C0", iconBg: "#EAE6FF" },
   // Post-training
   "quantize":             { label: "Quantize",       icon: Package,   accent: "#FF8B00", iconBg: "#FFFAE6" },
-  "lm-eval":              { label: "Evaluate",       icon: BarChart2, accent: "#00875A", iconBg: "#E3FCEF" },
+  "lm-eval":              { label: "Benchmarks",     icon: BarChart2, accent: "#00875A", iconBg: "#E3FCEF" },
+  "judge-eval":           { label: "Evaluate",       icon: Scale,     accent: "#00875A", iconBg: "#E3FCEF" },
+  "tf-deploy":            { label: "Deploy",         icon: Rocket,    accent: "#DE350B", iconBg: "#FFEBE6" },
   "vllm-serve":           { label: "Serve",          icon: Globe,     accent: "#DE350B", iconBg: "#FFEBE6" },
 };
 

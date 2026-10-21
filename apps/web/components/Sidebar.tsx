@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Home, GitBranch, Play, Database, Package, Server,
-  DollarSign, Settings, Layers, Cpu, Box
+  DollarSign, Settings, Layers, Cpu, Box, Bot
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -12,6 +12,7 @@ type NavItem = { href: string; navKey: string; label: string; count: string | nu
 
 const NAV_BUILD: NavItem[] = [
   { href: "/",          navKey: "home",     label: "Home",         count: null,  Icon: Home },
+  { href: "/agent",     navKey: "agent",    label: "Agent",        count: null,  Icon: Bot },
   { href: "/workflows", navKey: "flows",    label: "Workflows",    count: "12",  Icon: GitBranch },
   { href: "/runs",      navKey: "runs",     label: "Runs",         count: "348", Icon: Play },
 ];

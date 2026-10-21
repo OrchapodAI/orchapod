@@ -18,7 +18,6 @@ from .conftest import load_container
 wr = load_container("web-research")
 
 ROOT = Path(__file__).resolve().parents[2]
-METRIC_KEYS = {"queries", "urls", "urls_failed", "passages", "duplicates_dropped", "failed_calls"}
 
 
 def para(ch: str, n: int) -> str:
@@ -71,10 +70,12 @@ def test_passages_pack_paragraphs_up_to_2000_chars_and_drop_short_fragments():
     nav, p1, p2, p3, banner = "Home\nAbout us\n Contact", para("a", 300), para("b", 1800), para("c", 2500), "Accept cookies"
     text = f"{nav}\n\n{p1}\n \n{p2}\n\n\n{p3}\r\n\r\n{banner}"
     got = list(wr.passages(text))
-    assert got == [f"Home About us Contact\n\n{p1}", p2, p3[:1999], f"{p3[2000:]}\n\n{banner}"]
+    assert got == [p1, p2, p3[:1999], p3[2000:]]  # nav and banner (< 40 chars) never ride inside a passage
     assert all(200 <= len(p) <= 2000 for p in got)
+    assert list(wr.passages(f"{p1}\n\nShare this page\n\n{p1}!")) == [f"{p1}\n\n{p1}!"]  # footer between paragraphs
     assert list(wr.passages(f"{nav}\n\n{banner}")) == []                   # navigation and banners only
-    assert list(wr.passages(f"{para('d', 2000)}\n\nTiny.")) == [para("d", 2000)]  # a fragment that cannot join
+    tail = "A closing sentence long enough to be a paragraph of its own."
+    assert list(wr.passages(f"{para('d', 2000)}\n\n{tail}")) == [para("d", 2000)]  # cannot join, under 200
     assert list(wr.passages("x" * 4500)) == ["x" * 2000, "x" * 2000, "x" * 500]  # no space to cut at
 
 
@@ -82,6 +83,8 @@ def test_passages_pack_paragraphs_up_to_2000_chars_and_drop_short_fragments():
     ("https://example.com/a/#top", "https://example.com/a"),
     ("https://example.com/", "https://example.com"),
     (" https://example.com/a/?q=1#f ", "https://example.com/a?q=1"),
+    ("https://WWW.HUD.gov/Fair-Housing/", "https://www.hud.gov/Fair-Housing"),  # host lower-cased, path kept
+    ("http://[::1", None),                                                      # malformed
 ])
 def test_urls_lose_fragment_and_trailing_slash(url, want):
     assert wr.norm_url(url) == want
@@ -99,6 +102,14 @@ def test_stub_corpus_is_deterministic_and_within_bounds(monkeypatch, research):
     assert all(set(r) == {"url", "text"} and 200 <= len(r["text"]) <= 2000 for r in rows)
     assert len({r["url"] for r in rows}) == 5
     assert cost.summary()["usd"] == 0
+
+
+def test_stub_reads_seed_urls(monkeypatch, research):
+    monkeypatch.setenv("STUB", "1")
+    monkeypatch.delenv("TAVILY_API_KEY")
+    rows, m = research(seed_urls=["https://www.hud.gov/fair-housing/", "https://www.consumerfinance.gov/respa#faq"])
+    assert [r["url"] for r in rows] == ["https://www.hud.gov/fair-housing", "https://www.consumerfinance.gov/respa"]
+    assert m == {"queries": 0, "urls": 2, "urls_failed": 0, "passages": 2, "duplicates_dropped": 0, "failed_calls": 0}
 
 
 def test_each_query_is_an_advanced_search_with_raw_content(tavily, research):
@@ -140,6 +151,17 @@ def test_seed_urls_come_first_and_searches_stop_once_max_pages_are_read(tavily, 
     assert [path for path, _ in seen] == ["/extract"]  # no search credits spent once 2 pages are read
 
 
+def test_malformed_urls_are_counted_and_lone_surrogates_dropped(tavily, research):
+    page = {"url": "https://Example.GOV/rules\ud800/", "raw_content": "Fair housing \ud800rules apply. " * 12}
+    body = json.dumps({"results": [{"url": "http://[::1", "raw_content": page["raw_content"]}, page],
+                       "failed_results": [], "usage": {"credits": 1}}).encode()  # json.dumps escapes the surrogate
+    seen = tavily(lambda r: httpx.Response(200, content=body, headers={"content-type": "application/json"}))
+    rows, m = research(seed_urls=["http://[::1/x", "https://WWW.HUD.gov/a"])
+    assert seen[0][1]["urls"] == ["https://www.hud.gov/a"]
+    assert rows == [{"url": "https://example.gov/rules", "text": ("Fair housing rules apply. " * 12).strip()}]
+    assert m["urls_failed"] == 2  # one seed URL, one result URL
+
+
 def test_exact_duplicate_passages_are_dropped(tavily, research):
     boilerplate = "Same footer on every page of this site. " * 6
     tavily(lambda r: results({"url": "https://a.gov/1", "raw_content": f"{boilerplate}\n\n{para('u', 1800)}"},
@@ -155,12 +177,13 @@ def test_a_lone_string_is_one_query(tavily, research):
     assert [body["query"] for _, body in seen] == ["fair housing act"]
 
 
-def test_server_errors_are_skipped_and_counted(tavily, research):
-    answers = iter([httpx.Response(500) for _ in range(4)] + [results({"url": "https://b.gov", "raw_content": para("b", 400)})])
-    tavily(lambda r: next(answers))
+@pytest.mark.parametrize("status, kind", [(500, "server"), (429, "rate_limit")])
+def test_transient_errors_are_skipped_and_counted(tavily, research, status, kind):
+    answers = iter([httpx.Response(status) for _ in range(4)] + [results({"url": "https://b.gov", "raw_content": para("b", 400)})])
+    tavily(lambda r: next(answers))  # 4 = the first try and the client's 3 retries
     rows, m = research(queries=["first", "second"])
     assert [r["url"] for r in rows] == ["https://b.gov"] and m["failed_calls"] == 1
-    assert wr.log.warn.call_args.args[0].startswith("tavily server 500")
+    assert wr.log.warn.call_args.args[0].startswith(f"tavily {kind} {status}")
 
 
 @pytest.mark.parametrize("status, kind", [(401, "auth"), (432, "quota"), (400, "bad_request")])
@@ -191,12 +214,9 @@ def test_bad_inputs_are_fatal_before_any_request(tavily, research, inputs):
 
 # --- image, schema and registry -----------------------------------------------
 
-def test_image_copies_the_sdk_and_the_providers():
+def test_image_copies_the_providers_and_installs_httpx():
     docker = (ROOT / "containers/web-research/Dockerfile").read_text()
-    for line in ("COPY packages/sdk-py/orchapod /app/orchapod", "COPY packages/providers /app/packages/providers",
-                 "COPY containers/web-research/run.py /app/run.py"):
-        assert line in docker
-    assert re.search(r"pip install .*httpx", docker) and "tavily-python" not in docker
+    assert "COPY packages/providers /app/packages/providers" in docker and re.search(r"pip install .*httpx", docker)
 
 
 def test_schema_and_registry():

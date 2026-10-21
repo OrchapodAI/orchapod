@@ -18,6 +18,7 @@ from packages.providers.base import ProviderError
 from packages.providers.tavily import Tavily
 
 MIN_CHARS, MAX_CHARS = 200, 2000
+MIN_PARAGRAPH = 40  # shorter paragraphs are navigation and banner fragments: dropped before packing
 
 
 def fail(reason: str):
@@ -31,15 +32,22 @@ def strings(value) -> list[str]:
     return [v.strip() for v in values if isinstance(v, str) and v.strip()]
 
 
-def norm_url(url: str) -> str:
-    parts = urlsplit(url.strip())
-    return urlunsplit(parts._replace(path=parts.path.rstrip("/"), fragment=""))
+def norm_url(url: str) -> str | None:
+    """Lower-case host, no fragment, no trailing slash, no lone surrogates; None for a malformed URL."""
+    try:
+        parts = urlsplit(url.strip().encode("utf-8", "ignore").decode())
+    except ValueError:
+        return None
+    return urlunsplit(parts._replace(netloc=parts.netloc.lower(), path=parts.path.rstrip("/"), fragment=""))
 
 
 def paragraphs(text: str):
-    """Whitespace-collapsed paragraphs; one over MAX_CHARS is cut at its last space before the limit."""
+    """Whitespace-collapsed paragraphs of at least MIN_PARAGRAPH chars; one over MAX_CHARS is cut at its last space
+    before the limit."""
     for p in re.split(r"\n\s*\n", text):
         p = " ".join(p.split())
+        if len(p) < MIN_PARAGRAPH:
+            continue
         while len(p) > MAX_CHARS:
             cut = p.rfind(" ", 1, MAX_CHARS + 1)
             cut = cut if cut > 0 else MAX_CHARS
@@ -65,10 +73,10 @@ def passages(text: str):
 
 def main():
     inputs = io.read_inputs()
-    queries = strings(inputs.get("queries"))
-    seed_urls = list(dict.fromkeys(map(norm_url, strings(inputs.get("seed_urls")))))
+    queries, seeds = strings(inputs.get("queries")), [norm_url(u) for u in strings(inputs.get("seed_urls"))]
+    seed_urls = list(dict.fromkeys(u for u in seeds if u))
     max_pages = 20 if inputs.get("max_pages") in (None, "") else int(inputs["max_pages"])
-    if not queries and not seed_urls:
+    if not queries and not seeds:
         fail("web-research needs at least one of queries and seed_urls")
     if not 1 <= max_pages <= 100:
         fail(f"max_pages must be 1–100, got {max_pages}")
@@ -76,7 +84,7 @@ def main():
     tavily = Tavily(on_usage=cost.add)
     per_query = min(20, math.ceil(max_pages / len(queries))) if queries else 0  # Tavily returns at most 20 results
     calls = ([("extract", seed_urls[:max_pages])] if seed_urls else []) + [("search", q) for q in queries]
-    pages, urls_failed, failed_calls = {}, 0, 0
+    pages, urls_failed, failed_calls = {}, seeds.count(None), 0
     for i, (kind, arg) in enumerate(calls, 1):
         if len(pages) >= max_pages:
             break  # no credits for results that would not be read
@@ -94,8 +102,10 @@ def main():
             continue
         for hit in reply.get("results") or []:
             url = norm_url(hit.get("url") or "")
-            if url and url not in pages and len(pages) < max_pages:
-                pages[url] = hit.get("raw_content") or hit.get("content") or ""
+            if url is None:
+                urls_failed += 1
+            elif url and url not in pages and len(pages) < max_pages:  # lone surrogates go once, here
+                pages[url] = (hit.get("raw_content") or hit.get("content") or "").encode("utf-8", "ignore").decode()
         log.progress(i, len(calls))
 
     corpus, seen, duplicates = [], set(), 0

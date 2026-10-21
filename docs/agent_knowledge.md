@@ -25,7 +25,7 @@ Source of truth: `NODE_REGISTRY` in packages/workflow_schema/models.py. On every
 3. "Quantize a model which is an expert in maths": pick from the maths shortlist (ml-engineering fills it on D4) and say why → hf-download → quantize (GGUF q4_k_m on CPU; AWQ via Serverless Job when GPU quota exists) → quick eval (50 GSM8K-style items, exact match, plus the Ultra judge on 20) → artifact and report.
 
 ## Other prices
-- GPU-hour: gpu-h100-sxm $4.50, gpu-l40s-a $1.82 (nebius.com/prices, 2026-10-20). Tavily: $0.008 per credit. Fine-tune $ per trained token: from spike 1.
+- GPU-hour: gpu-h100-sxm $4.50, gpu-l40s-a $1.55 (Intel L40S; the AMD gpu-l40s-d is $1.82) (nebius.com/prices, 2026-10-20). Tavily: $0.008 per credit. Fine-tune $ per trained token: from spike 1.
 
 ## Other services
 - Tavily (TAVILY_API_KEY): search(query, search_depth="advanced", max_results) and extract(urls). Free tier: 1,000 credits/month.

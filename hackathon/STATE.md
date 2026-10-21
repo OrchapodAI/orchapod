@@ -4,7 +4,7 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 ## Next actions (in order)
 1. Hari: NEBIUS_API_KEY and TAVILY_API_KEY into ~/src/orchapod-hack/.env — both lines still empty on disk (2026-10-21T02:37Z); the hidden-input command is in chat. Unblocks spikes 1–3 and every live check.
 2. Spikes 1–3 (hackathon/briefs/2026-10-22-spikes.md; worktrees spike1–3 at c164e4e) — dispatch the moment the key lands.
-3. Wave 3 (hackathon/briefs/2026-10-22-wave3.md): MERGED devrel-w3 (d257183), frontend-w3 (3d250c5), data-w3; REVIEW backend-w3 (opus), platform-w3 (+ hosting fact-check); IN_PROGRESS ml-w3, qa-w3.
+3. Wave 3 (hackathon/briefs/2026-10-22-wave3.md): MERGED devrel-w3, frontend-w3, data-w3, platform-w3 (code); FIX ROUND backend-w3 (/compare spend leak), platform-w3 (hosting proposal only); IN_PROGRESS ml-w3, qa-w3.
 4. After wave 3: shared fence() (platform), apps/api/config.py (platform), vllm-serve rewrite (ml), `make check E2E=1` + Playwright smoke on the merged branch, D6 hardening (anonymous budget ceiling).
 5. G1 Oct 24: golden path green from the UI (needs spike 1's deploy answer) + intent #2 from the agent chat (STUB green 2026-10-21; live waits on the key).
 
@@ -99,7 +99,9 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - DECISION 2026-10-20: skip claude-mem (episodic-memory installed; these files are the source of truth); nebius CLI deferred to G2 — orchestrator.
 - DECISION 2026-10-20: every container image builds with the repo root as context (matches CI, scripts/build-and-push-containers.sh and the local_docker hint); Dockerfile owners fix their COPY paths — qa finding.
 - DECISION 2026-10-20: Lane B student = nvidia/Llama-3.1-Nemotron-Nano-8B-v1 — spike 4: 60 steps 62 s / 15.9 GiB, merge 41 s, vLLM healthy 51 s, fits an L40S; Nemotron-3-Nano-30B-A3B also works (router frozen) but is 12× slower per step and needs 80 GB — a proven option, not the default.
-- OPEN DECISION: intent #1 deploy default (3B on a Serverless Endpoint vs 8B serverless LoRA) · hosting (D4).
+- DECISION 2026-10-21: gpu-l40s-a = $1.55/h (Intel L40S; $1.82 is the AMD gpu-l40s-d) — platform-w3, nebius.com/prices + docs component math; Lane B ≈ $2.65.
+- DECISION 2026-10-21 (orchestrator ruling): ORCHAPOD_ANON_SCALE stays 0.1; real-estate's reduced template ($0.88) is admin-only until Hari raises the scale (≥ 0.3) inside the hosting decision.
+- OPEN DECISION: intent #1 deploy default (waits on spike 1) · hosting (D4: proposal being fixed, then to Hari).
 
 - DECISION 2026-10-20 (audit triage): Anthropic/OpenAI code leaves the demo path now (P0, stage-one rule); Vast.ai/RunPod/legacy Compute stack (~3,500 lines) is hidden from the demo path (P1) and deleted after G1 if still off-path (P2); other dead weight (Alembic beside create_all, second model registry, static Registry page, zero-caller modules) is P2.
 

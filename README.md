@@ -170,9 +170,9 @@ The guard checks the estimate when a plan is validated (an estimate above the re
 | Nemotron 3.5 Lightning, per 1M tokens in / out | $0.06 / $0.24 |
 | Tavily, per credit | $0.008 |
 | `gpu-h100-sxm`, per hour | $4.50 |
-| `gpu-l40s-a`, per hour | $1.82 |
+| `gpu-l40s-a`, per hour | $1.55 |
 
-These are design budgets, not measurements: a Lane A run under $2 and a Lane B run of about $2.8 (at most 25 minutes of H100 plus 30 minutes of L40S). TODO(D8): measured time and cost per run, the Token Factory fine-tuning price per trained token (from spike 1), and the `gpu-l40s-a` rate, which needs re-checking against nebius.com/prices (the table uses $1.82).
+These are design budgets, not measurements: a Lane A run under $2 and a Lane B run of about $2.65 (at most 25 minutes of H100 plus 30 minutes of L40S). TODO(D8): measured time and cost per run, the Token Factory fine-tuning price per trained token (from spike 1), and the `gpu-l40s-a` rate, which needs re-checking against nebius.com/prices (the table uses $1.82).
 
 ## What changed during the submission period
 

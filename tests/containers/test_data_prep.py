@@ -177,7 +177,7 @@ def test_small_inputs_can_leave_a_split_empty(n, train, test, sizes):
     assert tuple(map(len, dp.split(rows, train, test))) == sizes
 
 
-def test_one_row_sources_land_in_train():
+def test_one_row_sources_land_in_train_while_they_are_few():  # here 10 of 50 rows; over 60 % they spill
     singles = [chat(f"s{i}", source_url=f"https://single.example/{i}") for i in range(10)]
     groups = [chat(f"g{s}-{i}", source_url=f"https://group.example/{s}") for s in range(4) for i in range(10)]
     train, ev, test = dp.split(singles + groups, 0.8, 0.1)

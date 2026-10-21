@@ -181,8 +181,9 @@ def quality_filter(rows: list[dict]) -> tuple[list[dict], int]:
 def split(rows: list[dict], train: float, test: float) -> tuple[list, list, list]:
     """Seed-42 split stratified by source_url: each source's shuffled rows spread evenly over one order, cut
     train|eval|test at round(n × share). Counts always add up to n, but small n can leave a split empty (n=5 at
-    0.9/0.1 → 4/1/0), and only a source with about 1/share rows or more reaches eval and test: a one-row source
-    sits mid-order, so it lands in train."""
+    0.9/0.1 → 4/1/0), and a source needs about 1/share rows to reach eval and test. One-row sources all sit
+    mid-order: they stay in train while they are at most 2 × train − 1 of the rows (60 % at 0.8), and only the
+    excess spills into eval and test."""
     rng = random.Random(SEED)
     groups = defaultdict(list)
     for r in rows:

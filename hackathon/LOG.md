@@ -207,3 +207,4 @@ worktrees:
   - CI builds both prod Dockerfiles; a Playwright `fits:false` test that the orchestrator runs.
   - qa-w4 never touches orchapod/* images or the stack.
   - Orchestrator: `make check E2E=1` on the merged tree started (background).
+- 2026-10-21T14:06Z INTEGRATION `make check E2E=1` on 75d0c6d (wave 3 complete + frontend/platform/data-w4): exit 0. 675 passed. e2e_demo intent #2 PASS (run 89bc38b5, 18 s, $0, dataset downloadable). e2e_agent: #2 PASS (run aff65930, 6 s, $0, estimate $0.15, report ready), #3 PASS (run 7f51f89c, 8 s, $0, estimate $0.096, report ready), #1 SKIP (vllm-serve = ml-w4). All orchapod/<node>:dev images rebuilt from this tree.

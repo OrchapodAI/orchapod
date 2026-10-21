@@ -173,3 +173,4 @@ worktrees:
   - Ledger: platform-w4 fix rounds 1/5, 0 open. Merged; make check green (605 + web 27).
   - DECISIONs recorded: no VASTAI_API_KEY on the VM; 14 rotating backup slots; explicit rsync excludes.
   - Pending with backend-w4's merge: ORCHAPOD_CORS_ORIGINS + ORCHAPOD_TRUSTED_PROXIES in .env.example/compose; drop `--forwarded-allow-ips "*"`; healthcheck/watchdog → /livez.
+- 2026-10-21T13:20Z qa-w3 resumed on my note and added c301b8f: canonical intents identified by slug (canonical ⊆ shipped, so the 4th template is allowed) and no role=alert selectors. Scratch merge with data-w4's template: make check E2E=1 661 passed; agent e2e #2/#3 PASS, #1 SKIP until ml-w4. The orchestrator checks c301b8f after the qa-w3 review (the reviewer saw 0038b3d).

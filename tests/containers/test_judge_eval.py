@@ -4,6 +4,7 @@ import json
 import re
 import socket
 import sys
+import threading
 import time
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -197,6 +198,12 @@ def test_failed_rows_are_excluded_and_over_10pc_exits_1_after_writing(node, mock
     assert all(s["error"].startswith("base: token_factory bad_request 400") and s["verdict"] is None for s in bad)
     assert out["errors"] == len(bad) and out["judged"] == len(rows) - len(bad)
     assert not any(json.loads(r.content)["model"] == "orchapod-lora" and "bad" in r.content.decode() for r in node.seen)
+
+
+def test_a_stop_left_set_by_an_earlier_main_in_this_process_is_cleared(node, monkeypatch):
+    monkeypatch.setattr(je, "STOP", threading.Event())
+    je.STOP.set()  # as a main() that unwound (cancel, budget) leaves the module-level Event
+    assert node()["judged"] == len(ROWS)
 
 
 def test_a_judge_reply_without_a_winner_is_a_row_error(node, monkeypatch):

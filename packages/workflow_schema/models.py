@@ -318,7 +318,8 @@ class WorkflowSchema(BaseModel):
 
 # ---------------------------------------------------------------------------
 # Node type registry (used by agent + canvas to list available nodes)
-# Row keys: description, inputs_schema, outputs_schema, runtime (cpu | gpu | api), hidden (the agent never plans it).
+# Row keys: description, inputs_schema, outputs_schema, runtime (cpu | gpu | api), hidden (the agent never plans it),
+# rents_gpu (an api node that bills GPU time, such as vllm-serve's endpoint: the budget's gpu guard counts it as gpu).
 # ---------------------------------------------------------------------------
 
 NODE_REGISTRY: dict[NodeType, dict] = {

@@ -8,14 +8,17 @@ and the adapter side by side (`--enable-lora`, the adapter as "tuned"), so judge
 serving stack. r2 inputs are read from our bucket, mounted read-only at /mnt/artifacts. The node waits up to 15 min for
 Running, proves the served model with one completion, registers the expiry with the control plane (POST /internal/ttl
 with endpoint_id; the backend deletes the endpoint then) and exits 0 with `model_ref` (and `base_model_ref`): ModelRefs
-that name the env var ORCHAPOD_ENDPOINT_TOKEN, never the token. A failure or cancel before registration deletes the
-endpoint. STUB=1 makes no Nebius call: the endpoint is http://stub.invalid, still registered, so /compare accepts it.
+that name the env var ORCHAPOD_ENDPOINT_TOKEN, never the token. The endpoint is named per node of a run (R19), so an
+endpoint an earlier attempt left is found and deleted first, and a create that may have reached Nebius without an id is
+found by name and deleted. A failure or cancel before registration deletes the endpoint. STUB=1 makes no Nebius call:
+the endpoint is http://stub.invalid, still registered, so /compare accepts it.
 """
 
 import contextlib
 import json
 import os
 import re
+import signal
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -49,6 +52,32 @@ def mounted(name: str, uri: str, bucket: str) -> str:
     if not uri.startswith(f"r2://{bucket}/"):
         fail(f"{name} must be an r2:// dir in {bucket}, the bucket the endpoint mounts, not {uri}")
     return f"{MOUNT}/{uri.removeprefix(f'r2://{bucket}/')}"
+
+
+def listed(eps, name: str) -> dict | None:
+    """The endpoint named `name`, from one endpoints.list() scan. A failed scan raises: find(), made for a lost create,
+    would look for 45 s and call a failure a miss."""
+    return next((e for e in eps.list() if e["name"] == name), None)
+
+
+def clear(eps, name: str) -> None:
+    """R19: names are unique per project, so an endpoint an earlier attempt of this node left is deleted (unless already
+    DELETING) and the create waits until the name is free. Never adopted: get() shows no spec to check against this
+    attempt's inputs."""
+    old = listed(eps, name)
+    if not old:
+        return
+    log.warn(f"endpoint {old['id']} ({name}) is {old['state']}, left by an earlier attempt: deleting it for a fresh one")
+    if old["state"] != "DELETING":
+        try:
+            eps.delete(old["id"])
+        except ProviderError as e:
+            fail(f"could not delete endpoint {old['id']} ({name}): {e}; delete it in the Nebius console")
+    deadline = time.monotonic() + WAIT_S
+    while listed(eps, name):
+        if time.monotonic() > deadline:
+            fail(f"endpoint {name} is still listed {WAIT_S // 60} min after its delete; delete it in the Nebius console")
+        time.sleep(POLL_S)
 
 
 def running(eps, eid: str, created: float) -> str:
@@ -99,8 +128,10 @@ def main():
     if price is None and not stub:
         fail(f"no price for {platform} in orchapod.prices.PRICES, so no endpoint is created")
     cap = os.environ.get("ORCHAPOD_MAX_COST_USD")
-    if cap and price and keep / 60 * price > float(cap):
-        fail(f"{keep} min of {platform} costs about ${keep / 60 * price:.2f}, above this node's budget ${float(cap):.2f}")
+    hours = (keep + WAIT_S / 60) / 60  # billed from creation: up to WAIT_S to start, then keep_alive_min
+    if cap and price and hours * price > float(cap):
+        fail(f"up to {WAIT_S // 60} min to start plus {keep} min of {platform} costs up to ${hours * price:.2f}, above "
+             f"this node's budget ${float(cap):.2f}")
     token = os.environ.get("ORCHAPOD_ENDPOINT_TOKEN", "").strip()
     if not stub and not token:
         fail("set ORCHAPOD_ENDPOINT_TOKEN (openssl rand -hex 32): the endpoints' bearer token")
@@ -118,18 +149,27 @@ def main():
         args += ["--enable-lora", "--lora-modules", f"tuned={mounted('lora_adapter', adapter, bucket)}",
                  "--max-lora-rank", str(MAX_LORA_RANK)]
     run_id, node_id = os.environ.get("ORCHAPOD_RUN_ID", "local"), os.environ.get("ORCHAPOD_NODE_ID", "serve")
+    # ponytail: node ids that differ only in case or punctuation, or share their first 45 characters, get one name, so
+    # two such vllm-serve nodes in one run would delete each other's endpoint; hash the id in if canvas ids ever do that
     name = re.sub(r"[^a-z0-9-]+", "-", f"orchapod-{run_id[:8]}-{node_id}".lower())[:63].strip("-")
 
-    eps, eid, created, registered = None, None, time.monotonic(), False
+    eps, eid, sent, registered, created = None, None, False, False, time.monotonic()
     try:
         if stub:
             eid, url = f"stub-{name}", STUB_URL
         else:
             eps = endpoints()
-            eid = eps.create(name, IMAGE, args=" ".join(args), platform=platform, preset=preset, port=8000,
-                             env={"HF_TOKEN": os.environ["HF_TOKEN"]} if hf_id and os.environ.get("HF_TOKEN") else {},
-                             auth_token=token, volumes=(f"s3://{bucket}:{MOUNT}:ro",) if not hf_id or adapter else ())
-            created = time.monotonic()
+            clear(eps, name)
+            log.warn(f"creating endpoint {name} on {platform}/{preset}; if this node stops before it logs the endpoint "
+                     f"id, delete {name} in the Nebius console")
+            created, sent = time.monotonic(), True  # spend counts from here: a slow or lost create bills too
+            try:
+                eid = eps.create(name, IMAGE, args=" ".join(args), platform=platform, preset=preset, port=8000,
+                                 env={"HF_TOKEN": os.environ["HF_TOKEN"]} if hf_id and os.environ.get("HF_TOKEN") else {},
+                                 auth_token=token, volumes=(f"s3://{bucket}:{MOUNT}:ro",) if not hf_id or adapter else ())
+            except ProviderError as e:  # a 409: one the scan missed holds the name; any other refusal created nothing
+                sent = e.kind in ("server", "bad_output") or e.status == 409
+                raise
             log.info(f"endpoint {eid} ({name}) on {platform}/{preset}: {IMAGE} {' '.join(args)}")
             url = running(eps, eid, created)
         base_url = url.rstrip("/") + "/v1"
@@ -137,7 +177,7 @@ def main():
         startup_s = round(time.monotonic() - created)
         try:  # from here the backend owns the endpoint and deletes it at expiry
             log.post("/internal/ttl", {"action": "register_ttl", "keep_alive_min": keep, "endpoint_url": url,
-                                       "endpoint_id": eid})
+                                       "endpoint_id": eid}, timeout=30)
         except Exception as e:
             fail(f"could not register the endpoint's expiry, so it is deleted: {e}")
         registered = True
@@ -155,6 +195,12 @@ def main():
     except ProviderError as e:  # create or poll: the node's last line is the provider's
         fail(str(e))
     finally:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)  # a cancel cannot cut the lookup or the delete; docker kills at 30 s
+        if sent and not eid:  # the create may have reached Nebius without returning an id (5xx, read timeout, SIGTERM),
+            eid = (eps.find(name) or {}).get("id")  # or a 409 named one that holds the name
+            if not eid:
+                log.error(f"endpoint {name} is not listed after its create failed, but may still exist: delete it in "
+                          "the Nebius console")
         if eid and not stub:
             if not registered:
                 try:

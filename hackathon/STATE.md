@@ -4,7 +4,7 @@ Updated: 2026-10-21T15:45Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 ## Next actions (in order)
 1. Hari — decisions waiting (details in LOG "Ruling:" lines since 2026-10-21T02:50Z): NEBIUS_API_KEY + TAVILY_API_KEY into .env (unblocks spikes 1–3 and every live run); hosting (hackathon/briefs/2026-10-22-hosting-proposal.md, reply line inside; option + domain by Oct 24); golden-run topic by D6 (docs specialist vs real estate; both templates exist); ~10 GB of ml-w3 test artifacts in the local MinIO — delete?; AI-build disclosure; the two stopped vast.ai instances.
 2. Spikes 1–3 (hackathon/briefs/2026-10-22-spikes.md; worktrees spike1–3) — dispatch the moment a key lands; spike 1 decides tf-deploy vs vllm-serve for the golden path.
-3. Wave 5: COMPLETE incl. qa-w6 (24e234a; E2E 3/3, ui-smoke 5/5). Backend backlog (small): a cancel within ms of start on SQLite logs PendingRollbackError; a startup sweep for local containers left by a cancel mid-provision + API shutdown; the anonymous cancel of others' runs is closed by cancel tokens.
+3. Wave 5: COMPLETE incl. qa-w6 and backend-w6 (startup sweep of leftover node containers; cancel race fixed; SQLite WAL). Parked: a millisecond double-click cancel can leave a node unmarked.
 4. G1 Oct 24 holds in STUB: e2e_agent 3/3, ui-smoke golden path green. Live G1 waits on the key + spike 1.
 
 ## Board (status ∈ TODO | IN_PROGRESS(<agent>, <branch>) | REVIEW | DONE | BLOCKED(<why>))

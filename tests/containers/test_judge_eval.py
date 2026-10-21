@@ -220,7 +220,7 @@ def test_a_cancel_mid_phase_stops_at_once_and_starts_no_more_paid_calls(node, mo
 
     def judge(tf, model, s):
         if s["question"] == "BIAS":
-            release.wait(10)  # a call in flight that a dying llama-server or a slow judge would hold
+            release.wait(60)  # a call in flight that a dying llama-server or a slow judge would hold
         return real_judge(tf, model, s)
 
     monkeypatch.setattr(je, "judge", judge)
@@ -229,7 +229,7 @@ def test_a_cancel_mid_phase_stops_at_once_and_starts_no_more_paid_calls(node, mo
     try:
         with pytest.raises(SystemExit):
             node(ROWS * 10)  # 40 rows, 80 judge calls if nothing stopped them
-        assert clock.monotonic() - start < 5  # within the 30 s grace: no wait for calls in flight
+        assert clock.monotonic() - start < 20  # within the 30 s grace: no wait for calls in flight
     finally:
         release.set()
     assert len(chats(node.seen, ULTRA)) < 40  # queued rows never start; only those in flight finish

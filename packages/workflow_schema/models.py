@@ -84,6 +84,8 @@ class DataPrepInputs(BaseModel):
     train_split: float = Field(default=0.9, ge=0.5, le=0.99)
     test_split: float = Field(default=0.0, ge=0.0, description="Held out as test_jsonl; eval gets 1 - train - test. "
                               "Each split is rounded, so few rows can leave it empty (5 rows at 0.1 → 0)")
+    quality_filter: bool = Field(default=False, description="Chat formats only: Nemotron 3.5 Lightning scores each "
+                                 "row 1-5 and rows under 3 are dropped (about $0.01 per 300 rows); skipped under STUB")
 
     @model_validator(mode="after")
     def _splits_fit(self):
@@ -337,8 +339,9 @@ NODE_REGISTRY: dict[NodeType, dict] = {
         "hidden": True,  # the agent never plans it: no container
     },
     NodeType.DATA_PREP: {
-        "description": "Load (r2 or Hugging Face), convert to chat or keep structured rows, dedupe, "
-                       "split train/eval/test (seed 42, stratified by source_url).",
+        "description": "Load (r2 or Hugging Face), convert to chat or keep structured rows, dedupe, optionally "
+                       "drop low-quality chat rows (Lightning scores), split train/eval/test (seed 42, stratified "
+                       "by source_url).",
         "inputs_schema": DataPrepInputs,
         "outputs_schema": DataPrepOutputs,
         "runtime": "cpu",

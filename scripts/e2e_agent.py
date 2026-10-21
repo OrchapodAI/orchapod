@@ -31,10 +31,10 @@ CAP_USD = 3.0  # ORCHAPOD_MAX_RUN_USD: a plan estimated above it can never run
 FULL_CAPS = {"ORCHAPOD_ANON_SCALE": "1", "ORCHAPOD_MAX_RUN_USD": f"{CAP_USD:g}", "ORCHAPOD_MAX_DAY_USD": "15"}
 INTENTS = {"1": "tf-finetune", "2": "structured", "3": "quantize"}  # what each canonical plan contains
 
-VLLM = ("vllm-serve is not to contract yet (lora_adapter input, model_ref and base_model_ref outputs, runtime api; "
-        "contracts \"vllm-serve\"): no wave-3 brief owns it")
+VLLM = ("ml-w4: vllm-serve is not to contract yet (lora_adapter input, model_ref and base_model_ref outputs, runtime api; "
+        "contracts \"vllm-serve\")")
 # ponytail: wave-3 SKIP scaffolding. (node type or None, regex over the plan error "<node_id>: <problem>", the missing piece.)
-# Once ml-w3 and vllm-serve merge, delete PENDING, skip_reasons, the SKIP branch of run_one and --strict, and drop the
+# Once ml-w3 and ml-w4 (vllm-serve) merge, delete PENDING, skip_reasons, the SKIP branch of run_one and --strict, and drop the
 # Makefile's --strict from this script's line (nothing can SKIP then).
 PENDING = (
     (None, r"unknown node type 'judge-eval'", "ml-w3: judge-eval is not in NODE_REGISTRY"),

@@ -76,19 +76,28 @@ def test_ui_pending_never_hides_an_error_that_is_not_a_named_gap():
         ui.ui_pending(fake_api({I2["intent"]: ["synth: unknown input 'bogus'"]}))
 
 
+def group(pgid: int) -> list[int]:
+    done = subprocess.run(["pgrep", "-g", str(pgid)], capture_output=True, text=True)
+    return [int(pid) for pid in done.stdout.split()]
+
+
+def until(condition, seconds: float = 20) -> bool:
+    """Polls: a loaded machine takes seconds for what takes milliseconds on an idle one."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(0.1)
+    return False
+
+
 def test_stop_group_ends_the_server_and_everything_it_started():
     """`pnpm exec next dev` is pnpm, node and more: killing only the first would leave a dev server on its port."""
     proc = subprocess.Popen(["sh", "-c", "sleep 60 & sleep 60 & wait"], start_new_session=True)
-    time.sleep(0.3)  # let the children start
     pgid = os.getpgid(proc.pid)
+    assert until(lambda: len(group(pgid)) == 3), "the shell and its two sleeps should be one process group"
     ui.stop_group(proc)
-    for _ in range(20):  # the orphaned sleeps are reaped by init a moment later
-        try:
-            os.killpg(pgid, 0)
-        except ProcessLookupError:
-            break
-        time.sleep(0.1)
-    else:
+    if not until(lambda: not group(pgid)):  # the orphaned sleeps are reaped by init a moment later
         os.killpg(pgid, signal.SIGKILL)
         pytest.fail("part of the process group survived stop_group")
     ui.stop_group(proc)  # already gone: no error
@@ -107,15 +116,20 @@ def test_run_playwright_returns_its_exit_code(monkeypatch):
 def test_run_playwright_that_outlives_its_timeout_is_stopped_with_its_children(monkeypatch, tmp_path):
     marker = tmp_path / "child.pid"
     monkeypatch.setattr(ui, "PNPM", ["sh", "-c", f"sleep 60 & echo $! > {marker}; wait", "pnpm"])
-    monkeypatch.setattr(ui, "PLAYWRIGHT_TIMEOUT_S", 1)
-    with pytest.raises(RuntimeError, match="took over 1 s and was stopped"):
+    monkeypatch.setattr(ui, "PLAYWRIGHT_TIMEOUT_S", 3)
+    with pytest.raises(RuntimeError, match="took over 3 s and was stopped"):
         ui.run_playwright([], {"PATH": "/usr/bin:/bin"})
+    if not marker.exists() or not marker.read_text().strip():
+        pytest.skip("the machine was too loaded to start the child within the timeout")
     child = int(marker.read_text())
-    for _ in range(30):  # a browser started by playwright is such a child
+
+    def alive() -> bool:
         try:
             os.kill(child, 0)
         except ProcessLookupError:
-            return
-        time.sleep(0.1)
-    os.kill(child, signal.SIGKILL)
-    pytest.fail("the child of the stopped playwright is still running")
+            return False
+        return True
+
+    if not until(lambda: not alive()):  # a browser started by playwright is such a child
+        os.kill(child, signal.SIGKILL)
+        pytest.fail("the child of the stopped playwright is still running")

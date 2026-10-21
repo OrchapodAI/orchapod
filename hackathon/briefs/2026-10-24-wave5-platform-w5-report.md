@@ -160,3 +160,26 @@ This round supersedes three statements above:
   - Pod.error
 
   The file was then restored byte for byte (`cmp` IDENTICAL). Cost $0, and no Nebius API call.
+
+## Fix round 2 (97774a9 docs/contracts, 464e6bf code + tests)
+1. **The cap is parsed before the create.**
+   - It sits next to the URL checks. ORCHAPOD_MAX_COST_USD must be a finite number above 0. Missing, blank, `abc`, `nan`, `inf`, `-1` and `0` each raise `ProvisionError("bad_request: ORCHAPOD_MAX_COST_USD must be a finite number above 0")` before any call; there is one parametrized test case per value.
+   - Before this, a bad value raised after the paid POST and orphaned the job.
+2. **The spend clock starts before the create.** `started = monotonic()` is taken before the create, so time lost in a slow create or in find()'s 45 s counts against the cap.
+   - Test: the fake clock adds asyncio's polls to the client's time.sleep pauses. A lost create (504) is adopted on find's second look, at 15 s. With a $0.05 cap on an H100 (40 s), wait() returns 1 after polls at 15, 30 and 45 s. Starting the clock after find would need one more poll.
+3. **The whole `Pod.error` is scrubbed.**
+   - `"<STATE> <code>: <message>"` goes through one pattern, `HIDDEN`, which replaces scheme URLs, `Bearer …`, `host:port` and IPv4 forms with `<hidden>`. The result is cut at 300 characters.
+   - The regex sees at most the first 1000 characters, because it is quadratic on pathological input such as `a.a.a.…`: 4.4 s at 50k characters, about 2 ms at 1000. Text past that point could never reach the 300-character output anyway.
+   - Tested with a URL in the code, an IP, `host:port` and `Bearer` in the message, and a 5000-character code (the result is exactly 300 characters).
+   - A URL also swallows the `:` that follows it (`\S+`). That is cosmetic; the test records it.
+   - The server log (`orchapod.nebius` ERROR) still keeps the raw code and message.
+4. **The name is logged before the create:** `log.warning("nebius job <name>: creating <image> on <platform>/<preset>; if the API stops before it is recorded, cancel it in the console")`.
+   - It is WARNING because the API configures no logging, so the root logger's last-resort handler shows only WARNING and above.
+   - The test checks that the line is already in caplog when the POST reaches the fake API.
+
+**Proof.**
+- `pytest tests/providers/test_nebius.py -q` → `41 passed`.
+- `make check` → exit 0: `All checks passed!`, `743 passed, 2 warnings`, web `pass 27 fail 0`.
+- Red first: with this round's code stashed, 10 new or changed tests failed.
+- Mutation check: I broke 7 rules one at a time (inf accepted, an unparseable cap accepted, the clock started after find, no scrub, no 300-character cut, Bearer not hidden, the log line at DEBUG). Each failed a test, and the file was restored byte for byte.
+- Cost $0, and no Nebius API call.

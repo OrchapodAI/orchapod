@@ -4,7 +4,7 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 ## Next actions (in order)
 1. Hari: NEBIUS_API_KEY and TAVILY_API_KEY into ~/src/orchapod-hack/.env — both lines still empty on disk (2026-10-21T02:37Z); the hidden-input command is in chat. Unblocks spikes 1–3 and every live check.
 2. Spikes 1–3 (hackathon/briefs/2026-10-22-spikes.md; worktrees spike1–3 at c164e4e) — dispatch the moment the key lands.
-3. Wave 3: COMPLETE. Wave 4: MERGED frontend/platform/data/backend/ml-w4; REVIEW qa-w4. Wave 5 (hackathon/briefs/2026-10-24-wave5.md): REVIEW platform-w5; IN_PROGRESS backend-w5; queued frontend-w5, platform-w6 (shared fence), devrel-w5, ml-w5 (vllm-serve lost-create recovery).
+3. Waves 3–4: COMPLETE. Wave 5 (hackathon/briefs/2026-10-24-wave5.md): MERGED platform-w5; IN_PROGRESS backend-w5, qa-w5, platform-w6, devrel-w5; next ml-w5 (vllm-serve find() recovery + ml-w4 minors), frontend-w5 (after backend-w5).
 4. After wave 3: shared fence() (platform), apps/api/config.py (platform), vllm-serve rewrite (ml), `make check E2E=1` + Playwright smoke on the merged branch, D6 hardening (anonymous budget ceiling).
 5. G1 Oct 24: golden path green from the UI (needs spike 1's deploy answer) + intent #2 from the agent chat (STUB green 2026-10-21; live waits on the key).
 
@@ -23,7 +23,7 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [x] P0 D1 one Token Factory client in packages/providers; zero-caller service deleted — DONE (e0fa9a2; synth and lm-eval switch in their tasks)
 - [x] P0 D2 SPEND SAFETY: provider_selector defaults gpu nodes to ["runpod", "vastai"] (apps/api/services/provider_selector.py:74), so a set VASTAI_API_KEY rents a vast.ai GPU silently — default must be ["nebius"] and vastai only when named — DONE (platform-w2)
 - [x] P0 D2 LocalDocker: a fast-failing container can be removed before `docker wait` sees it → node reads as succeeded (pre-existing; found by platform-w1) — DONE (platform-w2)
-- [ ] P1 D2 nebius_serverless provider: Jobs, Endpoints, IAM refresh, Object Storage — TODO
+- [x] P1 D2 NebiusServerless (Jobs, Endpoints, REST ai/v1, IAM CLI fallback, find() recovery) + NebiusProvider on Jobs with a spend deadline — DONE (platform-w5; live behaviour waits on G2 quota + key)
 - [x] P0 D2 setup gaps (compose 8001 and no Anthropic/253B judge; build script loops containers/*/; ensure_bucket_exists at API start; web default 8001) — DONE (wave 2)
 - [x] P0 D3 .env.example complete (every var, default, where to get it, hosted-only block) + a test that every env name the code reads is listed — DONE (platform-w4)
 - [ ] P0 D4 hosting: repo side DONE (platform-w4: prod compose, Caddy, cloud-init, prod Dockerfiles, deploy/backup/watchdog, docs/HOSTING.md; local prod smoke green); cloud side waits on Hari's decision + console steps (hackathon/briefs/2026-10-22-hosting-proposal.md) — BLOCKED(Hari)

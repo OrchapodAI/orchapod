@@ -207,6 +207,21 @@ def test_a_judge_reply_without_a_winner_is_a_row_error(node, monkeypatch):
     assert "judge" in last_error() and "winner" in last_error()
 
 
+def test_a_cancel_mid_phase_starts_no_more_paid_judge_calls(node, monkeypatch):
+    import time as clock
+
+    def sigterm_on_judge_progress(done, total, extra):
+        if extra["phase"] == "judge":
+            raise SystemExit(143)  # the SDK's SIGTERM handler raises this in the main thread
+
+    real_judge = je.judge
+    monkeypatch.setattr(je, "judge", lambda *a: (clock.sleep(0.02), real_judge(*a)))
+    monkeypatch.setattr(je.log, "progress", sigterm_on_judge_progress)
+    with pytest.raises(SystemExit):
+        node(ROWS * 10)  # 40 rows, 80 judge calls if nothing stopped them
+    assert len(chats(node.seen, ULTRA)) < 40  # Executor.map cancels queued rows; only those in flight finish
+
+
 @pytest.mark.parametrize("rows", [[], [{"messages": [{"role": "user", "content": "no reference"}]}]],
                          ids=["empty", "no-reference-turn"])
 def test_no_usable_test_rows_exits_1(node, rows):

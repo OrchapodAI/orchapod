@@ -105,8 +105,11 @@ test("templates: one click runs intent #2 to a finished run with its dataset car
   for (const field of ["user_id", "movie_title", "action", "timestamp", "device"]) {
     await expect(page.getByText(field, { exact: true }).first()).toBeVisible();
   }
-  const rows = t.plan.nodes.find((n) => n.type === "synth-distilabel")?.inputs?.n_samples; // STUB rows are distinct: none is deduped
-  await expect(page.getByText(`${rows} rows`, { exact: true })).toBeVisible();
+  // the card's row count is the dataset's: the one-click Run may run a reduced plan, so the template's n_samples says nothing
+  const shown = Number((await page.getByText(/^\d+ rows$/).first().innerText()).split(" ")[0]);
+  const file = await page.request.get((await download.getAttribute("href"))!); // the API's 307 to object storage, followed
+  expect(file.ok()).toBe(true);
+  expect((await file.text()).split("\n").filter(Boolean)).toHaveLength(shown);
   expect(problems).toEqual([]);
 });
 

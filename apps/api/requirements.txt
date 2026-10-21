@@ -23,9 +23,6 @@ httpx==0.28.0
 # YAML parsing
 pyyaml==6.0.2
 
-# AI / agent layer
-anthropic==0.40.0
-
 # GPU provider
 vastai>=1.0.0
 

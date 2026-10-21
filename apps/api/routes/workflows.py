@@ -9,24 +9,26 @@ Routes:
   GET    /workflows/{id}         — get workflow + graph JSON
   PUT    /workflows/{id}         — update YAML (recompiles graph_json)
   DELETE /workflows/{id}         — delete
-  POST   /workflows/from-prompt  — generate YAML via Claude agent
+  POST   /workflows/from-prompt  — the Orchapod Agent's planner drafts it (Nemotron on Token Factory)
 """
 
 from __future__ import annotations
 
-import os
 import uuid
 from datetime import datetime
 from typing import Annotated
 
+import yaml
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from api.agent.planner import Intent, make_plan
 from api.database import get_session
 from api.models.db import Workflow, utcnow
 from api.executor.dag import workflow_to_graph_json
+from api.services import budget
 
 router = APIRouter()
 
@@ -60,7 +62,7 @@ class WorkflowOut(BaseModel):
 
 
 class PromptRequest(BaseModel):
-    prompt: str
+    prompt: Intent
 
 
 # ---------------------------------------------------------------------------
@@ -137,29 +139,22 @@ async def delete_workflow(workflow_id: uuid.UUID, db: Session):
 
 
 @router.post("/from-prompt", response_model=WorkflowOut, status_code=status.HTTP_201_CREATED)
-async def create_workflow_from_prompt(body: PromptRequest, db: Session):
-    """Use the Claude agent to generate a workflow YAML from a natural-language prompt."""
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not configured")
-
-    from api.agent.workflow_builder import build_workflow_from_prompt
+async def create_workflow_from_prompt(body: PromptRequest, db: Session,
+                                      scale: float = Depends(budget.scale)):
+    """The Orchapod Agent's planner drafts the workflow (same rules as POST /agent/plan); the canvas opens it,
+    errors and all, as long as it compiles."""
+    out = await make_plan(body.prompt, db, scale)
+    yaml_str = yaml.safe_dump(out["plan"], sort_keys=False)
     try:
-        yaml_str = await build_workflow_from_prompt(body.prompt, api_key)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
-
-    try:
-        graph_json = workflow_to_graph_json(yaml_str)
-    except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Agent produced invalid YAML: {e}")
-
-    import yaml as _yaml
-    spec = _yaml.safe_load(yaml_str)
+        graph_json = workflow_to_graph_json(yaml_str) if out["plan"].get("nodes") else None
+    except Exception:
+        graph_json = None
+    if graph_json is None:
+        raise HTTPException(status_code=422, detail="; ".join(out["errors"]) or "the planner returned no nodes")
 
     workflow = Workflow(
         user_id=uuid.uuid4(),
-        name=spec.get("name", "Agent-generated workflow"),
+        name=out["plan"].get("name") or "Agent-generated workflow",
         yaml=yaml_str,
         graph_json=graph_json,
     )

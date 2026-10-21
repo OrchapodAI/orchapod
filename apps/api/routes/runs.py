@@ -27,17 +27,20 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from api.database import get_session
 from api.executor import run_workflow as executor
-from api.models.db import Run, NodeRun, RunStatus, NodeStatus, Workflow, Artifact, ArtifactKind, utcnow
+from api.models.db import AgentRun, Run, NodeRun, RunStatus, NodeStatus, Workflow, Artifact, ArtifactKind, utcnow
+from api.services import budget
 from api.services.events import event_bus
 
 router = APIRouter()
 
 Session = Annotated[AsyncSession, Depends(get_session)]
+Scale = Annotated[float, Depends(budget.scale)]  # 1 for X-Orchapod-Admin, else ORCHAPOD_ANON_SCALE (R7)
 
 TERMINAL = (RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED)
 
@@ -112,19 +115,17 @@ async def create_run(body: RunCreate, db: Session):
 
 
 @router.post("/{run_id}/start", response_model=RunOut)
-async def start_run(run_id: uuid.UUID, db: Session):
+async def start_run(run_id: uuid.UUID, db: Session, scale: Scale):
+    """409 unless pending; 503 kill switch; 402 when no budget is left (caps × the caller's scale)."""
     run = await db.get(Run, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
-    if run.status not in (RunStatus.PENDING,):
-        raise HTTPException(
-            status_code=409,
-            detail=f"Run is already {run.status} — only pending runs can be started",
-        )
-
-    run.status = RunStatus.PROVISIONING_GPU
-    await db.commit()  # the executor reads the run in its own session
-    executor.launch(run_id)
+    if run.status == RunStatus.PENDING:
+        await budget.guard(db, scale, run)
+    if run.status != RunStatus.PENDING or not await _move(db, run, [RunStatus.PENDING]):
+        await db.refresh(run)
+        raise HTTPException(status_code=409, detail=f"Run is {run.status.value}; only pending runs can be started")
+    executor.launch(run_id, scale)
     return _run_out(run)
 
 
@@ -145,13 +146,13 @@ async def cancel_run(run_id: uuid.UUID, db: Session):
     if run.status not in TERMINAL:  # never started (or still stopping after 60 s)
         run.status = RunStatus.CANCELLED
         run.finished_at = utcnow()
-        await db.flush()
+        await db.commit()  # before the event: subscribers re-read the run on it
         await event_bus.publish(run_id, {"type": "run_status", "status": "cancelled"})
     return _run_out(run)
 
 
 @router.post("/{run_id}/nodes/{node_id}/retry", response_model=RunOut, status_code=status.HTTP_202_ACCEPTED)
-async def retry_node(run_id: uuid.UUID, node_id: str, db: Session):
+async def retry_node(run_id: uuid.UUID, node_id: str, db: Session, scale: Scale):
     """Re-run the run's failed node (same row, outputs kept), then continue downstream."""
     run = await db.get(Run, run_id)
     node_run = await db.scalar(select(NodeRun).where(NodeRun.run_id == run_id, NodeRun.node_id == node_id))
@@ -160,14 +161,32 @@ async def retry_node(run_id: uuid.UUID, node_id: str, db: Session):
     if run.status not in (RunStatus.FAILED, RunStatus.CANCELLED) or node_run.status != NodeStatus.FAILED:
         raise HTTPException(status_code=409, detail=f"Only the failed node of a failed or cancelled run "
                                                     f"can be retried (run {run.status.value}, node {node_run.status.value})")
-    if run_id in executor.running_tasks:
+    await budget.guard(db, scale, run)
+    if executor.busy(run_id):  # its executor, or a container it started, is still stopping
         raise HTTPException(status_code=409, detail="Run is still stopping; retry in a moment")
 
-    node_run.status, node_run.error = NodeStatus.PENDING, None
-    run.status, run.finished_at = RunStatus.PROVISIONING_GPU, None
-    await db.commit()
-    executor.launch(run_id)
+    reset = await db.execute(update(NodeRun).where(NodeRun.id == node_run.id, NodeRun.status == NodeStatus.FAILED)
+                             .values(status=NodeStatus.PENDING, error=None).execution_options(synchronize_session=False))
+    await db.execute(update(AgentRun).where(AgentRun.run_id == run_id).values(report_md=None)  # a new report at the end
+                     .execution_options(synchronize_session=False))
+    if reset.rowcount != 1 or not await _move(db, run, [RunStatus.FAILED, RunStatus.CANCELLED]):
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Run changed meanwhile; reload it")
+    executor.launch(run_id, scale)
     return _run_out(run)
+
+
+async def _move(db: AsyncSession, run: Run, sources: list[RunStatus]) -> bool:
+    """Atomically move the run from one of `sources` to provisioning_gpu and commit (the executor reads it in its
+    own session), together with the caller's earlier statements; False when another request or worker changed it first."""
+    moved = await db.execute(update(Run).where(Run.id == run.id, Run.status.in_(sources))
+                             .values(status=RunStatus.PROVISIONING_GPU, finished_at=None)
+                             .execution_options(synchronize_session=False))
+    if moved.rowcount != 1:
+        return False
+    await db.commit()
+    await db.refresh(run)
+    return True
 
 
 @router.get("", response_model=list[RunOut])

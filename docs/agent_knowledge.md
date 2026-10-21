@@ -1,7 +1,7 @@
 # Orchapod Agent knowledge (the planner reads this at request time — keep it current)
 
 ## Node catalog
-Source of truth: `NODE_REGISTRY` in apps/api. Backend adds one row per node as it lands: inputs → outputs, runtime (cpu | gpu | api), typical cost and time. Until then see "New nodes" in docs/contracts.md.
+Source of truth: `NODE_REGISTRY` in packages/workflow_schema/models.py. On every request the planner (apps/api/agent/planner.py) appends each row not marked `hidden` to its prompt, after this file: inputs JSON Schema → outputs, runtime (cpu | gpu | api), and typical cost and time from its `TYPICAL` table. Estimates price synth-distilabel, web-research, judge-eval and vllm-serve from their inputs and `orchapod.prices.PRICES`. Canonical plans: apps/api/agent/templates/*.json.
 
 ## Models on Nebius Token Factory (https://api.tokenfactory.nebius.com/v1, key NEBIUS_API_KEY)
 | Role | Model ID | $ per 1M tokens in / out |

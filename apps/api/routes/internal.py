@@ -108,6 +108,7 @@ async def receive_log(event: LogEvent, db: Session):
         node_run = await db.scalar(select(NodeRun).where(NodeRun.run_id == event.run_id, NodeRun.node_id == event.node_id))
         if node_run and node_run.status == NodeStatus.RUNNING:  # a late line must not replace "cancelled"
             node_run.error = event.message
+            await db.commit()  # before the event, like every other announced change
     await event_bus.publish(event.run_id, {
         "type": "log",
         "node_id": event.node_id,
@@ -165,11 +166,14 @@ async def receive_artifact(event: ArtifactEvent, db: Session):
         _auto_register_model(db, artifact, node_run, art_data.get("metadata", {}))
 
     # The SDK's cost_json carries the node's spend as metadata {"usd"}; it rolls up into Run.cost_usd.
+    cost_usd = None
     if art_data["name"] == "cost_json":
         cost_usd = await db.scalar(
             update(Run).where(Run.id == event.run_id)
             .values(cost_usd=func.coalesce(Run.cost_usd, 0) + Decimal(str(artifact.meta.get("usd", 0))))
             .returning(Run.cost_usd).execution_options(synchronize_session=False))
+    await db.commit()  # before the events: subscribers re-read /runs/{id}/summary on them
+    if cost_usd is not None:
         await event_bus.publish(event.run_id, {"type": "run_cost", "cost_usd": float(cost_usd)})
 
     await event_bus.publish(event.run_id, {
@@ -270,7 +274,7 @@ async def register_ttl(body: RegisterTTLRequest, db: Session):
         },
     )
     db.add(artifact)
-    await db.flush()
+    await db.commit()  # before the event: subscribers re-read the run on it
 
     await event_bus.publish(uuid.UUID(body.run_id), {
         "type":       "artifact",

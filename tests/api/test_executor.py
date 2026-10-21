@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from datetime import timedelta
 from decimal import Decimal
 from unittest.mock import AsyncMock
 
@@ -16,7 +15,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.executor import run_workflow as ex
-from api.models.db import Artifact, ArtifactKind, NodeRun, NodeStatus, Run, RunStatus, Workflow, utcnow
+from api.models.db import Artifact, ArtifactKind, NodeRun, NodeStatus, Run, RunStatus, Workflow
 from packages.providers.base import Pod
 
 CHAIN = """
@@ -44,7 +43,7 @@ class FakeProvider:
 
     def __init__(self, db):
         self.db, self.script, self.logs = db, {}, []
-        self.envs, self.provisioned, self.terminated = {}, [], []
+        self.envs, self.provisioned, self.terminated, self.granted = {}, [], [], []
         self.started, self.provisioning, self.terminating = asyncio.Event(), asyncio.Event(), asyncio.Event()
         self.provision_gate = self.terminate_gate = None  # an asyncio.Event blocks that call until set
 
@@ -53,6 +52,7 @@ class FakeProvider:
         if self.provision_gate:
             await self.provision_gate.wait()  # docker run still pulling the image
         self.provisioned.append((env["ORCHAPOD_NODE_ID"], image))
+        self.granted.append(float(env["ORCHAPOD_MAX_COST_USD"]))
         self.envs[env["ORCHAPOD_NODE_ID"]] = env
         return Pod(provider="local-docker", pod_id=env["ORCHAPOD_NODE_ID"])
 
@@ -117,9 +117,9 @@ def events(broadcast):
 
 
 async def drain():
-    """Wait for background pod terminations."""
-    while ex._background:
-        await asyncio.wait(set(ex._background))
+    """Wait for background provisions and pod terminations."""
+    while ex._inflight:
+        await asyncio.wait(set().union(*ex._inflight.values()))
 
 
 async def test_success_resolves_refs_and_records_lineage(db, provider, monkeypatch):
@@ -129,7 +129,7 @@ async def test_success_resolves_refs_and_records_lineage(db, provider, monkeypat
     run = await seed(db)
     broadcast = AsyncMock()
 
-    await ex.run_workflow(run.id, db, broadcast)
+    await ex.run_workflow(run.id, db, broadcast, 1.0)
 
     await db.refresh(run)
     rows = await nodes(db, run)
@@ -150,7 +150,7 @@ async def test_failed_node_fails_run_with_last_error_line(db, provider):
     run = await seed(db)
     broadcast = AsyncMock()
 
-    await ex.run_workflow(run.id, db, broadcast)
+    await ex.run_workflow(run.id, db, broadcast, 1.0)
 
     await db.refresh(run)
     rows = await nodes(db, run)
@@ -166,7 +166,7 @@ async def test_failed_node_fails_run_with_last_error_line(db, provider):
 async def test_unresolved_ref_fails_the_node_before_provisioning(db, provider):
     run = await seed(db)  # a writes no train_jsonl
 
-    await ex.run_workflow(run.id, db, AsyncMock())
+    await ex.run_workflow(run.id, db, AsyncMock(), 1.0)
 
     rows = await nodes(db, run)
     assert rows["b"].status == NodeStatus.FAILED
@@ -179,12 +179,12 @@ async def test_api_runtime_runs_on_local_docker_and_gpu_needs_a_provider(db, pro
     monkeypatch.setitem(NODE_REGISTRY[NodeType.DATA_PREP], "runtime", "api")
     provider.script = {"a": {"outputs": {"train_jsonl": "r2://bk/a"}}, "b": {"outputs": {"train_jsonl": "r2://bk/b"}}}
     run = await seed(db)
-    await ex.run_workflow(run.id, db, AsyncMock())
+    await ex.run_workflow(run.id, db, AsyncMock(), 1.0)
     await db.refresh(run)
     assert run.status == RunStatus.SUCCEEDED
 
     gpu = await seed(db, yaml="name: g\nnodes:\n  - id: t\n    type: unsloth-train\n    inputs: {model: m}\n")
-    await ex.run_workflow(gpu.id, db, AsyncMock())
+    await ex.run_workflow(gpu.id, db, AsyncMock(), 1.0)
     rows = await nodes(db, gpu)
     assert rows["t"].error == "no gpu provider: NEBIUS_PROJECT_ID not set"
 
@@ -194,7 +194,7 @@ async def test_timeout_terminates_the_pod(db, provider, monkeypatch):
     provider.script = {"a": {"exit": None}}
     run = await seed(db)
 
-    await asyncio.wait_for(ex.run_workflow(run.id, db, AsyncMock()), 5)
+    await asyncio.wait_for(ex.run_workflow(run.id, db, AsyncMock(), 1.0), 5)
 
     rows = await nodes(db, run)
     assert rows["a"].error == "timeout after 0.05 s"
@@ -207,7 +207,7 @@ async def test_container_stdout_becomes_log_events(db, provider):
     run = await seed(db)
     broadcast = AsyncMock()
 
-    await ex.run_workflow(run.id, db, broadcast)
+    await ex.run_workflow(run.id, db, broadcast, 1.0)
 
     logs = [e for e in events(broadcast) if e["type"] == "log"]
     assert [(e["node_id"], e["level"], e["message"]) for e in logs] == [("a", "STDOUT", "pip noise")]
@@ -239,16 +239,6 @@ async def test_build_env_forwards_exactly_the_contract_vars(db, monkeypatch):
     assert env["ORCHAPOD_INTERNAL_SECRET"] == INTERNAL_SECRET and INTERNAL_SECRET
     assert env["ORCHAPOD_MAX_COST_USD"] == "1.2500"
     assert env["ORCHAPOD_RESUME_CHECKPOINT_URI"] == "r2://b/200"  # retry reuses the row: newest checkpoint
-
-
-async def test_budget_left_is_the_smaller_of_run_and_day(db, monkeypatch):
-    for k in ("ORCHAPOD_MAX_RUN_USD", "ORCHAPOD_MAX_DAY_USD"):
-        monkeypatch.delenv(k, raising=False)
-    run = await seed(db, cost_usd=Decimal("1.0"))
-    assert await ex._budget_left(db, run) == pytest.approx(2.0)                         # $3 run cap
-    await seed(db, cost_usd=Decimal("13.5"))
-    await seed(db, cost_usd=Decimal("9"), created_at=utcnow() - timedelta(days=1))
-    assert await ex._budget_left(db, run) == pytest.approx(0.5)                         # $15 day cap
 
 
 async def test_one_node_run_per_run_and_node(db):
@@ -285,12 +275,14 @@ async def test_startup_sweep_fails_orphaned_runs(db, provider):
     assert provider.terminated == ["b"]
 
 
-async def test_startup_runs_the_sweep(monkeypatch):
+async def test_startup_runs_the_sweep_and_creates_the_bucket(monkeypatch):
+    import threading
     from api import main
-    swept = AsyncMock()
+    swept, bucket = AsyncMock(), threading.Event()
     monkeypatch.setattr(main, "sweep", swept)
     monkeypatch.setattr(main, "create_tables", AsyncMock())
     monkeypatch.setattr(main, "register_providers", lambda **_: None)
+    monkeypatch.setattr(main, "ensure_bucket_exists", bucket.set)  # MinIO in dev starts without the bucket
     monkeypatch.setattr(main.event_bus, "connect", AsyncMock())
     monkeypatch.setattr(main.event_bus, "disconnect", AsyncMock())
 
@@ -298,12 +290,13 @@ async def test_startup_runs_the_sweep(monkeypatch):
         pass
 
     swept.assert_awaited_once()
+    assert await asyncio.to_thread(bucket.wait, 5)  # off the event loop: a slow store never delays startup
 
 
 async def test_cancel_during_provision_terminates_the_pod_once_it_exists(db, provider):
     provider.provision_gate = asyncio.Event()
     run = await seed(db)
-    task = asyncio.create_task(ex.run_workflow(run.id, db, AsyncMock()))
+    task = asyncio.create_task(ex.run_workflow(run.id, db, AsyncMock(), 1.0))
     await asyncio.wait_for(provider.provisioning.wait(), 5)
 
     task.cancel()
@@ -322,20 +315,48 @@ async def test_a_second_cancel_cannot_interrupt_teardown(db, provider):
     provider.script = {"a": {"exit": None}}
     provider.terminate_gate = asyncio.Event()
     run = await seed(db)
-    task = asyncio.create_task(ex.run_workflow(run.id, db, AsyncMock()))
+    task = asyncio.create_task(ex.run_workflow(run.id, db, AsyncMock(), 1.0))
     await asyncio.wait_for(provider.started.wait(), 5)
 
     task.cancel()
     await asyncio.wait_for(provider.terminating.wait(), 5)  # SIGTERM sent, grace running
     task.cancel()                                            # a second click on Cancel
-    provider.terminate_gate.set()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, 5)
+    assert ex.busy(run.id)                                   # the executor is gone, the teardown is not
+    provider.terminate_gate.set()
     await drain()
 
-    assert provider.terminated == ["a"]
+    assert provider.terminated == ["a"] and not ex.busy(run.id)
     rows = await nodes(db, run)
     assert (rows["a"].status, rows["a"].error) == (NodeStatus.FAILED, "cancelled")
+
+
+async def test_a_failing_setup_broadcast_still_fails_the_run(db, provider):
+    run = await seed(db)
+
+    async def broadcast(run_id, event):
+        if event == {"type": "run_status", "status": "running"}:
+            raise ConnectionError("redis down")
+
+    await ex.run_workflow(run.id, db, broadcast, 1.0)
+
+    await db.refresh(run)
+    rows = await nodes(db, run)
+    assert run.status == RunStatus.FAILED  # not stuck in provisioning_gpu
+    assert (rows["a"].status, rows["a"].error) == (NodeStatus.FAILED, "internal: redis down")
+    assert provider.provisioned == []
+
+
+async def test_a_bad_node_timeout_fails_before_provisioning(db, provider, monkeypatch):
+    monkeypatch.setenv("ORCHAPOD_NODE_TIMEOUT_S", "90m")
+    run = await seed(db)
+
+    await ex.run_workflow(run.id, db, AsyncMock(), 1.0)
+
+    rows = await nodes(db, run)
+    assert rows["a"].status == NodeStatus.FAILED and rows["a"].error.startswith("internal: ")
+    assert provider.provisioned == []  # no container left running without a timeout
 
 
 async def test_pod_is_terminated_even_if_recording_it_fails(db, provider, monkeypatch):
@@ -349,7 +370,7 @@ async def test_pod_is_terminated_even_if_recording_it_fails(db, provider, monkey
         await real_commit()
 
     monkeypatch.setattr(db, "commit", commit)
-    await ex.run_workflow(run.id, db, AsyncMock())
+    await ex.run_workflow(run.id, db, AsyncMock(), 1.0)
 
     rows = await nodes(db, run)
     assert provider.terminated == ["a"] and rows["a"].error == "internal: db down"
@@ -363,7 +384,7 @@ async def test_an_error_between_nodes_still_leaves_one_failed_node(db, provider)
         if event.get("node_id") == "a" and event["status"] == "succeeded":
             raise ConnectionError("redis down")
 
-    await ex.run_workflow(run.id, db, broadcast)
+    await ex.run_workflow(run.id, db, broadcast, 1.0)
 
     await db.refresh(run)
     rows = await nodes(db, run)
@@ -380,7 +401,7 @@ def launched(db, monkeypatch):
     monkeypatch.setattr("api.database.AsyncSessionLocal",
                         async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False))
     tasks, real = [], ex.launch
-    monkeypatch.setattr(ex, "launch", lambda run_id: tasks.append(real(run_id)) or tasks[-1])
+    monkeypatch.setattr(ex, "launch", lambda run_id, scale: tasks.append(real(run_id, scale)) or tasks[-1])
     return tasks
 
 
@@ -428,7 +449,7 @@ async def test_cancel_rereads_the_run_before_deciding(client, db):
 async def test_retry_reruns_the_failed_node_and_continues(client, db, provider, launched):
     provider.script = {"a": {"outputs": {"train_jsonl": "r2://bk/a"}}, "b": {"exit": 2}}
     run = await seed(db)
-    await ex.run_workflow(run.id, db, AsyncMock())
+    await ex.run_workflow(run.id, db, AsyncMock(), 1.0)
 
     assert (await client.post(f"/runs/{run.id}/nodes/a/retry")).status_code == 409   # succeeded node
     assert (await client.post(f"/runs/{run.id}/nodes/zz/retry")).status_code == 404
@@ -447,12 +468,52 @@ async def test_retry_reruns_the_failed_node_and_continues(client, db, provider, 
     assert (await client.post(f"/runs/{run.id}/nodes/b/retry")).status_code == 409   # run succeeded
 
 
+async def test_retry_waits_for_a_provision_still_in_flight(client, db, provider, launched):
+    provider.provision_gate = asyncio.Event()
+    run = await seed(db, status=RunStatus.PENDING)
+    await client.post(f"/runs/{run.id}/start")
+    await asyncio.wait_for(provider.provisioning.wait(), 5)
+    assert (await client.post(f"/runs/{run.id}/cancel")).json()["status"] == "cancelled"
+
+    r = await client.post(f"/runs/{run.id}/nodes/a/retry")
+    assert r.status_code == 409  # the cancelled node's container is still coming up
+    provider.provision_gate.set()
+    await drain()
+    assert provider.terminated == ["a"]
+
+    provider.script = {"a": {"exit": 1}}
+    assert (await client.post(f"/runs/{run.id}/nodes/a/retry")).status_code == 202
+    await asyncio.wait_for(launched[-1], 5)
+    assert [n for n, _ in provider.provisioned] == ["a", "a"]  # one container per attempt
+
+
+def other_session(db):
+    return async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)()
+
+
+async def test_start_and_retry_are_conditional_updates(client, db, launched):
+    run = await seed(db, status=RunStatus.PENDING)  # this session still holds it as pending
+    async with other_session(db) as other:
+        (await other.get(Run, run.id)).status = RunStatus.CANCELLED  # cancelled meanwhile, elsewhere
+        await other.commit()
+    assert (await client.post(f"/runs/{run.id}/start")).status_code == 409
+
+    failed = await seed(db, status=RunStatus.FAILED)
+    db.add(NodeRun(run_id=failed.id, node_id="a", node_type="data-prep", status=NodeStatus.FAILED, error="exit 1"))
+    await db.commit()
+    async with other_session(db) as other:
+        (await other.get(Run, failed.id)).status = RunStatus.PROVISIONING_GPU  # another worker's retry won
+        await other.commit()
+    assert (await client.post(f"/runs/{failed.id}/nodes/a/retry")).status_code == 409
+    assert launched == []
+
+
 async def test_concurrent_retries_launch_one_executor(client, db, provider, launched):
     from api.database import get_session
     from api.main import app
     provider.script = {"a": {"outputs": {"train_jsonl": "r2://bk/a"}}, "b": {"exit": 2}}
     run = await seed(db)
-    await ex.run_workflow(run.id, db, AsyncMock())
+    await ex.run_workflow(run.id, db, AsyncMock(), 1.0)
     provider.script = {"b": {"outputs": {"train_jsonl": "r2://bk/b"}}}
     sessions = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
 
@@ -467,8 +528,8 @@ async def test_concurrent_retries_launch_one_executor(client, db, provider, laun
 
     assert sorted([r1.status_code, r2.status_code]) in ([202, 202], [202, 409])
     assert [n for n, _ in provider.provisioned] == ["a", "b", "b", "c"]  # b re-ran once
-    task = ex.launch(run.id)
-    assert ex.launch(run.id) is task  # a double-click joins the running executor
+    task = ex.launch(run.id, 1.0)
+    assert ex.launch(run.id, 1.0) is task  # a double-click joins the running executor
     await task
 
 
@@ -551,9 +612,56 @@ async def test_cost_json_adds_to_run_cost(client, db, seeded_node_run):
         {"type": "run_cost", "cost_usd": 0.25}, {"type": "run_cost", "cost_usd": 0.5}]
 
 
-async def test_deploy_launches_through_the_one_launcher(client, monkeypatch):
+async def test_events_fire_only_after_their_change_is_committed(client, tmp_path, monkeypatch):
+    """A client re-reads /runs/{id}/summary on run_cost, artifact and run_status: it must see the change."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlmodel import SQLModel
+    from api.database import get_session
+    from api.main import app
+    from api.services.events import event_bus
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'events.db'}")  # its own connections
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+    sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with sessions() as s:
+        run, idle = Run(user_id=uuid.uuid4(), status=RunStatus.RUNNING), Run(user_id=uuid.uuid4())
+        s.add_all([run, idle])
+        await s.flush()
+        s.add(NodeRun(run_id=run.id, node_id="n", node_type="data-prep", status=NodeStatus.RUNNING))
+        await s.commit()
+    monkeypatch.setattr("api.database.AsyncSessionLocal", sessions)
+    app.dependency_overrides.pop(get_session)  # production's session: commits when the request ends
+
+    seen = []
+
+    async def reread(run_id, event):  # what another connection sees when the event fires
+        async with sessions() as s:
+            r = await s.get(Run, run_id)
+            names = [a.name for a in await s.scalars(select(Artifact))]
+            seen.append((event["type"], r.status.value, float(r.cost_usd or 0), names))
+
+    event_bus.publish.side_effect = reread
+    await client.post("/internal/artifact", json={"run_id": str(run.id), "node_id": "n", "artifact": {
+        "name": "cost_json", "uri": "r2://b/runs/x/n/cost_json", "kind": "metrics", "metadata": {"usd": 0.25}}})
+    await client.post(f"/runs/{idle.id}/cancel")
+    await engine.dispose()
+
+    assert seen == [("run_cost", "running", 0.25, ["cost_json"]), ("artifact", "running", 0.25, ["cost_json"]),
+                    ("run_status", "cancelled", 0.0, ["cost_json"])]
+
+
+async def test_deploy_launches_through_the_one_launcher_with_the_callers_caps(client, monkeypatch):
     launched = []
-    monkeypatch.setattr(ex, "launch", launched.append)  # launch() registers the task cancel looks up
+    monkeypatch.setattr(ex, "launch", lambda run_id, scale: launched.append((run_id, scale)))  # cancel finds its task
     r = await client.post("/inference/deploy", json={"model": "Qwen/Qwen3-4B-Instruct", "mode": "serve"})
     assert r.status_code == 202
-    assert launched == [uuid.UUID(r.json()["run_id"])]
+    assert launched == [(uuid.UUID(r.json()["run_id"]), 0.1)]  # anonymous: caps x ORCHAPOD_ANON_SCALE
+    monkeypatch.setenv("ORCHAPOD_KILL_SWITCH", "1")
+    assert (await client.post("/inference/deploy", json={"model": "m", "mode": "serve"})).status_code == 503
+
+
+def test_a_launch_without_the_callers_scale_fails_loudly():
+    import inspect
+    for fn in (ex.launch, ex.run_workflow):  # never a silent default to the full caps
+        assert inspect.signature(fn).parameters["scale"].default is inspect.Parameter.empty

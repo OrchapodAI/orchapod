@@ -1,0 +1,21 @@
+{
+  "slug": "maths-quantize",
+  "title": "A maths expert quantized to GGUF",
+  "intent": "Quantize a model which is an expert in maths",
+  "rationale": "Qwen2.5-Math-1.5B-Instruct is trained for maths and small enough (under 2B) for llama.cpp to answer 50 GSM8K problems on CPU. It is quantized to GGUF q4_k_m on CPU (AWQ would need a GPU job), keeping the f16 GGUF as the baseline; exact match on the final answer plus a Nemotron 3 Ultra judge on 20 items show what quantization costs.",
+  "plan": {
+    "name": "maths-expert-gguf-q4",
+    "nodes": [
+      {"id": "download", "type": "hf-download", "needs": [], "inputs": {"model_id": "Qwen/Qwen2.5-Math-1.5B-Instruct"}},
+      {"id": "quantize", "type": "quantize", "needs": ["download"], "inputs": {
+        "model": "${{ nodes.download.outputs.hf_model }}", "method": "gguf", "precision": "q4_k_m", "keep_f16": true}},
+      {"id": "gsm8k", "type": "data-prep", "needs": [], "inputs": {
+        "dataset": "hf://openai/gsm8k", "hf_config": "main", "hf_split": "test[:50]", "format": "qa"}},
+      {"id": "evaluate", "type": "judge-eval", "needs": ["quantize", "gsm8k"], "inputs": {
+        "test_data": "${{ nodes.gsm8k.outputs.dataset }}",
+        "base_model_ref": "${{ nodes.quantize.outputs.gguf_f16 }}",
+        "tuned_model_ref": "${{ nodes.quantize.outputs.gguf_file }}",
+        "judge_model": "nvidia/Nemotron-3-Ultra-550b-a55b", "max_samples": 50, "n_judge": 20, "exact_match": true}}
+    ]
+  }
+}

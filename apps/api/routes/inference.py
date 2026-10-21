@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from api.database import get_session
+from api.services import budget
 from api.models.db import Workflow, Run, NodeRun, NodeStatus, RunStatus, Artifact, ArtifactKind
 
 router = APIRouter()
@@ -74,7 +75,7 @@ class EndpointOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 @router.post("/deploy", response_model=DeployResponse, status_code=http_status.HTTP_202_ACCEPTED)
-async def deploy_model(body: DeployRequest, db: Session):
+async def deploy_model(body: DeployRequest, db: Session, scale: float = Depends(budget.scale)):
     """
     One-click model deployment. Creates a minimal workflow and starts a run immediately.
 
@@ -83,6 +84,7 @@ async def deploy_model(body: DeployRequest, db: Session):
     - quantize-serve → quantize (AWQ) node → vllm-serve node
     - quantize-gguf  → quantize (GGUF) node only
     """
+    await budget.guard(db, scale)  # 503 kill switch, 402 no budget left; the run gets the caller's caps (R7)
     yaml_str, wf_name = _build_workflow_yaml(body)
 
     # Create the workflow
@@ -116,7 +118,7 @@ async def deploy_model(body: DeployRequest, db: Session):
     # Kick off execution through the one launcher, so POST /runs/{id}/cancel can stop it
     from api.executor.run_workflow import launch
     await db.commit()
-    launch(run.id)
+    launch(run.id, scale)
 
     return DeployResponse(
         run_id=run.id,
@@ -283,10 +285,10 @@ async def extend_endpoint(run_id: uuid.UUID, body: ExtendRequest, db: Session, p
         current = run_record.cost_usd or Decimal("0")
         run_record.cost_usd = current + Decimal(str(cost))
         db.add(run_record)
-        await db.flush()
         new_cost = float(run_record.cost_usd)
     else:
         new_cost = cost
+    await db.commit()  # before the events: subscribers re-read the run on them
 
     # Notify WebSocket subscribers — endpoint_expiry updates the countdown,
     # run_status carries the new cost so the run header refreshes.

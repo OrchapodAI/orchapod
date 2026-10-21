@@ -173,21 +173,21 @@ def test_n_judge_and_max_samples_limit_the_rows(node):
     assert [s["verdict"] for s in out["samples"]] == ["win", "loss", None, None, None]
 
 
-@pytest.mark.parametrize("rows, exits", [(ROWS * 2 + [row("bad")] + ROWS * 2, False), (ROWS + [row("bad")], True)],
-                         ids=["1-of-17-ok", "1-of-5-exits-1"])
+@pytest.mark.parametrize("rows, exits", [(ROWS * 2 + [row("bad"), row("win")], False), (ROWS * 2 + [row("bad")] * 2, True)],
+                         ids=["1-of-10-ok", "2-of-10-exits-1"])  # R23: more than 10 % of the n rows, the boundary pinned
 def test_failed_rows_are_excluded_and_over_10pc_exits_1_after_writing(node, mock_orchapod_io, rows, exits):
     node.answers.update({(LLAMA, "bad"): "FAIL", ("orchapod-lora", "bad"): "fine"})
     if exits:
         with pytest.raises(SystemExit) as e:
             node(rows)
-        assert e.value.code == 1 and last_error().startswith("1 of 5 rows failed")
+        assert e.value.code == 1 and last_error().startswith("2 of 10 rows failed")
         assert "context too long" in last_error()
     else:
         node(rows)
     out = json.loads(mock_orchapod_io.write_output.call_args.args[1].read_text())  # written either way
-    bad = next(s for s in out["samples"] if s["question"] == "bad")
-    assert bad["error"].startswith("base: token_factory bad_request 400") and bad["verdict"] is None
-    assert out["errors"] == 1 and out["judged"] == len(rows) - 1
+    bad = [s for s in out["samples"] if s["question"] == "bad"]
+    assert all(s["error"].startswith("base: token_factory bad_request 400") and s["verdict"] is None for s in bad)
+    assert out["errors"] == len(bad) and out["judged"] == len(rows) - len(bad)
     assert not any(json.loads(r.content)["model"] == "orchapod-lora" and "bad" in r.content.decode() for r in node.seen)
 
 
@@ -208,31 +208,69 @@ def test_a_judge_reply_without_a_winner_is_a_row_error(node, monkeypatch):
     assert "judge" in last_error() and "winner" in last_error()
 
 
-def test_a_cancel_mid_phase_stops_at_once_and_starts_no_more_paid_calls(node, monkeypatch):
-    import threading
-    import time as clock
+CANCEL_CHILD = """
+import atexit, json, signal, sys, time
+from unittest.mock import MagicMock
+import httpx
+from orchapod import io as sdk
+from packages.providers.tokenfactory import LIGHTNING, SUPER, ULTRA, TokenFactory
+from tests.containers.conftest import load_container
 
-    def sigterm_on_judge_progress(done, total, extra):
-        if extra["phase"] == "judge":
-            raise SystemExit(143)  # the SDK's SIGTERM handler raises this in the main thread
+je, delay, rows = load_container("judge-eval"), float(sys.argv[1]), sys.argv[2]
 
-    release, real_judge = threading.Event(), je.judge
+def say(tag):  # one write per line: worker threads print too
+    sys.stdout.write(f"{tag} {time.monotonic()}\\n")
+    sys.stdout.flush()
 
-    def judge(tf, model, s):
-        if s["question"] == "BIAS":
-            release.wait(60)  # a call in flight that a dying llama-server or a slow judge would hold
-        return real_judge(tf, model, s)
+def answer(request):
+    body = json.loads(request.content)
+    text = "answer"
+    if body["model"] == ULTRA:
+        say("JUDGE")
+        time.sleep(delay)  # a judge call in flight
+        text = json.dumps({"reasoning": "r", "winner": "tie"})
+    return httpx.Response(200, json={"usage": {"prompt_tokens": 1, "completion_tokens": 1}, "choices": [
+        {"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": text}}]})
 
-    monkeypatch.setattr(je, "judge", judge)
-    monkeypatch.setattr(je.log, "progress", sigterm_on_judge_progress)
-    start = clock.monotonic()
-    try:
-        with pytest.raises(SystemExit):
-            node(ROWS * 10)  # 40 rows, 80 judge calls if nothing stopped them
-        assert clock.monotonic() - start < 20  # within the 30 s grace: no wait for calls in flight
-    finally:
-        release.set()
-    assert len(chats(node.seen, ULTRA)) < 40  # queued rows never start; only those in flight finish
+http = httpx.Client(transport=httpx.MockTransport(answer))
+je.TokenFactory = lambda **kw: TokenFactory(http=http, **kw)
+je.io, je.log, je.cost = MagicMock(), MagicMock(), MagicMock()
+je.io.read_inputs.return_value = {"test_data": "r2://b/runs/r/prep/test_jsonl", "base_model_ref": SUPER,
+                                  "tuned_model_ref": LIGHTNING}
+je.io.download_input.return_value = __import__("pathlib").Path(rows)
+signal.signal(signal.SIGTERM, lambda *a: (say("TERM"), sdk._sigterm(*a)))  # the SDK's handler: SystemExit(143)
+atexit.register(say, "ATEXIT")  # where the SDK writes cost_json: after the interpreter joins the pool's threads
+je.main()
+"""
+
+
+def test_a_cancel_mid_judge_starts_no_paid_call_and_the_process_exits_when_calls_in_flight_end(tmp_path):
+    """Times the process exit, not main(): the interpreter joins the pool's threads before atexit, so a call in flight
+    holds the exit (the SDK's cost_json; backend's to change), but no row starts its next paid order after the cancel."""
+    import os
+    import signal
+    import subprocess
+
+    delay, root = 3.0, Path(__file__).parents[2]
+    rows = tmp_path / "rows"
+    rows.write_text("".join(json.dumps(row(f"q{i}")) + "\n" for i in range(40)))
+    env = {"PATH": os.environ["PATH"], "NEBIUS_API_KEY": "tf-key",
+           "PYTHONPATH": os.pathsep.join(str(root / p) for p in (".", "apps", "packages/sdk-py"))}
+    child = subprocess.Popen([sys.executable, "-c", CANCEL_CHILD, str(delay), str(rows)], cwd=root, env=env,
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    lines, judging = [], 0
+    while judging < je.WORKERS and (line := child.stdout.readline()):  # every worker holds a first-order judge call
+        lines.append(line)
+        judging += line.startswith("JUDGE ")
+    child.send_signal(signal.SIGTERM)
+    lines += child.stdout.read().splitlines(keepends=True)
+    child.wait(60)
+    at = [line.split() for line in lines if line.split()[:1] in (["JUDGE"], ["TERM"], ["ATEXIT"])]
+    t = {tag: float(v) for tag, v in at if tag != "JUDGE"}
+    judge_starts = [float(v) for tag, v in at if tag == "JUDGE"]
+    assert child.returncode == 143 and {"TERM", "ATEXIT"} <= set(t), "".join(lines)
+    assert len(judge_starts) == je.WORKERS and max(judge_starts) < t["TERM"]  # no second order, no queued row
+    assert t["ATEXIT"] - t["TERM"] < delay + 2  # cost_json follows the calls in flight, not their second orders
 
 
 @pytest.mark.parametrize("rows", [[], [{"messages": [{"role": "user", "content": "no reference"}]}]],
@@ -279,12 +317,26 @@ def test_an_endpoint_ref_from_a_vllm_serve_artifact_gets_the_endpoint_token(node
     assert not any(c.args[1] == "tuned" for c in je.cost.add.call_args_list)  # our endpoint bills GPU hours, not tokens
 
 
-def test_the_endpoint_token_is_refused_in_an_artifact_that_is_not_a_model_ref(node):
-    other = "r2://orchapod-artifacts/runs/r1/prep/dataset"
-    node.objects[other] = json.dumps(ENDPOINT).encode()
+@pytest.mark.parametrize("uri, content", [
+    ("r2://orchapod-artifacts/runs/r1/prep/dataset", json.dumps(ENDPOINT)),  # the endpoint token outside a model_ref
+    (SERVE_REF, json.dumps({**ENDPOINT, "base_url": TF_BASE})),  # the endpoint token sent to Token Factory
+    ("r2://orchapod-artifacts/runs/r1/prep/dataset", LLAMA),  # neither GGUF nor JSON: not a bare model id
+    ("r2://orchapod-artifacts/runs/r1/prep/dataset", json.dumps(LLAMA)),
+], ids=["token-outside-model-ref", "token-to-token-factory", "plain-text", "json-string"])
+def test_refused_r2_model_refs_send_nothing(node, uri, content):
+    node.objects[uri] = content.encode()
     with pytest.raises(SystemExit):
-        node(tuned_model_ref=other)
+        node(tuned_model_ref=uri)
     assert last_error().startswith("refused ModelRef tuned_model_ref") and node.seen == []
+
+
+@pytest.mark.parametrize("test_data, rows", [("${{ nodes.gsm8k.outputs.dataset }}", ROWS), (TEST, [])],
+                         ids=["unresolved", "empty"])
+def test_test_data_is_checked_before_any_model_is_downloaded(node, mock_orchapod_io, test_data, rows):
+    node.objects[GGUF_F16] = node.objects[GGUF_Q4] = b"GGUF"  # about 4 GB in the real intent #3
+    with pytest.raises(SystemExit):
+        node(rows, test_data=test_data, base_model_ref=GGUF_F16, tuned_model_ref=GGUF_Q4)
+    assert [c.args[0] for c in mock_orchapod_io.download_input.call_args_list] in ([], [TEST])
 
 
 def test_stub_runs_offline_with_gguf_inputs_and_starts_no_server(node, monkeypatch):
@@ -369,6 +421,7 @@ def test_gguf_inputs_are_served_by_llama_server_without_a_key(llama):
     assert llama.timeouts == [je.LLAMA_READ_TIMEOUT_S] * 4  # a slow CPU answer is waited for, never re-sent at 120 s
     argv = json.loads((llama.bin / f"argv-{ports['tuned']}.json").read_text())
     assert argv[argv.index("--host") + 1] == "127.0.0.1" and "--jinja" in argv and argv[argv.index("--alias") + 1] == GGUF_Q4
+    assert argv[argv.index("-np") + 1] == str(je.WORKERS)  # a slot per row in flight: none waits out its read timeout
     assert len(llama.procs) == 2 and all(p.poll() is not None for p in llama.procs)  # each stopped after its phase
 
 

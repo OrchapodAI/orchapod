@@ -6,6 +6,7 @@ port, names a `make` target or env var that does not exist, or loses a section.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -44,7 +45,10 @@ STALE = [
     "localhost:8000",  # our API is on 8001; 8000 belongs to another project
     "ANTHROPIC_API_KEY",  # stage one: no other model provider on the demo path
     "OPENAI_API_KEY",
+    "$1.82",  # gpu-l40s-a is $1.55/h (Intel L40S); $1.82 is the AMD gpu-l40s-d (DECISION 2026-10-21)
 ]
+# Every TODO names when it clears: D8 (a live run, the hosted app) or G3 (the repo and its images go public).
+BARE_TODO = r"TODO(?!\((?:D8|G3)\))"
 
 
 def test_required_sections():
@@ -76,15 +80,50 @@ def test_no_stale_strings():
 
 
 def test_every_todo_names_its_day():
-    assert not re.search(r"TODO(?!\(D8\))", README)
+    assert not re.search(BARE_TODO, README)
 
 
 def test_unbuilt_make_targets_are_marked_todo():
-    # `make e2e` needs the real mode of scripts/e2e_demo.py (only --stub exists); e2e_agent.py and seed-golden-run.py are not
-    # written yet. Drop this test when all three targets work.
+    # `make e2e` and `make agent-e2e` refuse real runs: scripts/e2e_demo.py and e2e_agent.py have only --stub so far
+    # (`make demo` works). Drop this test when both targets run for real.
     for line in README.splitlines():
-        if re.search(r"\bmake (e2e|agent-e2e|demo)\b", line):
+        if re.search(r"\bmake (e2e|agent-e2e)\b", line):
             assert "TODO(D8)" in line, f"the target does not work yet: {line[:70]}"
+
+
+def _templates() -> list[dict]:
+    return [json.loads(p.read_text()) for p in sorted(ROOT.glob("apps/api/agent/templates/*.json"))]
+
+
+def _node_types() -> set[str]:
+    from packages.workflow_schema.models import NODE_REGISTRY
+    return {t.value for t in NODE_REGISTRY}
+
+
+def test_every_template_card_is_in_the_readme():
+    titles = [t["title"] for t in _templates()]
+    assert titles and [t for t in titles if t not in README] == []
+
+
+def test_each_intent_row_shows_its_templates_node_chain():
+    for t in _templates():
+        row = next((ln for ln in README.splitlines() if f"| **{t['title']}** |" in ln), "")
+        assert row, f"no intents-table row for {t['title']}"
+        chain = [seg.split()[0] for seg in row.rsplit("|", 2)[-2].split("→")]
+        assert [s for s in chain if s in _node_types()] == [n["type"] for n in t["plan"]["nodes"]], t["title"]
+
+
+def test_the_image_lists_are_the_templates_node_types():
+    names = "|".join(map(re.escape, _node_types()))
+    section = README.partition("**Node images.**")[2].partition("**GPU nodes")[0]
+    lists = re.findall(rf"(?<![\w-])(?:(?:{names}) )+(?:{names})(?![\w-])", section)
+    assert {frozenset(m.split()) for m in lists} == {frozenset(n["type"] for n in t["plan"]["nodes"]) for t in _templates()}
+
+
+def test_node_table_matches_the_registry():
+    from packages.workflow_schema.models import NODE_REGISTRY
+    visible = {t.value: row["runtime"] for t, row in NODE_REGISTRY.items() if not row.get("hidden")}
+    assert dict(re.findall(r"^\| `([a-z-]+)` \| (cpu|gpu|api) \|", README, re.M)) == visible
 
 
 def test_unmeasured_claims_carry_a_todo():

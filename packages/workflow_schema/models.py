@@ -198,13 +198,13 @@ class DistillSFTOutputs(BaseModel):
 
 
 class HFDownloadInputs(BaseModel):
-    model_id:        str            = Field(description="HuggingFace model ID, e.g. 'Qwen/Qwen3-4B-Instruct'")
-    hf_token:        str | None     = Field(default=None, description="HuggingFace token for private/gated models")
-    revision:        str | None     = Field(default=None, description="Branch, tag, or commit SHA (default: main)")
+    model_id: str = Field(description="Hugging Face model id, e.g. 'Qwen/Qwen2.5-Math-1.5B-Instruct'; a gated model "
+                                      "needs HF_TOKEN in the env and its licence accepted")
+    revision: str = Field(default="main", description="Branch, tag or commit SHA")
     ignore_patterns: list[str] | None = Field(default=None, description="Glob patterns to skip (default: non-PyTorch formats)")
 
 class HFDownloadOutputs(BaseModel):
-    hf_model: str   # R2 URI to the downloaded HF model directory
+    hf_model: str   # r2 dir of the snapshot; metadata {format: hf, model_id, revision}
 
 
 class QuantizeInputs(BaseModel):

@@ -1,18 +1,8 @@
 FROM python:3.12-slim
 WORKDIR /app
-
-# hf_transfer — Rust-based multi-threaded downloader (5-10x faster than urllib).
-# Activated via HF_HUB_ENABLE_HF_TRANSFER=1 below.
-RUN pip install --no-cache-dir \
-        "huggingface_hub[hf_transfer]>=0.23" \
-        boto3 \
-        httpx
-
-# Enable fast downloads
-ENV HF_HUB_ENABLE_HF_TRANSFER=1
-
-# SDK and container entry point
+# CPU node: Hugging Face Hub → object storage. huggingface_hub is pinned to the version the unit tests run against
+# (2.x dropped resume_download and hf_transfer; downloads always resume).
+RUN pip install --no-cache-dir huggingface_hub==2.2.0 boto3==1.35.71
 COPY packages/sdk-py/orchapod /app/orchapod
 COPY containers/hf-download/run.py /app/run.py
-
-CMD ["python3", "run.py"]
+CMD ["python", "run.py"]

@@ -128,4 +128,5 @@ Updated: 2026-10-20T22:39Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 ## Spend to date (per day, per key)
 - 2026-10-20: $1.29 (vast.ai A100 SXM4 80 GB at $1.2485/h, 48 min, spike 4; instance destroyed)
 ## Golden path status (last real run: id, date, cost, result)
+- 2026-10-21: intent #2 STUB e2e PASS (`make check E2E=1` on 1c0b746): run 9214965e succeeded in 4 s, $0, dataset/train_jsonl/eval_jsonl registered, 500 rows downloadable. Live (non-STUB) runs wait on NEBIUS_API_KEY.
 - Never run end to end. `make check` green since e11757e (ruff E4/E7/E9/F clean, pytest 153 passed); gitleaks clean (1 triaged false positive).

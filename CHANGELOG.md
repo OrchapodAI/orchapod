@@ -2,6 +2,11 @@
 
 Dated, user-facing changes made during the Nebius × NVIDIA hackathon submission period (Aug 26 – Oct 30, 2026). Orchapod's first commit is May 4, 2026 (367c605); this file becomes the Devpost "what changed" write-up.
 
+## 2026-10-22
+- The Orchapod Agent API: one sentence in, a validated Nemotron plan with cost and time estimates out; plans run, are monitored and get a written report. Spend caps per run and per day, with reservations so parallel runs cannot overshoot.
+- New nodes: Tavily web research; synthetic data grounded in scraped passages (fenced as untrusted text) or matching a JSON schema; Token Factory fine-tune and deploy with idempotent retry.
+- Intent #2 (synthetic movie-engagement data) runs end to end in stub mode through the API, the executor and the containers in 4 seconds, with a downloadable 500-row dataset.
+
 ## 2026-10-21
 - One Token Factory client and one Tavily client (`packages/providers`): retries that never re-send a billable create, per-call dollar accounting from one price table, the rule that the Nebius key only goes to Token Factory, and a deterministic offline stub mode.
 - Run engine: every node row exists from the start, retry a failed node and continue downstream, cancel with a 30-second grace that cleans up remote work, restart recovery, per-run cost roll-up and a run summary API.

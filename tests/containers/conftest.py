@@ -12,9 +12,11 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 
@@ -58,3 +60,42 @@ def mock_orchapod_io(monkeypatch):
                 monkeypatch.setattr(mod, "log", mock_log)
 
     return mock_io
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    """time.sleep advances time.monotonic instantly; returns the sleeps."""
+    now, sleeps = [0.0], []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(time, "sleep", sleep)
+    return sleeps
+
+
+@pytest.fixture
+def tf_routes(monkeypatch):
+    """tf_routes(module, routes) points module.TokenFactory at a fake Token Factory; returns the requests it saw.
+    routes: {(method, path): JSON for a 200 | an httpx.Response | a list of those, one per request (the last repeats)}."""
+    from packages.providers.tokenfactory import TokenFactory
+
+    def make(module, routes: dict) -> list[httpx.Request]:
+        seen = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            answer = routes[(request.method, request.url.path)]
+            if isinstance(answer, list):
+                answer = answer.pop(0) if len(answer) > 1 else answer[0]
+            if isinstance(answer, httpx.Response):
+                return httpx.Response(answer.status_code, content=answer.content)
+            return httpx.Response(200, json=answer)
+
+        http = httpx.Client(transport=httpx.MockTransport(handler))
+        monkeypatch.setattr(module, "TokenFactory", lambda **kw: TokenFactory(http=http, **kw))
+        return seen
+
+    return make

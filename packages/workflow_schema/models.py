@@ -31,6 +31,7 @@ class NodeType(str, Enum):
     # Training
     UNSLOTH_TRAIN        = "unsloth-train"
     DISTILL_SFT          = "distill-sft"
+    TF_FINETUNE          = "tf-finetune"
     # Post-training
     QUANTIZE             = "quantize"
     LM_EVAL              = "lm-eval"
@@ -372,4 +373,33 @@ NODE_REGISTRY: dict[NodeType, dict] = {
         "runtime": "gpu",
         "long_running": True,  # pod stays alive after container exits
     },
+}
+
+
+# ---------------------------------------------------------------------------
+# tf-finetune and tf-deploy: Lane A on Token Factory (ml-engineering; docs/contracts.md "ML nodes")
+# ---------------------------------------------------------------------------
+
+class TFFinetuneInputs(BaseModel):
+    model: str = Field(default="meta-llama/Llama-3.1-8B-Instruct",
+                       description="Token Factory fine-tune base (Llama, Qwen, gpt-oss, DeepSeek, Gemma; not Nemotron)")
+    train_data: str = Field(description="r2:// URI of the train JSONL, e.g. data-prep's train_jsonl")
+    eval_data: str = Field(default="", description="r2:// URI of the eval JSONL; empty, or an empty file, = no validation")
+    n_epochs: int = Field(default=2, ge=1)
+    hyperparameters: dict[str, Any] = Field(
+        default={}, description="Token Factory names verbatim (batch_size, learning_rate, lora_r, lora_alpha, lora_dropout, "
+                                "packing, context_length, warmup_ratio, weight_decay, max_grad_norm), merged over "
+                                "{lora: true, n_epochs}")
+    timeout_min: int = Field(default=60, ge=1, description="Then the job is cancelled and the node fails")
+
+class TFFinetuneOutputs(BaseModel):
+    job: str           # {job_id, model, status, checkpoint_id, checkpoint_step, train_loss, valid_loss, trained_tokens}
+    lora_adapter: str  # PEFT dir of the best checkpoint (lowest valid_loss, else the last)
+
+NODE_REGISTRY[NodeType.TF_FINETUNE] = {
+    "description": "LoRA fine-tune on Nebius Token Factory (Llama, Qwen, gpt-oss, DeepSeek, Gemma; not Nemotron). Keeps "
+                   "the checkpoint with the lowest validation loss as a PEFT adapter and reports the loss curve.",
+    "inputs_schema": TFFinetuneInputs,
+    "outputs_schema": TFFinetuneOutputs,
+    "runtime": "api",
 }

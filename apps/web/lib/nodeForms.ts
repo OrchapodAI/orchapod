@@ -58,8 +58,19 @@ export const NODE_FORMS: Partial<Record<NodeType, FormField[]>> = {
   ],
 };
 
-/** Inputs a freshly dropped node starts with, or undefined when the type has no form. */
-export function formDefaults(type: NodeType): Record<string, unknown> | undefined {
+/** Inputs a freshly dropped node starts with: its form's defaults, else the node's contract defaults. */
+export function defaultInputs(type: NodeType): Record<string, unknown> {
   const form = NODE_FORMS[type];
-  return form && Object.fromEntries(form.filter((f) => f.default !== undefined).map((f) => [f.key, f.default]));
+  if (form) return Object.fromEntries(form.filter((f) => f.default !== undefined).map((f) => [f.key, f.default]));
+  switch (type) {
+    case "hf-download":         return { model_id: "", revision: "main", ignore_patterns: [] };
+    case "data-prep":           return { dataset: "", format: "chatml", train_split: 0.9 };
+    case "synth-distilabel":    return { pipeline_template: "self-instruct", teacher_model: "nvidia/nemotron-3-super-120b-a12b", n_samples: 1000, temperature: 0.8, max_tokens: 512 };
+    case "unsloth-train":       return { model: "Qwen/Qwen3-4B-Instruct", train_data: "", eval_data: "", lora_r: 16, lora_alpha: 32, max_steps: 500, learning_rate: 0.0002 };
+    case "distill-sft":         return { teacher: "", student_base: "Qwen/Qwen3-1.7B-Instruct", train_data: "", n_synthetic: 5000 };
+    case "quantize":            return { model: "", method: "gguf", precision: "q4_k_m" };
+    case "lm-eval":             return { models: [], tasks: ["hellaswag", "gsm8k"], judge_eval_set: "" };
+    case "vllm-serve":          return { model: "", max_model_len: 8192, keep_alive_min: 30 };
+    default:                    return {};
+  }
 }

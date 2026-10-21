@@ -15,7 +15,7 @@ const PALETTE_ITEMS: { type: NodeType; description: string; runtime: "cpu" | "gp
   { type: "unsloth-train",    description: "LoRA SFT via Unsloth (2–5× faster, 80% less VRAM)",  runtime: "gpu" },
   { type: "distill-sft",      description: "Teacher → student knowledge distillation",           runtime: "gpu" },
   { type: "quantize",         description: "GGUF (Ollama) or AWQ (vLLM)",                        runtime: "cpu" },
-  { type: "vllm-serve",       description: "OpenAI-compatible endpoint via vLLM on Nebius",      runtime: "gpu" },
+  { type: "vllm-serve",       description: "OpenAI-compatible endpoint via vLLM on Nebius",      runtime: "api" },
   { type: "lm-eval",          description: "lm-evaluation-harness benchmarks",                   runtime: "gpu" },
 ];
 

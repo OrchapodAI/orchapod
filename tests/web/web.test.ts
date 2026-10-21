@@ -2,8 +2,10 @@
 // (Node >= 22.18 strips the types itself, so there is nothing to install.)
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
 import { yamlValue, buildYamlFromGraph, planYaml } from "../../apps/web/lib/workflowYaml.ts";
 import { api, explainError } from "../../apps/web/lib/api.ts";
+import { defaultInputs } from "../../apps/web/lib/nodeForms.ts";
 
 const node = (id: string, node_type: string, inputs: Record<string, unknown>) =>
   ({ id, position: { x: 0, y: 0 }, data: { label: id, node_type, inputs, resources: {} } }) as never;
@@ -16,10 +18,12 @@ test("object and list inputs are written as JSON (R13)", () => {
 });
 
 test("strings a plain YAML scalar would misread are JSON-quoted; the rest stay plain", () => {
-  for (const s of ["", "Audience: brokers", "see #3", "two\nlines", " padded", "*bold*", "- item"]) {
+  // Plain YAML cannot start with a flow indicator or a quote: LLM text such as "[draft] …" reaches planYaml.
+  for (const s of ["", "Audience: brokers", "see #3", "two\nlines", " padded", "*bold*", "- item",
+    "[draft] notes", "{x} y", '"quoted" lead', "'single' lead", ", comma", "] x", "} x"]) {
     assert.equal(yamlValue(s), JSON.stringify(s), s);
   }
-  for (const s of ["16", "meta-llama/Llama-3.1-8B-Instruct", "${{ nodes.prep.outputs.train_jsonl }}", "https://a.io/x#y"]) {
+  for (const s of ["16", "meta-llama/Llama-3.1-8B-Instruct", "${{ nodes.prep.outputs.train_jsonl }}", "https://a.io/x#y", "test[:50]", "a, b"]) {
     assert.equal(yamlValue(s), s, s);
   }
   assert.equal(yamlValue(0.9), "0.9");
@@ -75,4 +79,18 @@ test("explainError turns each agent failure into a readable sentence", () => {
   assert.match(explainError(http(502, "/agent/plan", { detail: "token_factory server 503" })), /Token Factory/);
   assert.match(explainError(http(503, "/agent/plan", { detail: "kill switch" })), /kill switch/);
   assert.equal(explainError(http(500, "/agent/plan", "Internal Server Error")), "500 on /agent/plan: Internal Server Error");
+});
+
+test("dropped nodes start from contract defaults: no teacher_kind, vllm-serve keep-alive 30 min", () => {
+  assert.equal("teacher_kind" in defaultInputs("synth-distilabel"), false);
+  assert.equal(defaultInputs("vllm-serve").keep_alive_min, 30);
+  assert.equal(defaultInputs("judge-eval").max_samples, 60);
+});
+
+test("nothing made up on screen (team, owner, counts, budget) and no links to the Vast.ai/RunPod pages", () => {
+  const read = (path: string) => readFileSync(new URL(`../../apps/web/${path}`, import.meta.url), "utf8");
+  const pages = readdirSync(new URL("../../apps/web/app/", import.meta.url), { recursive: true }).map(String);
+  for (const page of pages.filter((p) => p.endsWith(".tsx"))) assert.doesNotMatch(read(`app/${page}`), /orbital-research|>EM</, page);
+  const sidebar = read("components/Sidebar.tsx");
+  for (const fake of [/count: "\d+"/, /orbital|Elena|\$250/, /href: "\/(inference|endpoints)"/]) assert.doesNotMatch(sidebar, fake);
 });

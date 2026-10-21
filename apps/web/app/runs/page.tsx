@@ -100,8 +100,6 @@ export default function RunsPage() {
       {/* Topbar */}
       <div className="op-topbar">
         <div className="op-crumbs">
-          <span>orbital-research</span>
-          <span className="sep">/</span>
           <span className="here">Runs</span>
         </div>
         <div className="spacer" />
@@ -174,7 +172,6 @@ export default function RunsPage() {
                   <th>Duration</th>
                   <th>Cost</th>
                   <th>GPU</th>
-                  <th>Owner</th>
                   <th></th>
                 </tr>
               </thead>
@@ -201,7 +198,6 @@ export default function RunsPage() {
                       </td>
                       <td className="mono">{run.cost_usd != null ? `$${run.cost_usd.toFixed(3)}` : "—"}</td>
                       <td className="mono muted" style={{ fontSize: 11.5 }}>{run.gpu_provider ?? "—"}</td>
-                      <td><div className="avatar">EM</div></td>
                       <td>
                         <Link href={`/runs/${run.id}`} className="btn btn-icon btn-ghost" style={{ textDecoration: "none" }}>
                           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.8">

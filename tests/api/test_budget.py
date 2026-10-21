@@ -175,19 +175,26 @@ async def test_grants_of_several_runs_add_up_to_the_day_cap(db, provider, monkey
     await stop(tasks)
 
 
+ONE_NODE = """
+name: one
+nodes:
+  - id: x
+    type: data-prep
+    inputs: {dataset: "hf://x"}
+"""
+
+
 async def test_an_admin_run_in_flight_never_blocks_anonymous_callers(client, db, provider, launched):
-    provider.script = {"a": {"exit": None}}  # first nodes keep running
-    admin, anon = await seed(db, status=RunStatus.PENDING), await seed(db, status=RunStatus.PENDING)
+    provider.script = {"a": {"exit": None}}  # the admin run's first node keeps running; node x exits 0
+    admin, anon = await seed(db, status=RunStatus.PENDING), await seed(db, ONE_NODE, status=RunStatus.PENDING)
 
     assert (await client.post(f"/runs/{admin.id}/start", headers=ADMIN)).status_code == 200
     await asyncio.wait_for(provider.started.wait(), 5)  # its node holds the run's whole $3
     assert (await client.post(f"/runs/{anon.id}/start")).status_code == 200  # anonymous: $0.30 run, $1.50 of the day
-    for _ in range(500):
-        if len(provider.granted) == 2:
-            break
-        await asyncio.sleep(0.01)
-    assert provider.granted == [3.0, 0.3]
-    await stop(launched)
+    await asyncio.wait_for(launched[1], 5)
+    await db.refresh(anon)
+    assert provider.granted == [3.0, 0.3] and anon.status == RunStatus.SUCCEEDED
+    await stop(launched[:1])
 
 
 async def test_a_grant_counts_against_the_whole_day_and_only_its_own_scales_share(db, monkeypatch):

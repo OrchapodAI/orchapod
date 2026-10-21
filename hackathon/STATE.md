@@ -4,7 +4,7 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 ## Next actions (in order)
 1. Hari: NEBIUS_API_KEY and TAVILY_API_KEY into ~/src/orchapod-hack/.env — both lines still empty on disk (2026-10-21T02:37Z); the hidden-input command is in chat. Unblocks spikes 1–3 and every live check.
 2. Spikes 1–3 (hackathon/briefs/2026-10-22-spikes.md; worktrees spike1–3 at c164e4e) — dispatch the moment the key lands.
-3. Wave 3 (hackathon/briefs/2026-10-22-wave3.md): MERGED devrel-w3, frontend-w3, data-w3, platform-w3 (code); FIX ROUND backend-w3 (/compare spend leak), platform-w3 (hosting proposal only); IN_PROGRESS ml-w3, qa-w3.
+3. Wave 3: MERGED devrel-w3, frontend-w3, data-w3, platform-w3, backend-w3; REVIEW ml-w3 (opus); IN_PROGRESS qa-w3. Wave 4 (hackathon/briefs/2026-10-23-wave4.md): IN_PROGRESS platform-w4 (Docker steps pending), frontend-w4, backend-w4; queued ml-w4, qa-w4, data-w4.
 4. After wave 3: shared fence() (platform), apps/api/config.py (platform), vllm-serve rewrite (ml), `make check E2E=1` + Playwright smoke on the merged branch, D6 hardening (anonymous budget ceiling).
 5. G1 Oct 24: golden path green from the UI (needs spike 1's deploy answer) + intent #2 from the agent chat (STUB green 2026-10-21; live waits on the key).
 
@@ -47,7 +47,7 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P0 D4 quantize path for intent #3: maths shortlist, GGUF q4_k_m on CPU, judge-eval serves GGUF via llama-server — IN_PROGRESS(ml-w3)
 - [ ] P1 D2 unsloth-train container: bucket I/O, SDK logs, --max-steps, pinned to spike 4's requirements.lock.txt (BOS fix; Mamba out_proj excluded; tvm-ffi restore) — TODO
 - [ ] P1 D3 vllm-serve: test `--enable-lora` with the 8B adapter (one endpoint for base + tuned); merged weights are the proven fallback — TODO
-- [ ] P0 SECURITY vllm-serve writes metadata={"api_key": …} (containers/vllm-serve/run.py:246-247) and artifact meta reaches the browser via /runs/{id}/summary — backend-w3 redacts meta now; ml's vllm-serve rewrite removes the key from meta — IN_PROGRESS(backend-w3)
+- [ ] P0 SECURITY vllm-serve writes metadata={"api_key": …} (containers/vllm-serve/run.py) — the API now redacts meta on the way in and out (backend-w3, R22); ml-w4's vllm-serve rewrite removes it at the source — TODO(ml-w4)
 - [ ] P1 shared fence(): move the R18 fixpoint fence helper into packages/providers and use it from synth-distilabel, data-prep and judge-eval (one implementation, one test) — TODO (after wave 3 merges; platform)
 - [ ] P1 D3 vllm-serve spec (vllm/vllm-openai:v0.18.0-cu130, token auth) + smoke script — TODO
 - [ ] P1 D5 after G2: real Serverless Job + Endpoint; D6 eval vs base; D7 judging-window plan — TODO
@@ -62,7 +62,7 @@ Updated: 2026-10-21T02:37Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [x] P0 D2 lineage + cost roll-up; GET /runs/{id}/summary — DONE (bc5c59f)
 - [x] P0 D3 budget guard: per-run, per-day, anonymous scale, ORCHAPOD_KILL_SWITCH — DONE (backend-w2)
 - [x] P0 D3 agent validate → run → monitor → report; POST /agent/run, GET /agent/runs/{id}/report — DONE (backend-w2)
-- [ ] P0 D4 POST /compare; golden-run fixture (`make demo`); reduced-scale templates; artifact meta redaction — IN_PROGRESS(backend-w3)
+- [x] P0 D4 POST /compare; golden-run fixture (`make demo`); reduced-scale templates with `fits`; artifact meta redaction (R21/R22) — DONE (backend-w3)
 - [ ] P1 D5 Serverless Job runtime · P0 D6 public-demo hardening (anon read, rate limits, CORS, health) — TODO
 ### frontend
 - [x] P0 D2 palette: hidden nodes without containers; Research/Fine-tune/Deploy/Evaluate forms; R13 JSON inputs — DONE

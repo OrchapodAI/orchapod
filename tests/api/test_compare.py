@@ -8,6 +8,7 @@ import functools
 import json
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -16,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.models.db import Artifact, ArtifactKind, Spend
 from api.routes import compare as route
+from api.services import budget
 from packages.providers.tokenfactory import LIGHTNING, ULTRA, TokenFactory
 
 TF = "https://api.tokenfactory.nebius.com/v1"
@@ -198,3 +200,14 @@ async def test_kill_switch_budget_and_request_bounds(client, db, monkeypatch):
     for bad in ({**body, "refs": [ref()]}, {**body, "max_tokens": 0}, {**body, "max_tokens": 4096},
                 {**body, "messages": []}, {**body, "messages": [{"role": "tool", "content": "x"}]}):
         assert (await client.post("/compare", json=bad)).status_code == 422
+
+
+async def test_a_ledger_that_cannot_be_written_never_hangs_the_stream(client, tf, monkeypatch, caplog):
+    _, replies = tf
+    replies[LIGHTNING] = (200, ["ok"], {"prompt_tokens": 1_000_000, "completion_tokens": 0})
+    monkeypatch.setattr(budget, "record", AsyncMock(side_effect=ConnectionError("db down")))
+
+    r = await asyncio.wait_for(client.post("/compare", json={"messages": MESSAGES, "refs": [ref(), ref()]}), 10)
+
+    assert [e["usd"] for e in events(r) if e.get("done")] == [pytest.approx(0.06)] * 2
+    assert "not in the day ledger" in caplog.text  # the money is named in the log, at ERROR

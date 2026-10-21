@@ -128,12 +128,14 @@ async def _finish(i: int, answer: Iterator[str], queue: asyncio.Queue, spent: li
     except Exception as e:
         log.warning("compare refs[%d] failed mid-stream: %r", i, e)
         done |= {"usd": None, "error": "the model call failed mid-stream; the API log has the cause"}
-    finally:
+    try:
         if sum(spent):
             from api import database
             async with database.AsyncSessionLocal() as db:
                 await budget.record(db, "compare", sum(spent))
-        queue.put_nowait(done)
+    except Exception as e:  # the answer still ends: a client must never wait on our ledger
+        log.error("compare spend $%.6f is not in the day ledger: %r", sum(spent), e)
+    queue.put_nowait(done)
 
 
 async def _sse(queue: asyncio.Queue, n: int):

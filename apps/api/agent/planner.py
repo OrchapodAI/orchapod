@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
+from collections import Counter
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -27,7 +29,6 @@ from api.models.db import AgentRun
 from api.services import budget
 from api.services.provider_selector import get_providers
 from orchapod.prices import PRICES
-from packages.providers.base import ProviderError
 from packages.providers.tokenfactory import LIGHTNING, SUPER, TF_BASE, ULTRA
 from packages.workflow_schema.models import NODE_REGISTRY, ResourceSpec
 
@@ -47,6 +48,10 @@ TYPICAL = {
 TF_FINETUNE_BASES = re.compile(r"llama-3\.1-(8b|70b)|llama-3\.2-(1b|3b)|llama-3\.3-70b|qwen3|qwen2\.5|gpt-oss|deepseek|gemma-4",
                                re.IGNORECASE)
 SERVERLESS_LORA_BASES = {"meta-llama/Meta-Llama-3.1-8B-Instruct", "meta-llama/Llama-3.1-8B-Instruct"}
+# The outputs a *_model_ref input may reference (contracts "ModelRef"): our endpoints, Token Factory LoRAs, GGUF files.
+MODEL_REF_SOURCES = {("vllm-serve", "model_ref"), ("vllm-serve", "base_model_ref"), ("tf-deploy", "model_ref"),
+                     ("quantize", "gguf_file"), ("quantize", "gguf_f16")}
+TF_FAILED = "Nemotron on Token Factory failed; the API log has the cause"
 _ID = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
@@ -97,8 +102,9 @@ def estimate(plan: dict) -> tuple[dict, list[str]]:
             if t == "synth-distilabel":  # ~250 tokens in and out per row; the node stops at max_usd
                 p, rows = tf.get(v.get("teacher_model"), tf[SUPER]), int(v.get("n_samples") or 1000)
                 usd, minutes = min(float(v.get("max_usd") or 1.0), rows * 250 * (p["in"] + p["out"]) / 1e6), 2 + rows / 200
-            elif t == "web-research":  # 2 credits per advanced search, 1 per 5 extracted URLs
-                usd = (2 * len(v.get("queries") or []) + -(-len(v.get("seed_urls") or []) // 5)) * PRICES["tavily"]["credit"]
+            elif t == "web-research":  # 2 credits per advanced search, 1 per 5 pages read (max_pages)
+                pages = int(v.get("max_pages") or 20)
+                usd = (2 * len(v.get("queries") or []) + math.ceil(pages / 5)) * PRICES["tavily"]["credit"]
             elif t == "judge-eval":  # both answer orders per judged row, ~1,500 tokens in and 300 out each
                 p, rows = tf.get(v.get("judge_model"), tf[ULTRA]), int(v.get("n_judge") or v.get("max_samples") or 60)
                 usd, minutes = 2 * rows * (1500 * p["in"] + 300 * p["out"]) / 1e6, 5 + rows / 6
@@ -112,7 +118,7 @@ def estimate(plan: dict) -> tuple[dict, list[str]]:
         if t == "tf-deploy":
             warnings.append(f"{n['id']}: per-token LoRA deploy is unverified until spike 1; "
                             f"if it fails, serve the lora_adapter with vllm-serve")
-        by_node[n["id"]] = {"usd": round(usd, 4), "minutes": round(minutes, 1)}
+        by_node[n["id"]] = {"usd": round(max(usd, 0.0), 4), "minutes": round(max(minutes, 0.0), 1)}
     return {"usd": round(sum(x["usd"] for x in by_node.values()), 4),
             "minutes": round(sum(x["minutes"] for x in by_node.values()), 1), "by_node": by_node}, warnings
 
@@ -147,8 +153,7 @@ def _where(err: dict) -> str:
 
 
 def _dupes(p: Plan) -> list[str]:
-    ids = [n.id for n in p.nodes]
-    return sorted({i for i in ids if ids.count(i) > 1})
+    return sorted(i for i, count in Counter(n.id for n in p.nodes).items() if count > 1)
 
 
 def _node_problems(n: PlanNode, nodes: dict[str, PlanNode], catalog: dict[str, dict]) -> list[str]:
@@ -164,7 +169,7 @@ def _node_problems(n: PlanNode, nodes: dict[str, PlanNode], catalog: dict[str, d
     except ValidationError as e:
         problems += [f"{_where(x) or 'inputs: '}{x['msg']}" for x in e.errors()]
     for k, value in n.inputs.items():
-        problems += [f"{k}: {p}" for p in _input_problems(value, n, nodes, catalog)]
+        problems += [f"{k}: {p}" for p in _input_problems(k, value, n, nodes, catalog)]
     problems += _constraint_problems(n, nodes)
     pref = ResourceSpec().provider_pref  # plans carry no resources, so the executor picks from the default list
     if meta["runtime"] == "gpu" and not set(pref) & set(get_providers()):
@@ -172,13 +177,17 @@ def _node_problems(n: PlanNode, nodes: dict[str, PlanNode], catalog: dict[str, d
     return problems
 
 
-def _input_problems(value: Any, n: PlanNode, nodes: dict[str, PlanNode], catalog: dict[str, dict]) -> list[str]:
+def _input_problems(key: str, value: Any, n: PlanNode, nodes: dict[str, PlanNode], catalog: dict[str, dict]) -> list[str]:
+    model_ref = key.endswith("_model_ref")  # a model the node will call, maybe with one of our keys
     if not isinstance(value, str):
         problems = ["refs resolve only at the top level of inputs"] if "${{" in json.dumps(value, default=str) else []
-        if isinstance(value, dict) and "base_url" in value:
+        if isinstance(value, dict) and (model_ref or "base_url" in value):
             problems += _model_ref_problems(value)
         return problems
     if "${{" not in value:
+        if model_ref and ("://" in value or "{" in value):  # its provenance cannot be checked
+            return ["a model ref is a Token Factory model id, an inline Token Factory ref, or a ref to a "
+                    "vllm-serve, tf-deploy or quantize output"]
         return []
     m = REF.fullmatch(value.strip())
     if not m:
@@ -191,6 +200,9 @@ def _input_problems(value: Any, n: PlanNode, nodes: dict[str, PlanNode], catalog
     outputs = catalog.get(source.type, {}).get("outputs_schema") if source else None
     if outputs is not None and m[3] not in outputs.model_fields:
         return [f"{m[2]} ({source.type}) has no output {m[3]!r}"]
+    if model_ref and source and (source.type, m[3]) not in MODEL_REF_SOURCES:
+        return [f"{m[2]}.{m[3]} is not a model: refs come from vllm-serve model_ref or base_model_ref, "
+                "tf-deploy model_ref, or quantize gguf_file or gguf_f16"]
     return []
 
 
@@ -303,10 +315,9 @@ async def make_plan(intent: str, db: AsyncSession, scale: float) -> dict:
             out = await budget.control_plane(db, "planner", lambda tf: tf.chat(
                 messages, SUPER, json_schema=_answer_schema(), temperature=0.0, max_tokens=4096, thinking=False,
                 read_timeout=300))  # one slow call must not be re-sent and billed twice
-        except ProviderError as e:
-            raise HTTPException(status_code=502, detail=str(e))
-        except Exception as e:  # a 2xx the client could not read (missing keys, wrong types)
-            raise HTTPException(status_code=502, detail=f"token_factory unreadable reply: {e!r}")
+        except Exception as e:  # a ProviderError, or a reply the client could not read: the cause stays in the log
+            log.warning("planner call failed: %r", e)
+            raise HTTPException(status_code=502, detail=TF_FAILED)
         answer = out["parsed"] if isinstance(out["parsed"], dict) else {}
         plan = answer.get("plan") if isinstance(answer.get("plan"), dict) else {"name": "", "nodes": []}
         errors, warnings, est = review(plan, left)

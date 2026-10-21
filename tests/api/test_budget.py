@@ -12,8 +12,10 @@ import pytest
 
 from api.executor import run_workflow as ex
 from api.models.db import NodeRun, NodeStatus, RunStatus, Spend, utcnow
+from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlmodel.ext.asyncio.session import AsyncSession
 from api.services import budget
-from tests.api.test_executor import FakeProvider, launched, nodes, provider, seed  # noqa: F401 (fixtures)
+from tests.api.test_executor import FakeProvider, drain, launched, nodes, provider, seed  # noqa: F401 (fixtures)
 
 ADMIN = {"X-Orchapod-Admin": "s3cret"}
 
@@ -115,11 +117,37 @@ async def test_the_executor_runs_with_the_callers_caps(client, db, provider, lau
 
 async def test_every_node_boundary_checks_budget_and_kill_switch(db, provider, monkeypatch):
     spent = await seed(db, cost_usd=Decimal("3"))
-    await ex.run_workflow(spent.id, db, AsyncMock())
+    await ex.run_workflow(spent.id, db, AsyncMock(), 1.0)
     assert (await nodes(db, spent))["a"].error == "budget: run cap $3 reached"
 
     monkeypatch.setenv("ORCHAPOD_KILL_SWITCH", "1")
     killed = await seed(db)
-    await ex.run_workflow(killed.id, db, AsyncMock())
+    await ex.run_workflow(killed.id, db, AsyncMock(), 1.0)
     assert (await nodes(db, killed))["a"].error == "kill switch"
     assert provider.provisioned == []
+
+
+async def test_concurrent_runs_never_grant_more_than_the_day_cap(db, provider, monkeypatch):
+    monkeypatch.setenv("ORCHAPOD_MAX_DAY_USD", "1")
+    provider.script = {"a": {"exit": None}}  # every run's first node keeps running
+    runs = [await seed(db) for _ in range(5)]
+    sessions = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
+
+    async def execute(run):
+        async with sessions() as s:
+            await ex.run_workflow(run.id, s, AsyncMock(), 1.0)
+
+    tasks = [asyncio.create_task(execute(r)) for r in runs]
+    for _ in range(500):  # until each run holds its node's grant or stopped at the boundary
+        if len(provider.granted) + sum(t.done() for t in tasks) == len(runs):
+            break
+        await asyncio.sleep(0.01)
+
+    assert sum(provider.granted) <= 1.0 and provider.granted  # one day cap, however many nodes run at once
+    errors = [(await nodes(db, r))["a"].error for r in runs]
+    assert errors.count("budget: day cap $1 reached") == len(runs) - len(provider.granted)
+    for t in tasks:
+        t.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    await drain()
+    assert budget._granted == {}  # each node's grant goes with it

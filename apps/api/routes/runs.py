@@ -167,24 +167,23 @@ async def retry_node(run_id: uuid.UUID, node_id: str, db: Session, scale: Scale)
 
     reset = await db.execute(update(NodeRun).where(NodeRun.id == node_run.id, NodeRun.status == NodeStatus.FAILED)
                              .values(status=NodeStatus.PENDING, error=None).execution_options(synchronize_session=False))
-    if reset.rowcount != 1 or not await _move(db, run, [RunStatus.FAILED, RunStatus.CANCELLED],
-                                              update(AgentRun).where(AgentRun.run_id == run_id).values(report_md=None)):
+    await db.execute(update(AgentRun).where(AgentRun.run_id == run_id).values(report_md=None)  # a new report at the end
+                     .execution_options(synchronize_session=False))
+    if reset.rowcount != 1 or not await _move(db, run, [RunStatus.FAILED, RunStatus.CANCELLED]):
         await db.rollback()
         raise HTTPException(status_code=409, detail="Run changed meanwhile; reload it")
     executor.launch(run_id, scale)
     return _run_out(run)
 
 
-async def _move(db: AsyncSession, run: Run, sources: list[RunStatus], *also) -> bool:
-    """Atomically move the run from one of `sources` to provisioning_gpu, run `also` in the same transaction and
-    commit (the executor reads it in its own session); False when another request or worker changed it first."""
+async def _move(db: AsyncSession, run: Run, sources: list[RunStatus]) -> bool:
+    """Atomically move the run from one of `sources` to provisioning_gpu and commit (the executor reads it in its
+    own session), together with the caller's earlier statements; False when another request or worker changed it first."""
     moved = await db.execute(update(Run).where(Run.id == run.id, Run.status.in_(sources))
                              .values(status=RunStatus.PROVISIONING_GPU, finished_at=None)
                              .execution_options(synchronize_session=False))
     if moved.rowcount != 1:
         return False
-    for statement in also:  # e.g. a retried agent run's report is written again once it ends
-        await db.execute(statement.execution_options(synchronize_session=False))
     await db.commit()
     await db.refresh(run)
     return True

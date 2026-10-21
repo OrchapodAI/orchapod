@@ -12,11 +12,13 @@ import httpx
 import pytest
 import yaml
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.agent import planner
 from api.executor import run_workflow as ex
-from api.models.db import AgentRun, Artifact, ArtifactKind, NodeRun, NodeStatus, Run, RunStatus, Spend, Workflow
+from api.models.db import AgentRun, Artifact, ArtifactKind, NodeRun, NodeStatus, Run, RunStatus, Spend, Workflow, utcnow
 from api.services import budget
 from packages.providers.tokenfactory import LIGHTNING, SUPER, TokenFactory
 from packages.workflow_schema.models import NODE_REGISTRY, ResourceSpec, SynthDistilabelInputs
@@ -69,7 +71,6 @@ def tf(monkeypatch):
     class SpyTF(TokenFactory):
         def chat(self, messages, model=SUPER, **kw):
             fake.calls.append(dict(kw))
-            kw.pop("read_timeout", None)  # platform-w2 makes it a client option; until then keep it out of the body
             return super().chat(messages, model, **kw)
 
     http = httpx.Client(transport=httpx.MockTransport(handler))
@@ -156,13 +157,12 @@ async def test_the_planner_stops_after_two_repairs(client, tf):
     assert body["errors"] == ["Bad-Id: id must be snake_case ([a-z][a-z0-9_]*)"]
 
 
-async def test_token_factory_failures_are_502(client, tf):
+async def test_token_factory_failures_are_502_with_the_cause_only_in_the_log(client, tf, caplog):
     tf.replies = [(400, "model not found"), (200, {"model": "m", "choices": [{"index": 0}]})]  # the second: no message
-    r = await client.post("/agent/plan", json={"intent": "anything"})
-    assert r.status_code == 502 and r.json()["detail"].startswith("token_factory bad_request 400")
-    r = await client.post("/agent/plan", json={"intent": "anything"})
-    assert r.status_code == 502  # today a KeyError in the client; bad_output once the client wraps this shape
-    assert r.json()["detail"].startswith(("token_factory unreadable reply", "token_factory bad_output"))
+    for _ in tf.replies[:]:
+        r = await client.post("/agent/plan", json={"intent": "anything"})
+        assert (r.status_code, r.json()) == (502, {"detail": planner.TF_FAILED})
+    assert "model not found" in caplog.text  # the cause is logged, never sent to the client
 
 
 def test_a_gpu_node_needs_a_configured_provider_it_prefers(monkeypatch):
@@ -227,6 +227,13 @@ class _Out(BaseModel):
     job: str = ""
     lora_adapter: str = ""
     model_ref: str = ""
+    base_model_ref: str = ""
+    gguf_file: str = ""
+    gguf_f16: str = ""
+
+
+class _Model(BaseModel):
+    model: str = "m"
 
 
 class _Finetune(BaseModel):
@@ -277,6 +284,45 @@ def test_review_enforces_the_knowledge_constraints(monkeypatch):
     assert any(w.startswith("big: no fine-tune price") for w in warnings)
 
 
+MODEL_REF_CASES = [  # (value of judge-eval's base_model_ref, its needs, refused?)
+    ("${{ nodes.serve.outputs.model_ref }}", ["serve"], False),
+    ("${{ nodes.serve.outputs.base_model_ref }}", ["serve"], False),
+    ("${{ nodes.dep.outputs.model_ref }}", ["dep"], False),
+    ("${{ nodes.quant.outputs.gguf_file }}", ["quant"], False),
+    ("${{ nodes.quant.outputs.gguf_f16 }}", ["quant"], False),
+    ("meta-llama/Llama-3.1-8B-Instruct", [], False),
+    ({"base_url": TF_BASE, "model": "m", "api_key_env": "NEBIUS_API_KEY", "base_model": None}, [], False),
+    ("${{ nodes.prep.outputs.dataset }}", ["prep"], True),             # a dataset is no model
+    ("${{ nodes.quant.outputs.model_ref }}", ["quant"], True),          # an output quantize does not make a model ref from
+    ("r2://b/runs/x/serve/model_ref", [], True),                        # where it came from is unknown
+    ("https://attacker.example/v1", [], True),
+    ('{"base_url": "https://attacker.example/v1"}', [], True),
+    ({"model": "x", "api_key_env": "ORCHAPOD_ENDPOINT_TOKEN"}, [], True),  # no base_url: still the pair rule
+]
+
+
+@pytest.mark.parametrize("value, needs, refused", MODEL_REF_CASES)
+def test_review_checks_where_a_model_ref_comes_from(value, needs, refused, monkeypatch):
+    for t, schema in (("vllm-serve", _Model), ("quantize", _Model), ("tf-deploy", _Deploy), ("judge-eval", _Judge)):
+        monkeypatch.setitem(NODE_REGISTRY, t, {"description": t, "inputs_schema": schema, "outputs_schema": _Out,
+                                               "runtime": "api"})
+    plan = {"name": "p", "nodes": [
+        node("prep", "data-prep", dataset="hf://x"), node("serve", "vllm-serve"), node("quant", "quantize"),
+        node("dep", "tf-deploy", job="j"),
+        node("judge", "judge-eval", needs, test_data="r2://b/t", base_model_ref=value, tuned_model_ref="meta-llama/x"),
+    ]}
+    judge = [e for e in errors_of(plan) if e.startswith("judge: ")]  # (the fake types are not NodeTypes here)
+    assert [e.split(":")[:2] for e in judge] == ([["judge", " base_model_ref"]] if refused else [])
+
+
+def test_estimates_never_go_negative_and_count_page_extraction():
+    serve, research = node("s", "vllm-serve", model="m", keep_alive_min=-60), node("r", "web-research", queries=["a", "b"], max_pages=20)
+    estimate = planner.estimate({"nodes": [serve, research]})[0]
+    assert estimate["by_node"]["s"]["usd"] == 0.0
+    assert estimate["by_node"]["r"]["usd"] == pytest.approx((2 * 2 + 20 / 5) * 0.008)  # advanced searches + pages read
+    assert "s: keep_alive_min: Input should be greater than or equal to 1" in errors_of({"name": "p", "nodes": [serve]})
+
+
 def test_review_reports_an_estimate_over_the_budget_left():
     errors, _, estimate = planner.review(GOOD, (0.01, "run", 0.3))
     assert errors == [f"plan: the estimate ${estimate['usd']:.2f} is more than the $0.01 left (run cap $0.3)"]
@@ -286,9 +332,10 @@ def test_review_reports_an_estimate_over_the_budget_left():
 
 async def test_run_validates_again_and_launches(client, db, monkeypatch):
     launched = []
-    monkeypatch.setattr(ex, "launch", lambda run_id, scale=1.0: launched.append((run_id, scale)))
+    monkeypatch.setattr(ex, "launch", lambda run_id, scale: launched.append((run_id, scale)))
+    extra = {**GOOD, "owner": "x", "nodes": [{**GOOD["nodes"][0], "resources": {"gpu": "8xH100"}}, GOOD["nodes"][1]]}
 
-    r = await client.post("/agent/run", json={"intent": "Q&A data", "plan": GOOD})
+    r = await client.post("/agent/run", json={"intent": "Q&A data", "plan": extra})
 
     assert r.status_code == 201
     body = r.json()
@@ -301,7 +348,9 @@ async def test_run_validates_again_and_launches(client, db, monkeypatch):
 
     r = await client.post("/agent/run", json={"intent": "x", "plan": {"name": "x", "nodes": [node("a", "nope")]}})
     assert (r.status_code, r.json()) == (422, {"detail": "the plan has errors", "errors": ["a: unknown node type 'nope'"]})
-    assert (await client.post("/agent/run", json={"intent": "x", "plan": {"name": "x", "nodes": []}})).status_code == 422
+    r = await client.post("/agent/run", json={"intent": "x", "plan": {"name": "x", "nodes": []}})
+    assert (r.status_code, r.json()["detail"], len(r.json()["errors"])) == (422, "the plan has errors", 1)
+    assert r.json()["errors"][0].startswith("plan: nodes: ")
     monkeypatch.setenv("ORCHAPOD_KILL_SWITCH", "1")
     assert (await client.post("/agent/run", json={"intent": "x", "plan": GOOD})).status_code == 503
     monkeypatch.delenv("ORCHAPOD_KILL_SWITCH")
@@ -362,9 +411,30 @@ async def test_report_falls_back_to_the_template(client, db, monkeypatch, tf):
     assert "[prep/dataset](/artifacts/" in md and len(tf.requests) == 2  # STUB calls nothing
 
 
+async def test_a_report_written_while_the_run_is_retried_is_dropped(client, db, monkeypatch):
+    run = await agent_run(db, RunStatus.FAILED)
+    run.finished_at = utcnow()
+    await db.commit()
+
+    async def slow_lightning(agent_run_, summary, db_, scale):
+        async with async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)() as other:
+            retried = await other.get(Run, run.id)  # Retry node lands while Lightning writes
+            retried.status, retried.finished_at = RunStatus.PROVISIONING_GPU, None
+            await other.commit()
+        return "## a report of the attempt that was retried"
+
+    monkeypatch.setattr(planner, "write_report", slow_lightning)
+    r = (await client.get(f"/agent/runs/{run.id}/report")).json()
+
+    assert (r["ready"], r["markdown"]) == (False, None)
+    stored = await db.get(AgentRun, run.id)
+    await db.refresh(stored)
+    assert stored.report_md is None  # the retried run gets its own report when it ends
+
+
 async def test_retry_clears_the_cached_report(client, db, monkeypatch):
     monkeypatch.setenv("STUB", "1")
-    monkeypatch.setattr(ex, "launch", lambda run_id, scale=1.0: None)
+    monkeypatch.setattr(ex, "launch", lambda run_id, scale: None)
     run = await agent_run(db, RunStatus.FAILED)
     prep = (await db.scalars(select(NodeRun).where(NodeRun.run_id == run.id, NodeRun.node_id == "prep"))).one()
     prep.status, prep.error = NodeStatus.FAILED, "exit 1: boom"

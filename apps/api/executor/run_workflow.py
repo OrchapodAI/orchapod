@@ -63,10 +63,11 @@ class NodeFailed(Exception):
 # Entry points
 # ---------------------------------------------------------------------------
 
-def launch(run_id: uuid.UUID, scale: float = 1.0) -> asyncio.Task:
+def launch(run_id: uuid.UUID, scale: float) -> asyncio.Task:
     """The one way to start a run (start, retry, /agent/run, /inference/deploy): cancel finds its task, and a
     concurrent start or retry joins the running executor instead of starting a second one. `scale` is the
-    caller's budget scale (R7); the executor lives only in this process, so it is never persisted."""
+    caller's budget scale (R7), required so a forgotten caller fails loudly; the executor lives only in this process,
+    so it is never persisted."""
     if (task := running_tasks.get(run_id)) and not task.done():
         return task
     task = asyncio.create_task(_run_in_own_session(run_id, scale))
@@ -104,7 +105,7 @@ async def _run_in_own_session(run_id: uuid.UUID, scale: float) -> None:
             log.exception("run %s crashed", run_id)
 
 
-async def run_workflow(run_id: uuid.UUID, db: AsyncSession, broadcast: Broadcast, scale: float = 1.0) -> None:
+async def run_workflow(run_id: uuid.UUID, db: AsyncSession, broadcast: Broadcast, scale: float) -> None:
     """Execute (or, after a retry, resume) a run: succeeded nodes are skipped. Every node boundary checks
     the kill switch and the budget (caps × scale)."""
     run = await db.get(Run, run_id)
@@ -128,14 +129,17 @@ async def run_workflow(run_id: uuid.UUID, db: AsyncSession, broadcast: Broadcast
                 continue
             if budget.kill_switch():
                 raise NodeFailed("kill switch")
-            max_cost, which, cap = await budget.left(db, run, scale)
+            max_cost, which, cap = await budget.reserve(db, run, scale)  # granted to this node until it ends
             if max_cost <= 0:
                 raise NodeFailed(f"budget: {which} cap ${cap:g} reached")
-            node_run.status, node_run.error = NodeStatus.RUNNING, None
-            node_run.started_at, node_run.finished_at = utcnow(), None
-            await db.commit()
-            await broadcast(run_id, {"type": "node_status", "node_id": node.id, "status": "running"})
-            outputs = await _execute_node(node_run, node, run, rows, db, broadcast, max_cost)
+            try:
+                node_run.status, node_run.error = NodeStatus.RUNNING, None
+                node_run.started_at, node_run.finished_at = utcnow(), None
+                await db.commit()
+                await broadcast(run_id, {"type": "node_status", "node_id": node.id, "status": "running"})
+                outputs = await _execute_node(node_run, node, run, rows, db, broadcast, max_cost)
+            finally:
+                budget.release(run_id)
             node_run.status, node_run.finished_at, node_run.error = NodeStatus.SUCCEEDED, utcnow(), None
             await db.commit()
             await broadcast(run_id, {"type": "node_status", "node_id": node.id, "status": "succeeded", "outputs": outputs})

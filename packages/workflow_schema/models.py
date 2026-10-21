@@ -231,7 +231,7 @@ class LMEvalOutputs(BaseModel):
 class VLLMServeInputs(BaseModel):
     model: str = Field(description="HF model ID or R2 URI to AWQ model")
     max_model_len: int = Field(default=8192)
-    keep_alive_min: int = Field(default=60)
+    keep_alive_min: int = Field(default=60, ge=1)
     served_model_name: str | None = Field(default=None, description="Override name in /v1/models")
     gpu_memory_utilization: float = Field(default=0.90)
     dtype: str = Field(default="bfloat16")

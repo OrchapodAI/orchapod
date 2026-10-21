@@ -10,8 +10,9 @@ from __future__ import annotations
 import asyncio
 import os
 import secrets
+import uuid
 from decimal import Decimal
-from typing import Callable, TypeVar
+from typing import Callable
 
 from fastapi import Header, HTTPException
 from sqlalchemy import func
@@ -21,7 +22,9 @@ from sqlmodel import select
 from api.models.db import Run, Spend, utcnow
 from packages.providers.tokenfactory import TokenFactory
 
-T = TypeVar("T")
+# run_id → what its running node may spend, granted at the node boundary and released when the node ends, so
+# concurrent runs never hand out the same dollars twice. ponytail: in-process, which the one API worker allows.
+_granted: dict[uuid.UUID, float] = {}
 
 
 def scale(x_orchapod_admin: str = Header(default="")) -> float:
@@ -47,14 +50,31 @@ async def spent_today(db: AsyncSession) -> float:
 
 
 async def left(db: AsyncSession, run: Run | None, scale: float) -> tuple[float, str, float]:
-    """(budget left, the cap that binds: "run" | "day", that cap in $); both caps × scale."""
+    """(budget left, the cap that binds: "run" | "day", that cap in $); both caps × scale. The day's budget left
+    also excludes what other runs' running nodes were granted."""
     run_cap = float(os.environ.get("ORCHAPOD_MAX_RUN_USD") or 3) * scale
     day_cap = float(os.environ.get("ORCHAPOD_MAX_DAY_USD") or 15) * scale
+    granted = dict(_granted)  # a node that ends while spend is read stays counted: its cost commits before release
     if run is not None:
         await db.refresh(run)  # Run.cost_usd grows as nodes register cost_json
+    spent = await spent_today(db)
+    granted.update(_granted)  # no await from here to reserve()'s write, so two boundaries never share a grant
+    granted.pop(run.id if run is not None else None, None)
     run_left = run_cap - (float(run.cost_usd or 0) if run is not None else 0.0)
-    day_left = day_cap - await spent_today(db)
+    day_left = day_cap - spent - sum(granted.values())
     return (run_left, "run", run_cap) if run_left <= day_left else (day_left, "day", day_cap)
+
+
+async def reserve(db: AsyncSession, run: Run, scale: float) -> tuple[float, str, float]:
+    """left() for the run's next node, granted to it until release(run.id)."""
+    amount, which, cap = await left(db, run, scale)
+    if amount > 0:
+        _granted[run.id] = amount
+    return amount, which, cap
+
+
+def release(run_id: uuid.UUID) -> None:
+    _granted.pop(run_id, None)
 
 
 async def guard(db: AsyncSession, scale: float, run: Run | None = None, need: float = 0.0) -> None:
@@ -67,7 +87,7 @@ async def guard(db: AsyncSession, scale: float, run: Run | None = None, need: fl
                                                      + (f", the plan needs ${need:.2f}" if need else ""))
 
 
-async def control_plane(db: AsyncSession, source: str, call: Callable[[TokenFactory], T]) -> T:
+async def control_plane(db: AsyncSession, source: str, call: Callable[[TokenFactory], dict]) -> dict:
     """Run one sync Token Factory call in a worker thread; whatever it bills goes into today's ledger,
     also when the call then fails (TF bills before the reply is parsed)."""
     usage: list[float] = []  # on_usage runs on the worker thread; list.append is atomic

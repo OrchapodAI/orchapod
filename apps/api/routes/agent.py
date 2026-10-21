@@ -13,13 +13,14 @@ Routes:
 from __future__ import annotations
 
 import uuid
-from typing import Annotated
+from typing import Annotated, Any
 
 import yaml
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.agent import planner
@@ -42,7 +43,7 @@ class PlanRequest(BaseModel):
 
 class RunRequest(BaseModel):
     intent: planner.Intent
-    plan: planner.Plan
+    plan: dict[str, Any]  # review() reports its shape errors in the contract's {"detail", "errors"}
 
 
 @router.post("/plan")
@@ -56,10 +57,10 @@ async def run(body: RunRequest, db: Session, scale: Scale):
     """503 kill switch; 422 {detail, errors} when the plan fails validation; 402 when its estimate is over budget."""
     if budget.kill_switch():
         raise HTTPException(status_code=503, detail="the kill switch is on (ORCHAPOD_KILL_SWITCH)")
-    plan = body.plan.model_dump()
-    errors, _, estimate = planner.review(plan)
+    errors, _, estimate = planner.review(body.plan)
     if errors:
         return JSONResponse(status_code=422, content={"detail": "the plan has errors", "errors": errors})
+    plan = planner.Plan.model_validate(body.plan).model_dump()  # extra keys (resources, ...) are dropped
     await budget.guard(db, scale, need=estimate["usd"])
 
     text = yaml.safe_dump(plan, sort_keys=False)
@@ -81,15 +82,23 @@ async def report(run_id: uuid.UUID, db: Session, scale: Scale):
     agent_run = await db.get(AgentRun, run_id)
     if not agent_run:
         raise HTTPException(status_code=404, detail="Not a run the agent started")
+    finished_at = (await db.get(Run, run_id)).finished_at  # the attempt this report would describe
     summary = jsonable_encoder(await run_summary(run_id, db))
     terminal = summary["status"] in {s.value for s in TERMINAL}
-    if terminal and agent_run.report_md is None:
-        # ponytail: two first GETs at once may both write it (a Lightning call is < $0.001; both land in the ledger)
-        agent_run.report_md = await planner.write_report(agent_run, summary, db, scale)
+    markdown = agent_run.report_md
+    if terminal and markdown is None:
+        written = await planner.write_report(agent_run, summary, db, scale)
+        # kept only if no retry restarted the run meanwhile (retry clears report_md and finished_at), and only once
+        # if two first GETs race; ponytail: both of those GETs still call Lightning (< $0.001, in the ledger)
+        await db.execute(update(AgentRun).where(
+            AgentRun.run_id == run_id, AgentRun.report_md.is_(None),
+            select(Run.id).where(Run.id == run_id, Run.finished_at == finished_at).exists(),
+        ).values(report_md=written).execution_options(synchronize_session=False))
         await db.commit()
-    ready = terminal and agent_run.report_md is not None
+        markdown = await db.scalar(select(AgentRun.report_md).where(AgentRun.run_id == run_id))
+    ready = terminal and markdown is not None
     return {**summary, "intent": agent_run.intent, "estimate": agent_run.estimate, "ready": ready,
-            "markdown": agent_run.report_md if ready else None}
+            "markdown": markdown if ready else None}
 
 
 @router.get("/templates")

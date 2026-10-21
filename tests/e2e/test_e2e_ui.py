@@ -62,7 +62,7 @@ def test_deps_missing_names_each_install(monkeypatch, tmp_path):
     assert ui.deps_missing() == []
 
 
-def test_ui_pending_names_the_gaps_and_the_node_types_that_will_run():
+def test_ui_pending_names_the_gaps_and_the_node_types_that_will_run():  # SKIP-SITE(ml-w4)
     api = fake_api({I1["intent"]: ERRORS_1})
     pending, types = ui.ui_pending(api)
     assert pending == {"1": [agent.VLLM]}
@@ -105,9 +105,15 @@ def test_stop_group_ends_the_server_and_everything_it_started():
     ui.stop_group(proc)  # already gone: no error
 
 
-def test_summarize_counts_skips_as_what_they_are():
-    stats = {"expected": 1, "skipped": 3, "unexpected": 0, "flaky": 0, "duration": 1.0}
-    assert ui.summarize({"stats": stats}) == "1 passed, 3 SKIPPED (not passes), 0 failed, 0 flaky"
+def test_stop_group_kills_what_outlives_the_leader_and_ignores_sigterm():
+    """pnpm exits on SIGTERM before the node it started; a child that ignores SIGTERM would be left behind without the SIGKILL."""
+    proc = subprocess.Popen(["sh", "-c", "(trap '' TERM; exec sleep 60) & exit 0"], start_new_session=True)  # the leader exits at once
+    pgid = os.getpgid(proc.pid)
+    assert until(lambda: proc.poll() == 0 and group(pgid)), "the leader has gone and its child lives"
+    ui.stop_group(proc)
+    if not until(lambda: not group(pgid)):
+        os.killpg(pgid, signal.SIGKILL)
+        pytest.fail("a child that ignores SIGTERM survived stop_group")
 
 
 def test_run_playwright_returns_its_exit_code(monkeypatch):

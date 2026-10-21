@@ -111,3 +111,64 @@ Teardown: down -v --rmi local removed the 6 containers, 3 named volumes, the net
   - backend-w4: the `/livez` healthcheck switch (one line in the prod compose; I can do it after the merge) and the XFF note above.
   - qa: CI still builds only `Dockerfile.dev`; building `apps/api/Dockerfile` and `apps/web/Dockerfile` would catch prod-image breakage. Also the D8 rehearsals on the hosted URL.
   - The nebius.py Serverless rewrite (contracts NebiusServerless) is still open. It removes the FOLDER_ID and SUBNET_ID allow-list lines, and the stale-entry check will flag them.
+
+## Fix round 1 (2026-10-21)
+Commits: `0d7cf8f` fix(scripts) · `0595a96` fix(infra) · `716d154` docs(hosting). 11 files, +97 −48. All on `hack/platform-w4`; merge-tree against NebiusHackathon 82886f8 is clean.
+
+### Important
+1. **Lost export.** HOSTING.md now copies the export off the VM at once: `scp <user>@<vm>:/opt/orchapod/scripts/golden-run.json scripts/`.
+   - Bring-up step 7 now has the D8 flow: export, scp, gitleaks, commit. It warns that the next deploy's rsync overwrites the VM's copy.
+   - Teardown step 1: export and scp before step 2 deletes the disk.
+2. **Node fixes never reaching the VM.** After the deploys.log line, the deploy pulls the `${ORCHAPOD_IMAGE_PREFIX:-ghcr.io/bangadpurva}/<node>:latest` of each `containers/*`. The prefix comes from the VM's `.env`, and every `$` in the ssh string is escaped.
+   - One deviation: it pulls only the `:latest` images the VM already has. A gpu node's image (unsloth-train) runs on Nebius and never lands on the VM, so pulling it would cost GBs of disk for nothing. A missing image is pulled fresh at its first `docker run`, so staleness is fixed either way. Drop the `docker image inspect` guard if you want all of them.
+   - A failed pull prints `could not pull <img>` and the deploy continues (the stack is already up).
+   - HOSTING.md bring-up step 6 and the Deploy section say that `orchapod/<node>:dev` images built on the VM must be rebuilt or removed.
+
+### Minors (all done)
+- Hard kill switch:
+  - Stops node containers: every container without a compose project (`docker ps --format '{{.ID}} {{.Label "com.docker.compose.project"}}' | awk '$2 == ""' … | xargs -r sudo docker stop -t 30`).
+  - Then check the Nebius console for Jobs and Endpoints, because TTL deletion lives in the API.
+  - The selector was checked by listing only: on this shared Mac, the stop would also hit other agents' node containers.
+- Rehearsal:
+  - The function is now `smoke() { docker compose -p "$COMPOSE_PROJECT_NAME" … }`.
+  - `COMPOSE_PROJECT_NAME=orchapod-prodtest-$USER` stays exported because backup-db.sh and watchdog.sh read it. Pasted on the VM, they too stay on the prodtest project.
+- Restore order:
+  - List the slots, then `umask 077`.
+  - Download while the API runs (`exec` needs it), then `dc stop api`.
+  - `pg_restore --clean --if-exists --single-transaction`, then `dc start api && rm`.
+- `infra/cloud-init.yaml`: `ssh_pwauth: false`.
+- apps/api/Dockerfile:
+  - A comment says why it runs as root (docker.sock is root-equivalent; the profile is in /root/.nebius).
+  - The nebius binary is checked with `sha256sum -c` per arch. Nebius publishes no checksums (6 candidate URLs: 404), so I pinned today's: x86_64 `a4176af5…a421d026`, arm64 `aca84ec8…bca82a35`.
+- watchdog.sh and backup-db.sh filter `label=com.docker.compose.oneoff=False`.
+- deploy-hosted.sh: `-dirty` = `[ -z "$(git status --porcelain)" ]` (untracked files count; rsync ships them).
+- Caddyfile:
+  - `header Strict-Transport-Security "max-age=31536000"` on both sites.
+  - Its header comment and the Deploy section say an edited Caddyfile needs `dc restart caddy`.
+- HOSTING.md:
+  - Backups share the artifact bucket and its storage key, which every node receives.
+  - The weekly check includes `test -f /var/run/reboot-required`.
+- Ponytail:
+  - The backend status section is deleted; the `/livez` switch is now a comment on the api healthcheck.
+  - The VASTAI test is one assert in the main `.env.example` test (559 → 558 tests, same coverage).
+- `.env.example`: `# ORCHAPOD_CORS_ORIGINS=` is commented out in the hosted block, with a comment on what it is. My scan accepts a listed but unread name, and commented counts as documented. It is not a live line, because the prod compose derives it from DOMAIN.
+
+### Proof
+```
+tests/providers/test_env_example.py, test_hosting.py, test_prices.py: 10 passed
+negative controls (each restored): pulling without the presence guard → "Left contains one more item: [... 'ghcr.io/acme/unsloth-train:latest']";
+  an unescaped ${prefix} in the ssh string → 1 failed; backup without the one-off filter → 1 failed
+make check (HEAD 716d154): ruff All checks passed! · pytest 558 passed · web pass 22, fail 0 · stub e2e SKIP
+gitleaks detect --log-opts e3c289b..HEAD: no leaks found
+compose config (prod+smoke): valid · cloud-init vs its JSON schema: 0 errors, ssh_pwauth False
+API image, arm64 (native): "/usr/local/bin/nebius: OK", 0.12.293 · linux/amd64 (emulated, tag orchapod-prodtest-platform-w4-api-amd64:fr1):
+  "/usr/local/bin/nebius: OK", uname -m x86_64, docker 28.5.1, nebius 0.12.293; image removed afterwards
+Re-smoke (project orchapod-prodtest-platform-w4, 18080/18443, all 6 healthy in 40 s):
+  strict-transport-security: max-age=31536000 on app and api
+  with a `run` one-off of api: without the filter, 2 api containers match; backup-db.sh → "backup: 13393 bytes to backups/pg/orchapod-13.dump";
+  the one-off goes unhealthy in 30 s (it runs sleep); the old watchdog filter would match it (1); watchdog.sh → nothing, one-off untouched
+  restore as documented: dump file -rw------- 13844 bytes, api Stopped, pg_restore exit 0, api Started, marker back, api healthy, /health 200
+Teardown: down -v --rmi local removed 3 volumes, the network and both built images; caddy:2.10.2-alpine removed again; nothing
+  named prodtest or platform-w4 is left. The image store matches its pre-re-smoke listing except orchapod/<node>:dev IDs, which
+  another agent rebuilt during the window (I did not touch them).
+```

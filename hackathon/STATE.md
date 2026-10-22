@@ -51,7 +51,7 @@ Updated: 2026-10-21T15:45Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [ ] P1 D3 vllm-serve spec (vllm/vllm-openai:v0.18.0-cu130, token auth) + smoke script — TODO
 - [ ] P1 D5 after G2: real Serverless Job + Endpoint; D6 eval vs base; D7 judging-window plan — TODO
 ### backend
-- [ ] P0 D1 spike 2: Nemotron 3 Super plan for intent #2 — test `response_format` json_schema (TF's OpenAPI says only json_object|text; its docs page documents json_schema; fallback json_object + schema in prompt + jsonschema validation) and the thinking switch (reasoning_effort vs chat_template_kwargs) — BLOCKED(NEBIUS_API_KEY)
+- [x] P0 D1 spike 2: strict json_schema + thinking=False confirmed live; intent #2 plan valid first time ($0.0025, 7 s); Lightning too slow for reports → Super — DONE (2026-10-22, $0.0055)
 - [x] P0 D1 run/node state machine for long-polling nodes: cancel, timeouts, retry-node — DONE (bc5c59f)
 - [x] P0 D1 SDK: cost_json + metrics_json, progress, internal secret — DONE (bc5c59f)
 - [x] P0 D2 Orchapod Agent planner on Nemotron (Claude out of agent/workflow_builder.py) + POST /agent/plan — DONE (backend-w2)

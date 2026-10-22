@@ -502,3 +502,7 @@ worktrees:
   - Blocker found: orchapod/unsloth-train:dev cannot build on this Mac (~20 GB CUDA x86_64).
 - 2026-10-22T06:23Z MERGED backend-w8 → a02b571 (tests/api + drills: 236 passed).
 - 2026-10-22T06:23Z ml-w7 dispatched (resumed af8bbc1a5deca633c; worktree ml-w7 @ 81865e3): a slim `stub` first stage in unsloth-train's Dockerfile (CUDA stage stays last = default target), proven by a unique-tag build and a STUB run; the drills docstring fix. Then qa-w8: e2e builds unsloth-train with --target stub, MUST_REGISTER, the smoke's golden path → template 4.
+- 2026-10-22T06:25Z frontend-w6 fix round 1 done (ebee7aa, 11464dd, b1011a9, 282bf06, a5d8ba6).
+  - Palette = the 9 visible registry types; Retry restarts the 60 s report wait (reproduced first, then a test); unsloth-train and vllm-serve forms with registry defaults and contract wording; web 35/35; mutation-checked.
+  - Found and assigned as fix round 2: a canvas drop-offset bug (one line in onDrop) and the starter YAML ending in hidden lm-eval → synth → data-prep.
+  - One scoped re-review after round 2.

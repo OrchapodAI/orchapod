@@ -31,7 +31,8 @@ Contents: Node SDK · Provider interfaces · Config · Data nodes · ML nodes ·
 ### TokenFactory — packages/providers/tokenfactory.py
 - Base `NEBIUS_BASE_URL` (default https://api.tokenfactory.nebius.com/v1), key `NEBIUS_API_KEY`. wins: skeleton; four files still call the legacy https://api.studio.nebius.ai/v1.
 - Ids: `SUPER` = nvidia/nemotron-3-super-120b-a12b, `ULTRA` = nvidia/Nemotron-3-Ultra-550b-a55b, `LIGHTNING` = nvidia/Nemotron-3_5-Lightning, `NANO` = nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B.
-- `chat(messages, model=SUPER, *, temperature=0.0, max_tokens=1024, json_schema=None, thinking=None, base_url=None, api_key=None, base_model=None, read_timeout=None, **params) -> dict`
+- `chat(messages, model=SUPER, *, create=False, temperature=0.0, max_tokens=1024, json_schema=None, thinking=None, base_url=None, api_key=None, base_model=None, read_timeout=None, **params) -> dict`
+  - `create=True` sends the call at most once it may have landed: a timeout, a dropped connection or a 5xx raises `ProviderError` kind `server` at once (no backoff), while 429 and connect errors still retry; the same rule as a paid create. For calls whose answer can be replaced (the run report falls back to its template; orchestrator 2026-10-22).
   - `read_timeout` (seconds) sets the read timeout of this call only (None = 120 s) and never reaches the body; the planner passes 300, so a long call is not re-sent and billed twice.
   - Returns `{"text": str, "parsed": dict | list | None, "model": str, "in_tokens": int, "out_tokens": int, "usd": float, "finish_reason": str}`.
   - `json_schema` → `response_format={"type": "json_schema", "json_schema": {"name": "output", "schema": json_schema, "strict": true}}`, TF's documented form (not `extra_body.guided_json`). `parsed = json.loads(text)`. Invalid JSON → `ProviderError` kind `bad_output` naming finish_reason, never retried: a temperature-0 retry repeats the truncation, so raise max_tokens or set thinking=False.

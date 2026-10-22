@@ -41,13 +41,14 @@ class TokenFactory:
         self.http = http_client(_stub) if self.stub or http is None else http  # STUB never touches the network
         self.files, self.fine_tuning, self.lora = _Files(self), _FineTuning(self), _Lora(self)
 
-    def chat(self, messages: list[dict], model: str = SUPER, **kw) -> dict:
+    def chat(self, messages: list[dict], model: str = SUPER, *, create: bool = False, **kw) -> dict:
         """kw: temperature=0.0, max_tokens=1024, json_schema=None, thinking=None, read_timeout=None (seconds for this
         call; None = the client's 120 s), and for a ModelRef target base_url, api_key, base_model; anything else goes
-        into the request body verbatim (top_p, stop, seed, ...). Returns {text, parsed, model, in_tokens, out_tokens,
-        usd, finish_reason}."""
+        into the request body verbatim (top_p, stop, seed, ...). create=True: never re-sent once it may have landed (a
+        timeout, a dropped connection, a 5xx), like a paid create; 429 and connect errors still retry. Returns {text,
+        parsed, model, in_tokens, out_tokens, usd, finish_reason}."""
         url, req, bill = self._prepare(messages, model, **kw)
-        data = json_of(request(self.http, P, "POST", url, **req), P)
+        data = json_of(request(self.http, P, "POST", url, create=create, **req), P)
         usage = data.get("usage") or {}
         in_tokens, out_tokens = usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
         usd = bill(in_tokens, out_tokens)  # first: a bad reply still cost tokens

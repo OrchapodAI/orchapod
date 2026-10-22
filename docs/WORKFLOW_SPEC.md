@@ -40,7 +40,7 @@ Tavily through packages.providers: `seed_urls` (extract) first, then one advance
 Nemotron 3 Super on Token Factory (guided JSON, reasoning off) → `dataset`. `pipeline_template`: `self-instruct` | `evol-instruct` | `magpie` (chat rows), `grounded` (one call per `corpus` passage, k = min(5, ⌈`n_samples` ÷ passages⌉, `max_tokens` ÷ 150) closed-book pairs; rows keep `context` and `source_url`) or `structured` (batches of min(25, `max_tokens` ÷ 100) rows checked against `row_schema` with jsonschema; `corpus` optionally supplies real values). Corpus text is fenced as untrusted (`<passage>`/`<reference>`, tags stripped from it) with the rules after it; questions citing "the passage/text/article" are invalid. `instructions` steer the teacher; a call whose worst case would pass min(`max_usd`, the node budget) is never sent, and the rows so far are kept (`metrics.stopped`). `STUB=1` needs no network.
 
 ### `unsloth-train`
-Lane B: Unsloth LoRA (16-bit unless `load_in_4bit`; spike 4's recipe and pinned stack) of `model` (default nvidia/Llama-3.1-Nemotron-Nano-8B-v1) on data-prep's `train_jsonl` (`eval_jsonl` optional) for at most `max_steps` → `lora_adapter` (PEFT) and `merged_model` (16-bit, vllm-serve's `model`), `checkpoint_step_NNNNNN` every `checkpoint_steps` (a retry resumes from the newest) and `loss_curve` in metrics. Runtime `gpu` (a Nebius Serverless Job; never vast.ai unless a node names it). GPU time is billed as it runs, so the node budget stops training. `STUB=1` writes small fixed outputs.
+Lane B: Unsloth LoRA (16-bit unless `load_in_4bit`; spike 4's recipe and pinned stack) of `model` (default nvidia/Llama-3.1-Nemotron-Nano-8B-v1) on data-prep's `train_jsonl` (`eval_jsonl` optional) for at most `max_steps` → `lora_adapter` (PEFT) and `merged_model` (16-bit, a vllm-serve `model`; written only when `merge` is true, the default), `checkpoint_step_NNNNNN` every `checkpoint_steps` (a retry resumes from the newest) and `loss_curve` in metrics. Runtime `gpu` (a Nebius Serverless Job; never vast.ai unless a node names it). GPU time is billed as it runs, so the node budget stops training. `STUB=1` writes small fixed outputs.
 
 ### `distill-sft`
 Off-policy knowledge distillation: teacher inference → student SFT.
@@ -49,7 +49,7 @@ Off-policy knowledge distillation: teacher inference → student SFT.
 `model_id`, `revision` (main), `ignore_patterns` → `hf_model` (directory) with every downloaded LFS file checked against the Hub's SHA-256 (`sha256_verified` in metrics) and `orchapod_source.json` (`{model_id, revision}`, so quantize's `base_model` is the Hub id, not the r2 URI). CPU-only; a gated model needs `HF_TOKEN` in the env and its licence accepted. `STUB=1` writes a one-file directory offline.
 
 ### `quantize`
-GGUF on CPU with llama.cpp: `model` (a Hugging Face id or hf-download's `hf_model`) → f16 GGUF → `precision` (q4_k_m, q5_k_m, q8_0) → `gguf_file`; `keep_f16: true` also writes `gguf_f16`, the baseline judge-eval compares against. `method: awq` needs a GPU job and exits 1. `STUB=1` writes 4-byte GGUF files.
+GGUF on CPU with llama.cpp: `model` (a Hugging Face id or hf-download's `hf_model`) → f16 GGUF → `precision` (q4_k_m, q5_k_m, q8_0) → `gguf_file`; `keep_f16: true` also writes `gguf_f16`, the baseline judge-eval compares against. `lora_adapter` (an r2 PEFT dir trained on `model`, such as unsloth-train's) also writes `gguf_lora`, the adapter as a GGUF LoRA. `method: awq` needs a GPU job and exits 1. `STUB=1` writes 4-byte GGUF files.
 
 ### `lm-eval`
 Benchmark evaluation with lm-evaluation-harness + LLM-as-judge comparison.
@@ -61,10 +61,10 @@ Benchmark evaluation with lm-evaluation-harness + LLM-as-judge comparison.
 LoRA fine-tune on Token Factory (`model`, `train_data`/`eval_data` ← data-prep's `train_jsonl`/`eval_jsonl`, `n_epochs`, `hyperparameters`, `timeout_min`) → `job` (ids, best checkpoint by validation loss, losses) and `lora_adapter` (PEFT), plus `loss_curve` in metrics. Runtime `api`; a failure, timeout or cancel cancels the Token Factory job, and a retry adopts this node's running or succeeded job instead of paying for a new one.
 
 ### `tf-deploy`
-`job` ← `${{ nodes.<finetune>.outputs.job }}` → `model_ref` for judge-eval and /compare, proven with one completion. Runtime `api`. If Token Factory has no per-token LoRA for the base, it fails with "serve it with vllm-serve + lora_adapter": wire tf-finetune's `lora_adapter` into vllm-serve instead.
+Retired (spike 1, 2026-10-22): Token Factory's per-token LoRA deploy (`POST /v0/models`) answers 410 for every base, so the node is hidden and the Agent never plans it. Serve tf-finetune's `lora_adapter` with vllm-serve instead.
 
 ### `judge-eval`
-`test_data` ← data-prep's `test_jsonl` (or `dataset`), `base_model_ref` and `tuned_model_ref` ← a Token Factory model id, a ModelRef JSON paired NEBIUS_API_KEY ↔ Token Factory, or `${{ nodes.<id>.outputs.model_ref | base_model_ref | gguf_file | gguf_f16 }}` (vllm-serve, tf-deploy, quantize; GGUF files are served in the node by llama-server) → `eval_summary` (win/tie/loss for the tuned model from two judge orders, `win_rate`, `consistency`, optional `exact_match`, and every sample with both judgments). Runtime `api`; `n_judge` rows go to Nemotron 3 Ultra, `max_samples` rows are answered; more than 10% failed rows fails the node after the summary is written.
+`test_data` ← data-prep's `test_jsonl` (or `dataset`), `base_model_ref` and `tuned_model_ref` ← a Token Factory model id, a ModelRef JSON paired NEBIUS_API_KEY ↔ Token Factory, or `${{ nodes.<id>.outputs.model_ref | base_model_ref | gguf_file | gguf_f16 }}` (vllm-serve, quantize; GGUF files are served in the node by llama-server), and optionally `tuned_lora` ← quantize's `gguf_lora`, which llama-server applies over the tuned GGUF (`--lora`) → `eval_summary` (win/tie/loss for the tuned model from two judge orders, `win_rate`, `consistency`, optional `exact_match`, and every sample with both judgments). Runtime `api`; `n_judge` rows go to Nemotron 3 Ultra, `max_samples` rows are answered; more than 10% failed rows fails the node after the summary is written.
 
 ## Input reference syntax
 

@@ -25,7 +25,10 @@ ui-deps:
 	pnpm -C tests/ui install --frozen-lockfile
 	pnpm -C tests/ui exec playwright install chromium  # a fresh clone has no browser; a cached one makes this a no-op
 ui-smoke: ui-deps ; $(PY) scripts/e2e_ui.py $(UI_ARGS)
-e2e:       ; $(PY) scripts/e2e_demo.py --max-cost 3
+# make e2e API=https://api.<domain> [MAX_COST=3]: the LIVE golden run (template 4, Lane B: an H100 Job, an L40S endpoint, the Ultra judge) on the
+# HOSTED API, as its admin (ORCHAPOD_ADMIN_TOKEN in the shell). It rents GPUs and spends up to MAX_COST (3 at most; MAX_COST is set below),
+# so it is the orchestrator's, on G2 day, after the prerequisites in hackathon/briefs/2026-10-22-qa-w9-report.md. It starts no local stack.
+e2e:       ; $(PY) scripts/e2e_demo.py --max-cost "$(MAX_COST)" --api "$(API)"
 # make agent-e2e INTENT=2 MAX_COST=0.5: ONE intent through the Agent for real, capped at MAX_COST (default and most: 3). It spends,
 # so it is the orchestrator's: .env loaded (set -a; . ./.env; set +a), `make up`, and it retags the shared orchapod/<node>:dev images.
 MAX_COST ?= 3

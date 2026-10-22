@@ -11,7 +11,7 @@ from pathlib import Path
 import e2e_ui as ui
 import pytest
 
-from tests.e2e.test_e2e_agent import ERRORS_1, I1, I2, fake_api
+from tests.e2e.test_e2e_agent import I2, I4, fake_api
 
 ROOT = Path(__file__).resolve().parents[2]
 SHELL = {"PATH": "/usr/bin", "NEBIUS_API_KEY": "secret", "TAVILY_API_KEY": "secret", "HF_TOKEN": "secret", "VASTAI_API_KEY": "secret"}
@@ -28,7 +28,7 @@ def test_playwright_env_says_where_the_app_is_and_which_templates_are_the_intent
     env = ui.playwright_env("http://127.0.0.1:3100", "http://127.0.0.1:8003", "http://127.0.0.1:8004", SHELL)
     assert env["E2E_WEB_URL"] == "http://127.0.0.1:3100" and env["E2E_API_URL"] == "http://127.0.0.1:8003"
     assert env["E2E_PUBLIC_API_URL"] == "http://127.0.0.1:8004"
-    assert json.loads(env["E2E_SLUGS"]) == {"1": "real-estate-compliance", "2": "movie-engagement"}  # the spec drives these two
+    assert json.loads(env["E2E_SLUGS"]) == {"2": "movie-engagement", "4": "nebius-docs-specialist"}  # the spec drives intent #2 and the golden path
     assert not {"NEBIUS_API_KEY", "TAVILY_API_KEY", "HF_TOKEN", "VASTAI_API_KEY"} & set(env)
 
 
@@ -36,6 +36,13 @@ def test_the_spec_and_the_config_read_exactly_what_the_driver_sets():
     """tests/ui is TypeScript and the driver is Python: a renamed variable on one side must not silently break the other."""
     text = "".join((ROOT / "tests/ui" / f).read_text() for f in ("smoke.spec.ts", "playwright.config.ts"))
     assert set(re.findall(r"process\.env\.(E2E_\w+)", text)) == set(ui.playwright_env("w", "a", "p", {}))
+
+
+def test_the_spec_asks_for_exactly_the_templates_the_driver_names():
+    """smoke.spec.ts reads a template as template(N); N is a key of E2E_SLUGS, and every key is used: a template the driver builds
+    images for but no test runs (or the reverse) is a smoke that proves less, or fails at its first call."""
+    asked = set(re.findall(r"\btemplate\((\d+)\)", (ROOT / "tests/ui/smoke.spec.ts").read_text()))
+    assert asked == set(json.loads(ui.playwright_env("w", "a", "p", {})["E2E_SLUGS"]))
 
 
 def test_playwright_is_pinned_and_locked():
@@ -60,16 +67,25 @@ def test_deps_missing_names_each_install(monkeypatch, tmp_path):
     assert ui.deps_missing() == []
 
 
-def test_ui_node_types_are_those_of_both_canonical_intents():
-    assert ui.ui_node_types(fake_api()) == {n["type"] for p in (I1, I2) for n in p["plan"]["nodes"]}
+def test_ui_node_types_are_those_of_intent_2_and_the_golden_path():
+    assert ui.ui_node_types(fake_api()) == {n["type"] for p in (I2, I4) for n in p["plan"]["nodes"]}
+    assert {"unsloth-train", "vllm-serve", "judge-eval"} <= ui.ui_node_types(fake_api())  # the golden path's images get built too
 
 
 def test_any_plan_error_of_a_canonical_intent_fails_the_smoke():
-    """ml-w4 merged: the golden path runs for real, so a piece the planner still misses fails (it used to SKIP)."""
-    with pytest.raises(RuntimeError, match="intent #1: serve: unknown input 'lora_adapter'"):
-        ui.ui_node_types(fake_api({I1["intent"]: ERRORS_1}))
-    with pytest.raises(RuntimeError, match="intent #2"):
+    with pytest.raises(RuntimeError, match="intent #2: synth: unknown input 'bogus'"):
         ui.ui_node_types(fake_api({I2["intent"]: ["synth: unknown input 'bogus'"]}))
+
+
+def test_the_golden_path_is_its_template_so_the_planner_is_not_asked():
+    """Like the e2e: its plan errors surface when /agent/run refuses it; here the template's node types are what get built."""
+    assert ui.ui_node_types(fake_api({I4["intent"]: ["serve: boom"]})) == ui.ui_node_types(fake_api())
+
+
+def test_a_missing_template_of_the_smoke_is_a_failure_that_names_it():
+    only_intent_2 = fake_api(templates=[I2])
+    with pytest.raises(RuntimeError, match=r"none of the 1 templates is the golden path \(slug 'nebius-docs-specialist'\)"):
+        ui.ui_node_types(only_intent_2)
 
 
 def group(pgid: int) -> list[int]:

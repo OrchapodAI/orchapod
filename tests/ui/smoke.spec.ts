@@ -5,7 +5,7 @@ const API = process.env.E2E_API_URL ?? "";
 // a second API at the public demo's scale, ORCHAPOD_ANON_SCALE=0.1 (scripts/e2e_ui.py PUBLIC_CAPS): $3 x 0.1 per run
 const PUBLIC_API = process.env.E2E_PUBLIC_API_URL ?? "";
 const PUBLIC_RUN_CAP = 3 * 0.1;
-// canonical intent -> the slug of its template (scripts/e2e_agent.py INTENTS): later templates may fine-tune too
+// template number -> its slug (scripts/e2e_ui.py SPEC_INTENTS): 2 is canonical intent #2, 4 the golden path (R25). Later templates exist
 const SLUGS: Record<string, string> = JSON.parse(process.env.E2E_SLUGS || "{}");
 
 type Template = {
@@ -17,12 +17,12 @@ type Template = {
 const usd = (n: number) => `$${n.toFixed(2)}`; // the page's own formats
 const mins = (n: number) => `~${Math.round(n)} min`;
 
-async function template(n: 1 | 2): Promise<Template> {
+async function template(n: 2 | 4): Promise<Template> {
   const r = await fetch(`${API}/agent/templates`);
   if (!r.ok) throw new Error(`GET /agent/templates -> HTTP ${r.status}`);
   const all: Template[] = await r.json();
   const found = all.find((t) => t.slug === SLUGS[n]);
-  if (!found) throw new Error(`none of the ${all.length} templates has the slug ${SLUGS[n]} of canonical intent #${n}`);
+  if (!found) throw new Error(`none of the ${all.length} templates has the slug ${SLUGS[n]} of template ${n}`);
   return found;
 }
 
@@ -212,14 +212,14 @@ async function checkEvalView(page: Page): Promise<void> {
 async function checkPlayground(page: Page): Promise<void> {
   await tab(page, "compare").click(); // the tab appears with two model refs
   const prompt = page.getByLabel("Prompt");
-  await prompt.fill("What does a Loan Estimate show?");
+  await prompt.fill("How do I fine-tune a model on Token Factory?");
   await prompt.locator("xpath=ancestor::form").getByRole("button", { name: /^compare$/i }).click(); // its form's button, not the tab
   await expect(page.getByText(/^done/)).toHaveCount(2, { timeout: 60_000 }); // both sides streamed to the end
 }
 
-test("golden path: template, run, eval view, compare playground", async ({ page }) => {
+test("golden path: template 4, run, eval view, compare playground", async ({ page }) => {
   const problems = watch(page);
-  const t = await template(1);
+  const t = await template(4);
   await runFromGallery(page, t);
 
   await untilDone(page, tab(page, "eval"), 180_000); // a failed node shows at once: do not wait out the eval tab

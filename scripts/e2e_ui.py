@@ -33,7 +33,7 @@ ROOT = demo.ROOT
 WEB, UI = ROOT / "apps/web", ROOT / "tests/ui"
 # pnpm 11 runs `pnpm install` before every command unless told not to (the Makefile's PNPM, and why).
 PNPM = ["pnpm", "--config.verify-deps-before-run=false"]
-SPEC_INTENTS = ("1", "2")  # the canonical intents tests/ui drives
+SPEC_INTENTS = ("2", "4")  # what tests/ui drives: canonical intent #2, and template 4, the golden path (R25)
 PLAYWRIGHT_TIMEOUT_S = 570  # tests/ui/playwright.config.ts: globalTimeout 9 min
 # The page's own API runs at full scale, so the golden path can run from the gallery; the template cap test reads
 # GET /agent/templates from a second API at the public demo's scale, and the canvas copy test sends every call of the page there.
@@ -61,16 +61,17 @@ def deps_missing() -> list[str]:
 
 
 def ui_node_types(c: httpx.Client) -> set[str]:
-    """The node types of the canonical intents the tests drive, whose images get built. Any plan error raises: a failure."""
+    """The node types of the templates the tests drive, whose images get built. A canonical intent's plan error raises (a failure,
+    never a skip); the golden path is its template, as in e2e_agent.py, so the planner is not asked."""
     templates, types = demo.get_templates(c), set()
     for number in SPEC_INTENTS:
         template = agent.canonical(templates, number)
         if template is None:
-            raise RuntimeError(f"none of the {len(templates)} templates is canonical intent #{number} (slug {agent.SLUGS[number]!r})")
-        reply = demo.call(c, "POST", "/agent/plan", json={"intent": template["intent"]})
-        if reply["errors"]:
-            raise RuntimeError(f"intent #{number}: {'; '.join(reply['errors'])}")
-        types |= {n["type"] for n in reply["plan"]["nodes"]}
+            raise RuntimeError(f"none of the {len(templates)} templates is {agent.name_of(number)} (slug {agent.SLUGS[number]!r})")
+        plan, _, errors = agent.plan_for(c, template["intent"], template, number)
+        if errors:
+            raise RuntimeError(f"{agent.label_of(number)}: {'; '.join(errors)}")
+        types |= {n["type"] for n in plan["nodes"]}
     return types
 
 

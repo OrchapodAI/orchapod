@@ -636,3 +636,6 @@ worktrees:
 - 2026-10-22T10:17Z SLIP (orchestrator): 331465d added NEXT_PUBLIC_* to .env.example and was pushed with test_env_example failing (`pytest | tail` hid the exit code).
   - Reverted within minutes (git revert, no force).
   - Rule for myself: `set -o pipefail` (or no pipe) whenever a test gates a commit.
+- 2026-10-22T10:19Z frontend-w7 round 1 done (2ea3305 sidebar: Datasets, Cost & GPUs, Settings removed with their pages; 548b1f3 the plan card/error scroll into view; web 37).
+  - Round 2 sent: the run view scrolls into view; page title 'Orchapod'; compare labels 'base'/'tuned'.
+- 2026-10-22T10:19Z make check on 9267767 (tip): exit 0.

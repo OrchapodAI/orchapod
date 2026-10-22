@@ -36,6 +36,6 @@ The numbers below come from one spike on a rented vast.ai A100 80 GB, outside Ne
 ## To record from live runs
 
 - TODO(D8): spike 1: wall time and cost of the 50-row fine-tune, the dataset validation messages, queue and adapter-validation time, and the fine-tuning price per trained token and where it is published.
-- TODO(D8): the golden run: Super's JSON-schema reliability over a whole synth run, Ultra as a judge (agreement between the two answer orders, cost per judged row) and Lightning as filter and reporter at volume. Spike 2 measured single calls (the Token Factory bullets above; `hackathon/briefs/2026-10-22-spike2-report.md`).
+- TODO(D8): the golden run: Super's JSON-schema reliability over a whole synth run, Ultra as a judge (agreement between the two answer orders, cost per judged row) and Lightning as filter and reporter at volume. Spike 2 measured single calls (the Token Factory bullets above; `scripts/spikes/spike2/results.jsonl`).
 - TODO(D8): the first Job and Endpoint on Nebius: time to Running including the image pull (the tutorial says about 5 minutes), and the Serverless AI rate against the list price.
 - TODO(D8): what worked well, and one line per finding above turned into the question we want answered.

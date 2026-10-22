@@ -522,3 +522,9 @@ worktrees:
 - 2026-10-22T06:49Z frontend-w6 re-review (sonnet): 4/5 fixed and verified with mutants; Important: the merge checkbox showed unchecked when the node omits merge (default true).
   - MERGED frontend-w6 → 3d12218, plus orchestrator fix: bool inputs fall back to f.default; /workflows/new examples = canonical intents #2, #3 + docs. Web 36/36, tsc clean.
   - Minors parked (P2): a Python test feeding STARTER_YAML to planner.review; the agent page's seenFinishedAt call site not pinned by a test; form number fields have no min.
+- 2026-10-22T06:53Z qa-w7 re-review (sonnet): APPROVED. All 8 findings fixed with tests that fail when the fix is undone; money invariants hold.
+  - Recommendation: real mode refuses a non-default NEBIUS_BASE_URL (the pairing rule cannot help: base == NEBIUS_BASE_URL by construction) → qa-w8.
+  - Minors → qa-w8: stub wording in check_run's failure line; open the DB with mode=ro.
+- 2026-10-22T06:53Z MERGED qa-w7 → 48a99a8 and devrel-w6 → c9818fc. pytest 963 passed; make check green.
+- 2026-10-22T06:53Z LIVE RUN #1 started: `make agent-e2e INTENT=2 MAX_COST=0.5`.
+  - Pre-flight: NEBIUS_BASE_URL unset (default), NEBIUS_API_KEY set, TAVILY unset, E2E_BIND_HOST unset; compose stack up.

@@ -30,7 +30,8 @@ INTENTS = [  # the /agent page's examples (apps/web/app/agent/page.tsx)
     "Generate synthetic data of movie likes, shares and subscribes",
     "Quantize a model which is an expert in maths",
 ]
-DOCS = "Distill a Nebius docs specialist: fine-tune Llama 3.1 8B on the Nebius AI Cloud and Token Factory docs"  # golden path
+DOCS = ("Distill a Nebius docs specialist: fine-tune NVIDIA Nemotron Nano 8B on the Nebius AI Cloud and Token Factory "
+        "docs")  # golden path
 GOOD = {"name": "qa-data", "nodes": [  # valid with the nodes on this branch's base
     {"id": "synth", "type": "synth-distilabel", "needs": [], "inputs": {"pipeline_template": "self-instruct", "n_samples": 100}},
     {"id": "prep", "type": "data-prep", "needs": ["synth"], "inputs": {"dataset": "${{ nodes.synth.outputs.dataset }}"}},
@@ -110,8 +111,8 @@ async def test_run_it_yourself_clones_each_template_at_reduced_scale(client, mon
         assert set(t["reduced_inputs"]) <= {n["id"] for n in t["plan"]["nodes"]}
         assert 0 < small["estimate"]["usd"] < t["estimate"]["usd"]
     # gpu-l40s-a at $1.55/h for vllm-serve's ~5 min start + keep_alive_min (real-estate was $0.83 before the start was
-    # billed); the docs specialist is mostly tf-finetune's typical $0.50 until spike 1 prices it
-    assert [round(t["reduced"]["estimate"]["usd"], 2) for t in templates] == [0.96, 0.03, 0.02, 0.55]
+    # billed); the docs specialist (Lane B) is mostly unsloth-train's typical 25 min of H100 ($1.88) plus that endpoint
+    assert [round(t["reduced"]["estimate"]["usd"], 2) for t in templates] == [0.96, 0.03, 0.02, 2.32]
     # fits: the reduced plan's estimate within the caller's run cap ($3 x ORCHAPOD_ANON_SCALE 0.1 when anonymous)
     assert [t["fits"] for t in templates] == [False, True, True, False]  # real-estate and docs: admin-only by default
     monkeypatch.setenv("ORCHAPOD_ADMIN_TOKEN", "s3cret")
@@ -130,10 +131,19 @@ def test_intent_2_runs_on_the_nodes_that_exist():
     assert planner.review(planner.templates()[1]["plan"])[:2] == ([], [])
 
 
-def test_the_docs_specialist_validates_at_both_scales_on_10_to_20_docs_pages():
+def test_the_docs_specialist_validates_at_both_scales_on_10_to_20_docs_pages(monkeypatch):
+    monkeypatch.setattr(planner, "get_providers", lambda: {"nebius": object()})  # unsloth-train needs a GPU provider
     t = planner.templates()[3]
     for plan in (t["plan"], planner.reduced(t)["plan"]):
-        assert planner.review(plan)[0] == []  # warnings only: the fine-tune price and tf-deploy wait on spike 1
+        assert planner.review(plan)[0] == []
+    # Lane B (Hari, 2026-10-22): NVIDIA's student, served beside its adapter on one endpoint that bills 25 min (R14)
+    nodes = {n["id"]: n for n in t["plan"]["nodes"]}
+    assert [n["type"] for n in t["plan"]["nodes"]] == ["web-research", "synth-distilabel", "data-prep", "unsloth-train",
+                                                       "vllm-serve", "judge-eval"]
+    assert nodes["train"]["inputs"]["model"] == nodes["serve"]["inputs"]["model"] == "nvidia/Llama-3.1-Nemotron-Nano-8B-v1"
+    assert (nodes["serve"]["inputs"]["keep_alive_min"], nodes["serve"]["inputs"]["lora_adapter"]) == (
+        25, "${{ nodes.train.outputs.lora_adapter }}")
+    assert planner.estimate(t["plan"])[0]["usd"] < 3  # about 25 min of H100 and the L40S endpoint, R14
     seeds = t["plan"]["nodes"][0]["inputs"]["seed_urls"]
     assert 10 <= len(set(seeds)) == len(seeds) <= 20
     assert all(re.fullmatch(r"https://docs\.(tokenfactory\.)?nebius\.com(/[a-z0-9-]+)+", u) for u in seeds), seeds
@@ -247,6 +257,7 @@ def test_review_checks_structure_refs_and_input_schemas():
         node("Bad", "data-prep", dataset="hf://x"),
         node("h", "synth-distilabel", ["a"], teacher_model="gpt-4o", seed_prompts=["${{ nodes.a.outputs.dataset }}"]),
         node("t", "unsloth-train", train_data="r2://b/train"),
+        node("i", "tf-deploy", job="j"),
     ]})
 
     for expected in [
@@ -257,6 +268,7 @@ def test_review_checks_structure_refs_and_input_schemas():
         "e: unknown input 'colour'",
         "e: dataset: a ref must be exactly one ${{ nodes.<id>.outputs.<name> }}",
         "f: unknown node type 'lm-eval'",  # hidden: the agent never plans it
+        "i: unknown node type 'tf-deploy'",  # hidden: Token Factory retired per-token LoRA deploy (410, spike 1)
         "g: unknown node type 'nope'",
         "Bad: id must be snake_case ([a-z][a-z0-9_]*)",
         "h: seed_prompts: refs resolve only at the top level of inputs",
@@ -376,24 +388,24 @@ def test_estimates_never_go_negative_and_count_page_extraction():
 
 
 def test_tf_finetune_is_priced_from_its_trained_tokens_once_the_base_has_a_price(monkeypatch):
-    docs = planner.templates()[3]  # synth 300 rows -> data-prep train_split 0.8 -> tf-finetune 2 epochs on Llama 3.1 8B
+    docs = planner.templates()[0]  # synth 300 rows -> data-prep train_split 0.8 -> tf-finetune 2 epochs on Llama 3.2 3B
     est, warnings = planner.estimate(docs["plan"])
     assert est["by_node"]["finetune"]["usd"] == 0.5  # TYPICAL until spike 1 fills the price ...
-    assert "finetune: no fine-tune price for meta-llama/Llama-3.1-8B-Instruct yet (spike 1); the estimate assumes $0.50" in warnings
+    assert "finetune: no fine-tune price for meta-llama/Llama-3.2-3B-Instruct yet (spike 1); the estimate assumes $0.50" in warnings
 
-    monkeypatch.setitem(PRICES["token_factory_finetune"], "meta-llama/Llama-3.1-8B-Instruct", 0.4e-6)  # $0.40 per 1M
+    monkeypatch.setitem(PRICES["token_factory_finetune"], "meta-llama/Llama-3.2-3B-Instruct", 0.4e-6)  # $0.40 per 1M
     est, warnings = planner.estimate(docs["plan"])
     assert est["by_node"]["finetune"]["usd"] == pytest.approx(300 * 0.8 * 250 * 2 * 0.4e-6)  # rows x tokens x epochs x $
     assert not [w for w in warnings if w.startswith("finetune:")]
     small = planner.reduced(docs)["estimate"]  # 40 rows, 1 epoch
     assert small["by_node"]["finetune"]["usd"] == pytest.approx(40 * 0.8 * 250 * 0.4e-6)
-    assert small["usd"] <= budget.run_cap(0.1)  # ... which decides `fits` on the public app
 
     plan = copy.deepcopy(docs["plan"])
     plan["nodes"][3]["inputs"]["hyperparameters"] = {"n_epochs": 3}  # wins over n_epochs, as in the node
     assert planner.estimate(plan)[0]["by_node"]["finetune"]["usd"] == pytest.approx(300 * 0.8 * 250 * 3 * 0.4e-6)
     hf = {"name": "p", "nodes": [node("prep", "data-prep", dataset="hf://x"),
-                                 node("ft", "tf-finetune", ["prep"], train_data="${{ nodes.prep.outputs.train_jsonl }}")]}
+                                 node("ft", "tf-finetune", ["prep"], model="meta-llama/Llama-3.2-3B-Instruct",
+                                      train_data="${{ nodes.prep.outputs.train_jsonl }}")]}
     est, warnings = planner.estimate(hf)
     assert (est["by_node"]["ft"]["usd"], warnings) == (0.5, [
         "ft: the rows of train_data are unknown (not from synth-distilabel); the estimate assumes $0.50"])

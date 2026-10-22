@@ -484,6 +484,7 @@ NODE_REGISTRY[NodeType.TF_DEPLOY] = {
     "inputs_schema": TFDeployInputs,
     "outputs_schema": TFDeployOutputs,
     "runtime": "api",
+    "hidden": True,  # retired: POST /v0/models answers 410 for every base (spike 1, R24); vllm-serve serves the adapter
 }
 
 

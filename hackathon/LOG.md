@@ -556,3 +556,8 @@ worktrees:
   - prepare_test_data failed: datasets 'Config name is missing' (gsm8k: main, socratic). The live plan omitted hf_config, which the template sets.
   - The failure path worked as designed: failed fast, nothing billed past planning, and Super's report says what failed.
   - Root-cause fix (orchestrator, data lane): data-prep picks 'main' (else the first config) when a dataset has several and no default, with a warning; agent_knowledge names hf_config explicitly. Re-running live.
+- 2026-10-22T07:34Z LIVE RUN #3 PASS (make agent-e2e INTENT=3 MAX_COST=0.5 on 0a32353, after the data-prep config fix).
+  - Super planned 'quantize-math-expert' live: hf_download → prepare_test_data → quantize_model → evaluate_quantization; estimate $0.24 / 35.3 min.
+  - Run 59786797-26ca-4a01-9b80-80a730234a97 succeeded in 255 s; cost $0.0128 (Ultra judge, live); 50 gsm8k test rows; Super's report ready (892 chars).
+  - Total $0.0175 (run $0.0128 + planner/reporter $0.0047).
+  - FOLLOW-UP (qa): a real run should also print eval_summary's n, judged, win_rate, exact_match and the base/tuned model ids, so LOG/README get the numbers.

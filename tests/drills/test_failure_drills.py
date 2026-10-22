@@ -93,7 +93,8 @@ class Nodes:
             if body is None:
                 module = load_container(node_type)
                 for name, sdk in (("io", io), ("log", log), ("cost", cost)):
-                    m.setattr(module, name, sdk)  # a module first loaded under tests/containers' mocks still holds them
+                    # a module first loaded under tests/containers' mocks still holds them; quantize has no cost
+                    m.setattr(module, name, sdk, raising=False)
                 body = module.main
             try:
                 body()
@@ -354,11 +355,12 @@ async def test_a_spent_day_share_refuses_plan_and_start_with_the_budget_sentence
 
 async def test_a_plan_above_the_run_cap_is_refused_with_what_it_needs(client, monkeypatch):
     monkeypatch.setattr(ex, "launch", lambda *_: pytest.fail("a refused run must not launch"))
-    docs = next(t for t in planner.templates() if t["slug"] == "nebius-docs-specialist")
-    need = planner.review(docs["plan"])[2]["usd"]
+    plan = {"name": "big-qa", "nodes": [{"id": "synth", "type": "synth-distilabel", "needs": [], "inputs": {
+        "pipeline_template": "self-instruct", "n_samples": 2000, "max_usd": 1.0}}]}  # no GPU node: that would be a 403
+    need = planner.review(plan)[2]["usd"]
     assert need > 0.30, "the drill needs a plan above the anonymous run cap ($3 × 0.1)"
 
-    r = await client.post("/agent/run", json={"intent": docs["intent"], "plan": docs["plan"]})
+    r = await client.post("/agent/run", json={"intent": "Q&A pairs about sourdough baking", "plan": plan})
 
     assert (r.status_code, r.json()["detail"]) == (402, f"run cap $0.3: $0.30 left, the plan needs ${need:.2f}")
 

@@ -25,6 +25,7 @@ LORA = {"base_url": TF_BASE, "model": "orchapod-lora", "api_key_env": "NEBIUS_AP
 TEST = "r2://orchapod-artifacts/runs/r1/prep/test_jsonl"
 SERVE_REF = "r2://orchapod-artifacts/runs/r1/serve/model_ref"
 GGUF_F16, GGUF_Q4 = "r2://orchapod-artifacts/runs/r1/quantize/gguf_f16", "r2://orchapod-artifacts/runs/r1/quantize/gguf_file"
+GGUF_LORA = "r2://orchapod-artifacts/runs/r1/quantize/gguf_lora"
 ENDPOINT = {"base_url": "https://ep.example/v1", "model": "tuned", "api_key_env": "ORCHAPOD_ENDPOINT_TOKEN",
             "base_model": LLAMA}
 
@@ -113,8 +114,8 @@ def test_registry_row_and_defaults():
     meta = NODE_REGISTRY[NodeType.JUDGE_EVAL]
     assert (meta["runtime"], meta["inputs_schema"], meta["outputs_schema"]) == ("api", JudgeEvalInputs, JudgeEvalOutputs)
     i = JudgeEvalInputs(test_data=TEST, base_model_ref=LLAMA, tuned_model_ref=LORA)
-    assert (i.judge_model, i.max_samples, i.n_judge, i.temperature, i.max_tokens, i.exact_match) == (
-        ULTRA, 60, None, 0.0, 512, False)
+    assert (i.judge_model, i.max_samples, i.n_judge, i.temperature, i.max_tokens, i.exact_match, i.tuned_lora) == (
+        ULTRA, 60, None, 0.0, 512, False, None)
     assert set(JudgeEvalOutputs.model_fields) == {"eval_summary"}
 
 
@@ -449,3 +450,44 @@ def test_a_llama_server_that_dies_while_loading_exits_1_with_its_last_line(llama
     with pytest.raises(SystemExit) as e:
         llama(base_model_ref=GGUF_F16, tuned_model_ref=GGUF_Q4, n_judge=0)
     assert e.value.code == 1 and "llama-server" in last_error() and "failed to load model" in last_error()
+
+
+# --- tuned = the base GGUF plus a GGUF LoRA (quantize's gguf_lora): Lane A/B on CPU, R24's fallback ---------------------
+
+LORA_SIDE = {"base_url": None, "model": GGUF_LORA, "api_key_env": "", "base_model": GGUF_Q4}
+
+
+def test_stub_serves_a_tuned_lora_offline(node, monkeypatch, mock_orchapod_io):
+    monkeypatch.setenv("STUB", "1")
+    monkeypatch.setattr(je.subprocess, "Popen", MagicMock(side_effect=AssertionError("no llama-server under STUB")))
+    node.objects[GGUF_Q4] = node.objects[GGUF_LORA] = b"GGUF"  # quantize's STUB files
+    out = node(base_model_ref=GGUF_Q4, tuned_model_ref=GGUF_Q4, tuned_lora=GGUF_LORA)
+    assert out["tuned"] == {**LORA_SIDE, "base_url": "http://127.0.0.1:8082/v1"}  # the LoRA, on its base GGUF
+    assert out["base"]["model"] == GGUF_Q4 and (out["stub"], out["errors"], node.seen) == (True, 0, [])
+    fetched = [c.args[0] for c in mock_orchapod_io.download_input.call_args_list]
+    assert fetched.count(GGUF_Q4) == 1  # base and tuned name one GGUF (about 5 GB at 8B): downloaded once
+
+
+def test_the_tuned_llama_server_applies_the_lora_and_the_base_server_does_not(llama):
+    llama.objects[GGUF_Q4], llama.objects[GGUF_LORA] = b"GGUF and weights", b"GGUF lora"
+    out = llama([row("q1", "#### 72")], base_model_ref=GGUF_Q4, tuned_model_ref=GGUF_Q4, tuned_lora=GGUF_LORA, n_judge=0)
+    ports = je.LLAMA_PORTS
+    base, tuned = (json.loads((llama.bin / f"argv-{ports[side]}.json").read_text()) for side in ("base", "tuned"))
+    assert "--lora" not in base and Path(tuned[tuned.index("--lora") + 1]).read_bytes() == b"GGUF lora"
+    assert base[base.index("-m") + 1] == tuned[tuned.index("-m") + 1]  # one GGUF file for both sides
+    assert [(argv[argv.index("-np") + 1], argv[argv.index("-c") + 1], "--jinja" in argv) for argv in (base, tuned)] == [
+        (str(je.WORKERS), str(je.WORKERS * (512 + 2048)), True)] * 2  # the same serving for both sides
+    assert out["tuned"] == {**LORA_SIDE, "base_url": f"http://127.0.0.1:{ports['tuned']}/v1"} and out["errors"] == 0
+
+
+@pytest.mark.parametrize("inputs, error", [
+    ({"tuned_lora": "${{ nodes.quantize.outputs.gguf_lora }}"}, "unresolved ref tuned_lora"),
+    ({"tuned_lora": GGUF_LORA, "tuned_model_ref": LORA}, "tuned_lora needs a GGUF tuned_model_ref"),
+    ({"tuned_lora": TEST}, f"refused ModelRef tuned_lora: {TEST} is neither a GGUF file nor a model_ref JSON"),
+    ({"tuned_lora": LLAMA}, "tuned_lora must be quantize's gguf_lora"),  # a model id, not a LoRA file
+], ids=["unresolved", "tuned-not-gguf", "lora-not-gguf", "lora-a-model-id"])
+def test_a_tuned_lora_that_cannot_be_served_exits_1_before_any_answer(node, inputs, error):
+    node.objects[GGUF_Q4], node.objects[GGUF_LORA] = b"GGUF", b"GGUF lora"
+    with pytest.raises(SystemExit) as e:
+        node(**{"base_model_ref": GGUF_Q4, "tuned_model_ref": GGUF_Q4, **inputs})
+    assert e.value.code == 1 and last_error().startswith(error) and node.seen == []

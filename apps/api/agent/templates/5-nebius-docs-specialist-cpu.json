@@ -1,0 +1,58 @@
+{
+  "slug": "nebius-docs-specialist-cpu",
+  "title": "Nemotron Nano docs specialist, judged on CPU",
+  "intent": "Distill a Nebius docs specialist and judge it on CPU without an endpoint: train Nemotron Nano 8B, then compare base and tuned",
+  "rationale": "The Nebius docs specialist without a GPU endpoint (no L40S quota needed): the same 20 docs pages, grounded Q&A, split and Unsloth LoRA on Nemotron Nano 8B (an H100 Serverless Job), then quantize turns the student into a q4_k_m GGUF and its adapter into a GGUF LoRA, and judge-eval serves both with llama.cpp on CPU: base = the GGUF, tuned = the same GGUF plus the LoRA, so the adapter is the only difference. Nemotron 3 Ultra judges base against tuned on held-out questions with the source passage as reference. It saves the endpoint (about $0.78) but answers slowly on CPU (answers capped at 256 tokens), and its training Job rents an H100, so on the public app only the admin runs it.",
+  "plan": {
+    "name": "nebius-docs-specialist-nemotron-nano-8b-cpu",
+    "nodes": [
+      {"id": "research", "type": "web-research", "needs": [], "inputs": {
+        "seed_urls": ["https://docs.tokenfactory.nebius.com/post-training/how-to-fine-tune",
+                      "https://docs.tokenfactory.nebius.com/post-training/models",
+                      "https://docs.nebius.com/serverless/overview",
+                      "https://docs.nebius.com/serverless/tutorials/deploy-model",
+                      "https://docs.nebius.com/serverless/quickstart/jobs",
+                      "https://docs.nebius.com/serverless/pricing-quotas",
+                      "https://docs.tokenfactory.nebius.com/post-training/datasets",
+                      "https://docs.tokenfactory.nebius.com/ai-models-inference/dedicated-endpoints/custom-weights",
+                      "https://docs.tokenfactory.nebius.com/ai-models-inference/dedicated-endpoints/deploy-api",
+                      "https://docs.tokenfactory.nebius.com/ai-models-inference/overview",
+                      "https://docs.tokenfactory.nebius.com/ai-models-inference/rate-limits",
+                      "https://docs.tokenfactory.nebius.com/other-capabilities/billing-new",
+                      "https://docs.nebius.com/compute/resources/pricing",
+                      "https://docs.nebius.com/object-storage/resources/pricing",
+                      "https://docs.nebius.com/serverless/tutorials/fine-tuning",
+                      "https://docs.nebius.com/object-storage/overview",
+                      "https://docs.nebius.com/object-storage/quickstart",
+                      "https://docs.nebius.com/compute/resources/quotas-limits",
+                      "https://docs.nebius.com/serverless/jobs/manage",
+                      "https://docs.nebius.com/serverless/endpoints/manage"],
+        "max_pages": 20}},
+      {"id": "synth", "type": "synth-distilabel", "needs": ["research"], "inputs": {
+        "pipeline_template": "grounded", "corpus": "${{ nodes.research.outputs.corpus }}",
+        "teacher_model": "nvidia/nemotron-3-super-120b-a12b", "n_samples": 300, "max_usd": 0.5, "max_tokens": 800,
+        "instructions": "Questions a developer asks while building on Nebius: fine-tuning and deploying models on Token Factory, Serverless AI jobs and endpoints, Object Storage, quotas and prices; answers in at most three sentences, using only the passage, with its exact names, commands and numbers. Where a page lists prices by date, quote the latest (as listed after October 1, 2026), never an older one."}},
+      {"id": "prep", "type": "data-prep", "needs": ["synth"], "inputs": {
+        "dataset": "${{ nodes.synth.outputs.dataset }}", "format": "chatml", "train_split": 0.8, "test_split": 0.1}},
+      {"id": "train", "type": "unsloth-train", "needs": ["prep"], "inputs": {
+        "model": "nvidia/Llama-3.1-Nemotron-Nano-8B-v1", "train_data": "${{ nodes.prep.outputs.train_jsonl }}",
+        "eval_data": "${{ nodes.prep.outputs.eval_jsonl }}", "lora_alpha": 16, "max_steps": 60, "checkpoint_steps": 30,
+        "merge": false}},
+      {"id": "quantize", "type": "quantize", "needs": ["train"], "inputs": {
+        "model": "nvidia/Llama-3.1-Nemotron-Nano-8B-v1", "method": "gguf", "precision": "q4_k_m",
+        "lora_adapter": "${{ nodes.train.outputs.lora_adapter }}"}},
+      {"id": "evaluate", "type": "judge-eval", "needs": ["prep", "quantize"], "inputs": {
+        "test_data": "${{ nodes.prep.outputs.test_jsonl }}",
+        "base_model_ref": "${{ nodes.quantize.outputs.gguf_file }}",
+        "tuned_model_ref": "${{ nodes.quantize.outputs.gguf_file }}",
+        "tuned_lora": "${{ nodes.quantize.outputs.gguf_lora }}",
+        "judge_model": "nvidia/Nemotron-3-Ultra-550b-a55b", "max_samples": 30, "max_tokens": 256}}
+    ]
+  },
+  "reduced_inputs": {
+    "research": {"max_pages": 6},
+    "synth": {"n_samples": 40, "max_usd": 0.05},
+    "train": {"max_steps": 10, "checkpoint_steps": 5},
+    "evaluate": {"max_samples": 5}
+  }
+}

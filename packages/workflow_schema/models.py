@@ -194,10 +194,13 @@ class UnslothTrainInputs(BaseModel):
     checkpoint_steps: int = Field(default=100, ge=1, description="Upload a checkpoint (and validate) every N steps; "
                                                                  "a retry resumes from the newest")
     load_in_4bit: bool = Field(default=False, description="QLoRA; the default is 16-bit LoRA")
+    merge: bool = Field(default=True, description="Also merge the adapter into 16-bit weights (merged_model, ~16 GB for "
+                                                  "8B); false when the plan reads only lora_adapter (vllm-serve with "
+                                                  "lora_adapter, quantize)")
 
 class UnslothTrainOutputs(BaseModel):
-    lora_adapter: str       # PEFT dir; metadata {format: peft, base_model}
-    merged_model: str       # 16-bit HF dir (vllm-serve's model); metadata {format: hf, base_model}
+    lora_adapter: str               # PEFT dir; metadata {format: peft, base_model}
+    merged_model: str | None = None  # with merge: 16-bit HF dir (vllm-serve's model); metadata {format: hf, base_model}
 
 
 class DistillSFTInputs(BaseModel):
@@ -228,10 +231,14 @@ class QuantizeInputs(BaseModel):
     precision: GGUFPrecision = Field(default=GGUFPrecision.Q4_K_M, description="GGUF only")
     bits: int = Field(default=4, description="AWQ only")
     keep_f16: bool = Field(default=False, description="Also write the f16 GGUF as gguf_f16, judge-eval's honest baseline")
+    lora_adapter: str | None = Field(default=None, description="r2 PEFT LoRA dir trained on this model (unsloth-train or "
+                                                               "tf-finetune lora_adapter): also written as gguf_lora, which "
+                                                               "judge-eval's tuned_lora serves on top of gguf_file on CPU")
 
 class QuantizeOutputs(BaseModel):
     gguf_file: str | None = None    # method=gguf: the quantized file; metadata {format, precision, base_model, size_bytes}
     gguf_f16: str | None = None     # method=gguf with keep_f16: the f16 file it was quantized from
+    gguf_lora: str | None = None    # with lora_adapter: the adapter as an f32 GGUF LoRA (llama-server --lora)
     awq_model: str | None = None    # method=awq (a GPU job; not built yet)
 
 
@@ -375,7 +382,8 @@ NODE_REGISTRY: dict[NodeType, dict] = {
         "runtime": "cpu",
     },
     NodeType.UNSLOTH_TRAIN: {
-        "description": "Fine-tune a model with LoRA SFT via Unsloth (2-5x faster, 80% less VRAM).",
+        "description": "Fine-tune a model with LoRA SFT via Unsloth (2-5x faster, 80% less VRAM): lora_adapter, and with "
+                       "merge (default true) the merged 16-bit weights as merged_model.",
         "inputs_schema": UnslothTrainInputs,
         "outputs_schema": UnslothTrainOutputs,
         "runtime": "gpu",
@@ -388,7 +396,8 @@ NODE_REGISTRY: dict[NodeType, dict] = {
         "hidden": True,  # the agent never plans it: off the demo path
     },
     NodeType.QUANTIZE: {
-        "description": "Quantize a model to GGUF (for Ollama/llama.cpp) or AWQ (for vLLM).",
+        "description": "Quantize a model to GGUF (for Ollama/llama.cpp) or AWQ (for vLLM); with lora_adapter, also "
+                       "convert that LoRA to a GGUF LoRA (gguf_lora), so judge-eval can serve the tuned model on CPU.",
         "inputs_schema": QuantizeInputs,
         "outputs_schema": QuantizeOutputs,
         "runtime": "cpu",  # GGUF is CPU; AWQ needs GPU — handled inside the container
@@ -484,6 +493,7 @@ NODE_REGISTRY[NodeType.TF_DEPLOY] = {
     "inputs_schema": TFDeployInputs,
     "outputs_schema": TFDeployOutputs,
     "runtime": "api",
+    "hidden": True,  # retired: POST /v0/models answers 410 for every base (spike 1, R24); vllm-serve serves the adapter
 }
 
 
@@ -496,9 +506,9 @@ class JudgeEvalInputs(BaseModel):
                                        "(or dataset); context and source_url are kept")
     base_model_ref: dict[str, Any] | str = Field(
         description="ModelRef JSON {base_url, model, api_key_env, base_model}, a Token Factory model id, or a ref to "
-                    "vllm-serve base_model_ref, tf-deploy model_ref or quantize gguf_f16 (served with llama-server)")
+                    "vllm-serve base_model_ref or quantize gguf_f16 / gguf_file (served with llama-server)")
     tuned_model_ref: dict[str, Any] | str = Field(
-        description="Same forms as base_model_ref: vllm-serve model_ref, tf-deploy model_ref or quantize gguf_file")
+        description="Same forms as base_model_ref: vllm-serve model_ref or quantize gguf_file")
     judge_model: str = Field(default="nvidia/Nemotron-3-Ultra-550b-a55b", description="Nemotron on Token Factory")
     max_samples: int = Field(default=60, ge=1, description="Both models answer the first max_samples rows")
     n_judge: int | None = Field(default=None, ge=0, description="The judge sees the first n rows; empty = max_samples")
@@ -506,6 +516,9 @@ class JudgeEvalInputs(BaseModel):
     max_tokens: int = Field(default=512, ge=16, le=8192, description="Decoding for both models (identical)")
     exact_match: bool = Field(default=False, description="Also compare the last number of each answer with the "
                                                          "reference's final number (GSM8K '#### n')")
+    tuned_lora: str | None = Field(default=None, description="quantize's gguf_lora: llama-server applies this GGUF LoRA on "
+                                                             "top of tuned_model_ref's GGUF (e.g. the same gguf_file as "
+                                                             "the base), so tuned = base + adapter on CPU")
 
 class JudgeEvalOutputs(BaseModel):
     eval_summary: str  # {n, judged, wins, ties, losses, errors, win_rate, consistency, exact_match, base, tuned, ..., samples}

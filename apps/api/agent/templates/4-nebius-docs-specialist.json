@@ -1,10 +1,10 @@
 {
   "slug": "nebius-docs-specialist",
-  "title": "Llama 8B tuned as a Nebius docs specialist",
-  "intent": "Distill a Nebius docs specialist: fine-tune Llama 3.1 8B on the Nebius AI Cloud and Token Factory docs",
-  "rationale": "Tavily extracts 20 Nebius docs pages (Token Factory fine-tuning, models, Dedicated-endpoint deploy and billing; AI Cloud Serverless jobs and endpoints, Compute and Object Storage prices, Object Storage, quotas), Nemotron 3 Super writes short Q&A grounded in them, and Token Factory fine-tunes Llama 3.1 8B with LoRA. tf-deploy serves the adapter per token on Token Factory, which is unverified until spike 1; if Token Factory refuses it, serve tf-finetune's lora_adapter with vllm-serve. Nemotron 3 Ultra then judges base against tuned on held-out questions with the source passage as reference, so every answer can be checked against the docs.",
+  "title": "Nemotron Nano 8B tuned as a Nebius docs specialist",
+  "intent": "Distill a Nebius docs specialist: fine-tune NVIDIA Nemotron Nano 8B on the Nebius AI Cloud and Token Factory docs",
+  "rationale": "Tavily extracts 20 Nebius docs pages (Token Factory fine-tuning, models, Dedicated-endpoint deploy and billing; AI Cloud Serverless jobs and endpoints, Compute and Object Storage prices, Object Storage, quotas), Nemotron 3 Super writes short Q&A grounded in them, and Unsloth trains NVIDIA's open Nemotron Nano 8B with a 16-bit LoRA on an H100 Serverless Job (spike 4's recipe: 60 steps, about two epochs). vllm-serve hosts the student and its adapter side by side on one L40S endpoint for 15 minutes (R14), so base and tuned answer from one serving stack with identical decoding, and Nemotron 3 Ultra then judges base against tuned on held-out questions with the source passage as reference, so every answer can be checked against the docs. It rents GPUs (under the $3 run cap, R14), so on the public app only the admin runs it.",
   "plan": {
-    "name": "nebius-docs-specialist-llama-8b",
+    "name": "nebius-docs-specialist-nemotron-nano-8b",
     "nodes": [
       {"id": "research", "type": "web-research", "needs": [], "inputs": {
         "seed_urls": ["https://docs.tokenfactory.nebius.com/post-training/how-to-fine-tune",
@@ -34,22 +34,25 @@
         "instructions": "Questions a developer asks while building on Nebius: fine-tuning and deploying models on Token Factory, Serverless AI jobs and endpoints, Object Storage, quotas and prices; answers in at most three sentences, using only the passage, with its exact names, commands and numbers. Where a page lists prices by date, quote the latest (as listed after October 1, 2026), never an older one."}},
       {"id": "prep", "type": "data-prep", "needs": ["synth"], "inputs": {
         "dataset": "${{ nodes.synth.outputs.dataset }}", "format": "chatml", "train_split": 0.8, "test_split": 0.1}},
-      {"id": "finetune", "type": "tf-finetune", "needs": ["prep"], "inputs": {
-        "model": "meta-llama/Llama-3.1-8B-Instruct", "train_data": "${{ nodes.prep.outputs.train_jsonl }}",
-        "eval_data": "${{ nodes.prep.outputs.eval_jsonl }}", "n_epochs": 2}},
-      {"id": "deploy", "type": "tf-deploy", "needs": ["finetune"], "inputs": {
-        "job": "${{ nodes.finetune.outputs.job }}"}},
-      {"id": "evaluate", "type": "judge-eval", "needs": ["prep", "deploy"], "inputs": {
+      {"id": "train", "type": "unsloth-train", "needs": ["prep"], "inputs": {
+        "model": "nvidia/Llama-3.1-Nemotron-Nano-8B-v1", "train_data": "${{ nodes.prep.outputs.train_jsonl }}",
+        "eval_data": "${{ nodes.prep.outputs.eval_jsonl }}", "lora_alpha": 16, "max_steps": 60, "checkpoint_steps": 30,
+        "merge": false}},
+      {"id": "serve", "type": "vllm-serve", "needs": ["train"], "inputs": {
+        "model": "nvidia/Llama-3.1-Nemotron-Nano-8B-v1", "lora_adapter": "${{ nodes.train.outputs.lora_adapter }}",
+        "keep_alive_min": 15}},
+      {"id": "evaluate", "type": "judge-eval", "needs": ["prep", "serve"], "inputs": {
         "test_data": "${{ nodes.prep.outputs.test_jsonl }}",
-        "base_model_ref": "meta-llama/Llama-3.1-8B-Instruct",
-        "tuned_model_ref": "${{ nodes.deploy.outputs.model_ref }}",
+        "base_model_ref": "${{ nodes.serve.outputs.base_model_ref }}",
+        "tuned_model_ref": "${{ nodes.serve.outputs.model_ref }}",
         "judge_model": "nvidia/Nemotron-3-Ultra-550b-a55b", "max_samples": 30}}
     ]
   },
   "reduced_inputs": {
     "research": {"max_pages": 6},
     "synth": {"n_samples": 40, "max_usd": 0.05},
-    "finetune": {"n_epochs": 1},
+    "train": {"max_steps": 10, "checkpoint_steps": 5},
+    "serve": {"keep_alive_min": 10},
     "evaluate": {"max_samples": 5}
   }
 }

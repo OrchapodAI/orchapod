@@ -25,7 +25,8 @@ Three intents define "done"; each must run from the chat box with no manual edit
 | "Create a fine-tuned Llama 3B over all the real estate compliance in USA." | **Llama 3B tuned on US real-estate compliance** | web-research → synth-distilabel (grounded Q&A) → data-prep → tf-finetune (Llama 3.2 3B) → vllm-serve (base and adapter on one Serverless Endpoint; TODO(D8): untested) → judge-eval (base vs tuned) → report |
 | "Create synthetic data of movie likes, shares and subscribes." | **Synthetic movie likes, shares and subscribes** | synth-distilabel (structured rows) → data-prep (validate, dedupe, stats) → dataset with a download link. No training, and the plan says so |
 | "Quantize a model which is an expert in maths." | **A maths expert quantized to GGUF** | hf-download (Qwen2.5-Math-1.5B-Instruct) → quantize (GGUF q4_k_m on CPU, keeping the f16 GGUF as the baseline) → data-prep (50 GSM8K test questions) → judge-eval (f16 vs q4_k_m: exact match on all 50, Nemotron 3 Ultra judges 20) → report |
-| "Distill a Nebius docs specialist: fine-tune Llama 3.1 8B on the Nebius AI Cloud and Token Factory docs" | **Llama 8B tuned as a Nebius docs specialist** | web-research (20 Nebius docs pages) → synth-distilabel (grounded Q&A) → data-prep → tf-finetune (Llama 3.1 8B) → tf-deploy (per-token LoRA on Token Factory, else vllm-serve; TODO(D8): spike 1) → judge-eval → report |
+| "Distill a Nebius docs specialist: fine-tune NVIDIA Nemotron Nano 8B on the Nebius AI Cloud and Token Factory docs" | **Nemotron Nano 8B tuned as a Nebius docs specialist** | web-research (20 Nebius docs pages) → synth-distilabel (grounded Q&A) → data-prep → unsloth-train (Nemotron Nano 8B, 16-bit LoRA on an H100 Serverless Job) → vllm-serve (base and adapter on one Serverless Endpoint; TODO(D8): untested) → judge-eval (base vs tuned) → report |
+| "Distill a Nebius docs specialist and judge it on CPU without an endpoint: train Nemotron Nano 8B, then compare base and tuned" | **Nemotron Nano docs specialist, judged on CPU** | web-research (the same 20 pages) → synth-distilabel (grounded Q&A) → data-prep → unsloth-train (Nemotron Nano 8B, H100 Serverless Job) → quantize (the student to GGUF q4_k_m, its adapter to a GGUF LoRA) → judge-eval (llama.cpp on CPU: the GGUF against the GGUF plus the LoRA; TODO(D8): untested at 8B) → report |
 
 In STUB mode all three canonical intents pass end to end (Results). TODO(D8): which intents have run live, with run ids and costs.
 
@@ -51,7 +52,6 @@ A typical run: research the topic, generate grounded synthetic data, prepare the
 | `synth-distilabel` | cpu | synthetic data: self-instruct, evol-instruct, magpie, grounded Q&A from passages, or rows that match a JSON Schema | Nemotron 3 Super |
 | `data-prep` | cpu | validate, exact and near dedupe, optional quality filter, seeded train / eval / test split stratified by source URL, so each source's rows spread across the splits | Nemotron 3.5 Lightning (filter) |
 | `tf-finetune` | api | LoRA fine-tune, best checkpoint by validation loss, loss curve | Token Factory fine-tuning |
-| `tf-deploy` | api | deploy the adapter as a per-token LoRA model if Token Factory accepts the base (TODO(D8): spike 1), then prove it with one completion | Token Factory |
 | `unsloth-train` | gpu | 16-bit LoRA with Unsloth on a Nemotron student, resumable checkpoints | Nebius Serverless Job |
 | `vllm-serve` | api | creates a vLLM endpoint for the base model and the adapter side by side (TODO(D8): untested), registers its expiry and exits; the endpoint rents a GPU, so the public caps treat it as a GPU node | Nebius Serverless Endpoint |
 | `judge-eval` | api | base vs tuned on held-out questions: identical decoding, a reference-guided judge, both answer orders; GGUF files are served locally by llama.cpp | Nemotron 3 Ultra |
@@ -86,9 +86,9 @@ No other model provider is called: the Anthropic and OpenAI code paths (the plan
 
 ### Token Factory fine-tuning (Lane A)
 
-`tf-finetune` uploads the train and validation files, creates a LoRA job, polls it, keeps the checkpoint with the lowest validation loss and saves the adapter and the loss curve. `tf-deploy` deploys that checkpoint as a per-token LoRA model if Token Factory accepts the base (TODO(D8): spike 1), then sends one proving completion. Token Factory fine-tunes Llama, Qwen, gpt-oss, DeepSeek and Gemma models but not Nemotron, so Lane A tunes a Llama model (3.2 3B or 3.1 8B) that Nemotron teaches and judges.
+`tf-finetune` uploads the train and validation files, creates a LoRA job, polls it, keeps the checkpoint with the lowest validation loss and saves the adapter and the loss curve. Token Factory no longer deploys LoRA adapters per token (spike 1: `POST /v0/models` answers 410), so `vllm-serve` serves the adapter beside its base on one Serverless Endpoint. Token Factory fine-tunes Llama, Qwen, gpt-oss, DeepSeek and Gemma models but not Nemotron, so Lane A tunes a Llama model (3.2 3B or 3.1 8B) that Nemotron teaches and judges.
 
-TODO(D8): spike 1 decides the deploy path (per-token LoRA through `POST /v0/models`, or `vllm-serve` with the adapter on a Serverless Endpoint). State the answer and the exact base model id here. No fine-tune has run yet: until spike 1 records the price per trained token, the client refuses to start an unpriced job.
+TODO(D8): spike 1 fine-tuned `meta-llama/Llama-3.1-8B-Instruct` (the id the API accepts; `Meta-Llama-3.1-8B-Instruct` gets 422) but found no published price per trained token, so the client refuses to start an unpriced job until the rate is known.
 
 ### Nebius AI Cloud (Lane B)
 
@@ -146,7 +146,7 @@ On Linux, add `--host 0.0.0.0` to the uvicorn line (it then listens on every int
 for n in synth-distilabel data-prep; do docker build -t orchapod/$n:dev -f containers/$n/Dockerfile .; done
 ```
 
-The other templates need `hf-download quantize data-prep judge-eval` (maths), `web-research synth-distilabel data-prep tf-finetune vllm-serve judge-eval` (real-estate) and `web-research synth-distilabel data-prep tf-finetune tf-deploy judge-eval` (Nebius docs). `unsloth-train` (Lane B) is an amd64 CUDA image of about 20 GB; build it only for GPU runs.
+The other templates need `hf-download quantize data-prep judge-eval` (maths), `web-research synth-distilabel data-prep tf-finetune vllm-serve judge-eval` (real-estate), `web-research synth-distilabel data-prep unsloth-train vllm-serve judge-eval` (Nebius docs) and `web-research synth-distilabel data-prep unsloth-train quantize judge-eval` (Nebius docs, judged on CPU). `unsloth-train` (Lane B) is an amd64 CUDA image of about 20 GB; build it only for GPU runs.
 
 **GPU nodes (Lane B)** also need a Nebius AI Cloud project with billing and GPU quota, `ORCHAPOD_ENDPOINT_TOKEN` for `vllm-serve`, a public https `ORCHAPOD_CONTROL_URL` and Nebius Object Storage (an https `ORCHAPOD_R2_ENDPOINT`, since Nebius cannot reach a local MinIO); `.env.example` lists every variable and where to get it.
 

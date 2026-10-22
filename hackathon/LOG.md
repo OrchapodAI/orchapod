@@ -411,3 +411,14 @@ worktrees:
   - Open: README:75/:83 + devpost:38 still say Lightning (devrel); platform could add chat(resend=False).
   - Review dispatched (sonnet). Trial merge clean.
 - 2026-10-22T04:52Z qa-w7 dispatched (sonnet; agent ae3c65befef5dcb2b; worktree qa-w7 @ 25bf429): e2e_agent real mode. Pytest only, no real run by qa; refuses GPU plans and missing keys; caps = --max-cost ≤ 3; only NEBIUS/TAVILY/HF keys forwarded. The orchestrator runs intent #2 live after the merge with --max-cost 0.5.
+- 2026-10-22T05:00Z Agent ids (from the transcript): backend-w7 = adaa43fd9d6077de1, ml-w6 = af8bbc1a5deca633c, platform-w7 = a8310dc13964b1d1a, spike1 = ad706527d037b982b, spike2 = a51b615c25103be3d; reviews: platform-w7 a0e217a86432afefb, ml-w6 aaaf899c8ebcf8a94, backend-w7 ad0297b68760c1686.
+- 2026-10-22T05:00Z ml-w6 review (opus): Needs fixes. Spec ✅, with a ⚠️ on spend.
+  - I1: the full docs plan cannot finish under R14. vllm-serve's preflight (25 + 15 min × $1.55/h = $1.03) exceeds the $0.998 left after typical training.
+  - Minors M1–M7 and ponytail -19 lines.
+  - Ruling: keep_alive_min 15 in template 4's full plan (preflight $0.775; reduced stays 10) — why: stays under Hari's $3 cap without asking — cost if wrong: the playground's endpoint lives 15 min, not 25; a re-serve of the stored adapter is about $0.65.
+  - Ruling: unsloth-train gets `merge` (default true); templates 4 and 5 set it false. Lane B's H100 Job then skips the unused 16 GB merge and upload — why: several minutes of H100 at $0.075/min inside a $0.22 margin — cost if wrong: a merged-weights fallback would have to retrain, but it needs a second endpoint ($3.70) anyway.
+  - Ruling (M3): template 5 stays until the freeze as G2's ready fallback; it leaves the gallery at G3 if the live Lane B run succeeds.
+  - M1 (dead tf-deploy code in planner.py) → orchestrator at integration (backend-w7 changes planner.py).
+  - README:21 and video-script:14 → devrel-w6.
+  - G2 runbook (M4): if the endpoint refuses the adapter, a hand-made quantize → judge-eval plan over the failed run's lora_adapter comes first (no retrain), then template 5.
+  - Fix round 1 → af8bbc1a5deca633c, starting with `git merge NebiusHackathon`.

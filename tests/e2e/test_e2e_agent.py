@@ -241,6 +241,32 @@ def test_a_real_api_sees_three_keys_and_nothing_else_paid(tmp_path, monkeypatch)
     assert env["ORCHAPOD_KILL_SWITCH"] == "0" and env["DATABASE_URL"].startswith("sqlite+aiosqlite:///" + str(tmp_path))
 
 
+@pytest.mark.parametrize("argv", [["--stub"], ["--stub", "--intent", "2", "--max-cost", "0.5"]])
+def test_a_stub_run_forwards_no_key_whatever_the_shell_holds(argv, stack_spy, monkeypatch):
+    """`make check E2E=1` runs `e2e_agent.py --stub` from the Orchestrator's shell, which holds the keys: a stub stays a stub, with the
+    stub's caps and no key (and `--max-cost` beside `--stub` does not make it a real run)."""
+    for name, value in {"NEBIUS_API_KEY": KEY, "TAVILY_API_KEY": "tv-1", "HF_TOKEN": "hf-1", "NEBIUS_BASE_URL": "https://x.example/v1"}.items():
+        monkeypatch.setenv(name, value)
+    assert agent.main(argv) == 0
+    [(_, extra)] = stack_spy
+    assert extra == agent.FULL_CAPS
+
+
+def test_a_stub_run_is_held_to_the_stub_limit_not_a_real_runs(stack_spy, stack_ok, monkeypatch, capsys):
+    """The run `main --stub` starts, given an API that never reports its report, is cancelled at demo.LIMIT_S (the clock is
+    poll_run's t0, then the time after each poll)."""
+    monkeypatch.setenv("NEBIUS_API_KEY", KEY)
+    assert agent.main(["--stub", "--intent", "2", "--max-cost", "0.5"]) == 0
+    [(fn, _)] = stack_spy
+    limit = demo.LIMIT_S
+    clock = iter([0, 100, limit - 1, limit])
+    monkeypatch.setattr(demo, "time", SimpleNamespace(monotonic=lambda: next(clock), sleep=lambda s: None))
+    run = live(good_report(intent=I2["intent"]), not_ready=99)
+    assert fn(fake_api(run=run)) == 1
+    assert len(run.polls) == 3 and run.cancels == ["tok-real"]
+    assert f"the run did not end within {limit} s, so it was cancelled" in capsys.readouterr().out
+
+
 @pytest.mark.skipif(not shutil.which("make"), reason="make is not installed")
 @pytest.mark.parametrize("args, tail", [
     (["INTENT=2", "MAX_COST=0.5"], 'scripts/e2e_agent.py --intent "2" --max-cost "0.5"'),

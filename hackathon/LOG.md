@@ -587,3 +587,7 @@ worktrees:
 - 2026-10-22T07:59Z qa-w9 dispatched (resumed ae3c65befef5dcb2b; worktree qa-w9 @ 57a62c1): e2e_demo.py --max-cost --api https://api.<domain> runs the live golden run (template 4) against the hosted API with the admin header.
   - Refusals; 60 min limit with cancel; checks (lora_adapter, https endpoint, eval stub false); per-node times for the 25-min bar.
   - Fake-API tests only. The report lists Hari's G2-day prerequisites.
+- 2026-10-22T08:03Z devrel-w7 DONE (826f707, b89aa14, e3174b9).
+  - README/Devpost/NODE_CONTRACT/feedback report live runs #1 and #3 and the golden path on stubs; tests/docs bans the three stale phrases.
+  - Orchestrator review of the added lines: facts match the LOG.
+  - MERGED → f9748ec, plus d25f3e1: the stub results cite the integration run on 3b7bf07 (golden run 298cf7be; ui-smoke 5/5 with the template-4 checks). Worktree removed.

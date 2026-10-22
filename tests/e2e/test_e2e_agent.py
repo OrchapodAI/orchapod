@@ -316,6 +316,18 @@ def test_refusals_name_each_node_that_rents_a_gpu_or_lacks_its_key():
     assert agent.refusals(I2["plan"], {}) == []
 
 
+def test_the_gpu_rule_agrees_with_the_budget_guard_over_every_node_type():
+    """refusals() reads the registry itself (a script has no apps/ on its path); budget.gpu_nodes is what the API's guards use. A
+    type that one counts and the other does not is a plan the API would refuse the public that this script would run."""
+    from api.services import budget
+    from packages.workflow_schema.models import NODE_REGISTRY
+
+    refused = {t.value: any("rents a GPU" in line for line in agent.refusals({"nodes": [{"id": "n", "type": t.value}]}, {"TAVILY_API_KEY": "k"}))
+               for t in NODE_REGISTRY}
+    assert refused == {t.value: bool(budget.gpu_nodes([t.value])) for t in NODE_REGISTRY}
+    assert {t for t, rents in refused.items() if rents} >= {"vllm-serve", "unsloth-train"} and not refused["data-prep"]  # not vacuous
+
+
 # --- the report and the outputs -----------------------------------------------------------------------------------------------
 
 def good_report(plan_name="movie-engagement-synthetic-data", intent="Generate synthetic data"):

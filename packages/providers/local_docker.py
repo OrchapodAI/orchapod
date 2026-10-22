@@ -131,13 +131,14 @@ class LocalDockerProvider:
             "--label", f"orchapod.run_id={env.get('ORCHAPOD_RUN_ID', '')}",
             "--label", f"orchapod.control_url={env.get('ORCHAPOD_CONTROL_URL', '')}",
         ]
-        for k, v in rewritten_env.items():
-            argv += ["-e", f"{k}={v}"]
+        for k in rewritten_env:  # names only: docker reads each value from its own env, so no key sits on a command line
+            argv += ["-e", k]
         argv.append(resolved_image)
 
         log.info("LocalDockerProvider: starting %s (image=%s)", " ".join(argv[:3]), resolved_image)
         proc = await asyncio.create_subprocess_exec(
             *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            env={**os.environ, **{k: str(v) for k, v in rewritten_env.items()}},
         )
         stdout, stderr = await proc.communicate()
         if proc.returncode != 0:

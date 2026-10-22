@@ -15,7 +15,7 @@ services:
       interval: 5s
       start_period: 20s
   minio:
-    image: minio/minio:latest
+    image: pgsty/minio@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372  # MinIO RELEASE.2026-08-04 from Pigsty's community builds: minio/minio is no longer pullable anonymously (qa-w10)
     command: server /data
     environment:
       MINIO_ROOT_USER: ${ORCHAPOD_R2_ACCESS_KEY}

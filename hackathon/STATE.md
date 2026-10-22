@@ -3,8 +3,8 @@ Updated: 2026-10-22T10:32Z by orchestrator · Phase: P1 · G1 MET 2026-10-22 · 
 
 ## Next actions (in order)
 1. Hari — G2 (Oct 25): follow hackathon/G2-CHECKLIST.md (Nebius project + quotas 1×H100, 1×L40S, VM vCPU; bucket; compute service account; VM .env incl. ORCHAPOD_ADMIN_TOKEN, ORCHAPOD_ENDPOINT_TOKEN, TAVILY_API_KEY; GHCR packages public (Purva); DNS app./api.orchapod.dev). Then the orchestrator runs `make e2e API=https://api.orchapod.dev`. Also: TAVILY_API_KEY in the Mac's .env (spike 3); OPEN DECISION below on a GPU-free fallback; AI disclosure; vast.ai instances; golden-run topic is the docs specialist unless Hari says otherwise.
-2. Spikes 1 and 2 DONE (R24, R25). Spike 3 waits for TAVILY_API_KEY. Merged today: platform-w7, ml-w6, backend-w7, frontend-w6, qa-w7, devrel-w6, backend-w8, ml-w7, qa-w8. In progress: devrel-w7 (live-run facts in README/Devpost).
-3. Wave 5: COMPLETE incl. qa-w6 and backend-w6 (startup sweep of leftover node containers; cancel race fixed; SQLite WAL). Parked: a millisecond double-click cancel can leave a node unmarked.
+2. Spikes 1 and 2 DONE (R24, R25). Spike 3 waits for TAVILY_API_KEY. Merged 2026-10-22: platform-w7, ml-w6, backend-w7, frontend-w6, qa-w7, devrel-w6, backend-w8, ml-w7, qa-w8, devrel-w7, qa-w9, devrel-w8, frontend-w7 (+ qa-w10 fresh-clone report). Nothing in flight. Integration green: e2e 4 PASS, ui-smoke 5/5, pytest 1123.
+3. After G2 (if quota): `make e2e API=https://api.orchapod.dev` (orchestrator), then screenshots (frontend), video (devrel), D8 rehearsals (qa). If G2 refuses quota: the GPU-free Lane A fallback (OPEN DECISION below). Parked: a millisecond double-click cancel can leave a node unmarked.
 4. G1 MET (2026-10-22, as ruled): template 4 green from the UI on stubs (ui-smoke 5/5, e2e 4 PASS on 3b7bf07) + live intents #2 (84e57f84, $0.10) and #3 (59786797, $0.02, Ultra judged live). Next: G2 Oct 25 — GPU quota + hosted API for the live golden run (Hari's console steps).
 
 ## Board (status ∈ TODO | IN_PROGRESS(<agent>, <branch>) | REVIEW | DONE | BLOCKED(<why>))

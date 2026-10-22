@@ -48,7 +48,6 @@ export default function CanvasPage() {
   const [readOnly, setReadOnly] = useState(false); // Save got a 409: the workflow has runs, so visitors save a copy
   const [starting, setStarting] = useState(false);
   const [loadError, setLoadError] = useState("");
-  const dropRef = useRef<HTMLDivElement>(null);
   const nodeCounter = useRef(0);
 
   // Cost-estimate modal state
@@ -102,12 +101,7 @@ export default function CanvasPage() {
       const type = e.dataTransfer.getData("application/orchapod-node-type") as NodeType;
       if (!type || !rfInstance) return;
 
-      const bounds = dropRef.current?.getBoundingClientRect();
-      if (!bounds) return;
-      const position = rfInstance.screenToFlowPosition({
-        x: e.clientX - bounds.left,
-        y: e.clientY - bounds.top,
-      });
+      const position = rfInstance.screenToFlowPosition({ x: e.clientX, y: e.clientY }); // page coordinates: React Flow subtracts the pane's own offset
 
       nodeCounter.current += 1;
       const nodeId = `${type}_${nodeCounter.current}`;
@@ -247,7 +241,7 @@ export default function CanvasPage() {
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         <NodePalette onDragStart={onDragStart} />
 
-        <div ref={dropRef} style={{ flex: 1, minWidth: 0 }} onDrop={onDrop} onDragOver={onDragOver}>
+        <div style={{ flex: 1, minWidth: 0 }} onDrop={onDrop} onDragOver={onDragOver}>
           <ReactFlow<Node<OrchaNodeData>, Edge>
             nodes={nodes}
             edges={edges}

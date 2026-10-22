@@ -491,3 +491,7 @@ worktrees:
   - qa-w7 was also told: smoke untilDone fails fast on 'Report unavailable'.
   - FINDING (orchestrator): G1 says 'golden path green from the UI', but since R25 the golden path is template 4, and the UI smoke runs template 1. Template 4 cannot run in the stub stack: unsloth-train needs a GPU provider, and the stub e2e drops NEBIUS_PROJECT_ID. Next wave: STUB runs gpu nodes on LocalDocker; the smoke's golden path becomes template 4.
 - 2026-10-22T06:04Z backend-w8 dispatched (sonnet; worktree backend-w8 @ 6ba382f): under STUB=1, gpu nodes run on LocalDocker ($0) and plan review skips the GPU-provider check. Non-STUB is unchanged; gpu_guard/fits are unchanged. Next: qa-w8 switches the smoke's golden path to template 4.
+- 2026-10-22T06:09Z devrel-w6 fix round 1 done (c842611/b705fee merges of NebiusHackathon, 4598796, ae49e54).
+  - Orchestrator re-check of the 9 items on the branch: 'three' disabled templates; the Playwright test drives the real-estate card on stubs (devpost:24, README:165/203); README:159 wording; 'every model call runs on Nebius'; two console captures; deploy node retired; HF_TOKEN for real estate; green = 90020da.
+  - APPROVED. tests/docs 27; make check green.
+  - Merge waits for qa-w7 (README:159 depends on it).

@@ -4,6 +4,7 @@ import copy
 import json
 import shutil
 import subprocess
+from pathlib import Path
 
 import e2e_agent as agent
 import e2e_demo as demo
@@ -11,7 +12,7 @@ import httpx
 import pytest
 
 from api.agent import planner
-from tests.e2e.test_e2e_demo import ROW, good_summary, templates_on_disk
+from tests.e2e.test_e2e_demo import ROW, FakeApi, good_summary, templates_on_disk
 
 SHIPPED = templates_on_disk()
 TEMPLATES = [{**t, "estimate": planner.estimate(t["plan"])[0]} for t in SHIPPED]  # what GET /agent/templates serves
@@ -524,3 +525,55 @@ def test_judge_eval_of_a_real_run_says_stub_false():
     assert agent.check_eval_summary(eval_summary(stub=False), False, stub=False) == []
     assert any("stub is True in a real run" in p for p in agent.check_eval_summary(eval_summary(stub=True), False, stub=False))
     assert any("stub is False in a STUB run" in p for p in agent.check_eval_summary(eval_summary(stub=False), False))
+
+
+# --- no secret is printed or logged -------------------------------------------------------------------------------------------
+
+SECRETS = {"NEBIUS_API_KEY": "nb-7Qf2-fake-key", "TAVILY_API_KEY": "tv-9Zk4-fake-key", "HF_TOKEN": "hf-3Lm8-fake-token",
+           "VASTAI_API_KEY": "va-1Xc6-fake-key", "NEBIUS_IAM_TOKEN": "iam-5Rt0-fake-token"}
+
+
+@pytest.mark.parametrize("planner_status, exit_code", [(200, 0), (500, 1)])
+def test_a_real_run_never_prints_or_logs_a_key(planner_status, exit_code, stack_ok, monkeypatch, capsys):
+    """main() -> with_stack -> start_api -> api_env are the real ones; only the uvicorn process and the HTTP transport are fake.
+    The API's log holds every request it got (as an access log would), and on a FAIL the stack prints its tail."""
+    for name, value in SECRETS.items():
+        monkeypatch.setenv(name, value)
+    spawned, api_logs = [], []
+
+    class Spawned(FakeApi):
+        """What start_api asks subprocess.Popen to start: it keeps the argv and env, and logs a startup line like uvicorn."""
+
+        def __init__(self, argv, **kw):
+            super().__init__()
+            self.argv, self.kw = argv, kw
+            kw["stdout"].write("INFO:     Started server process\n")
+            spawned.append(self)
+
+    def log_request(request):  # the API's access log, with the request's headers and body
+        with open(spawned[0].kw["stdout"].name, "a") as f:
+            f.write(f"{request.method} {request.url} {dict(request.headers)} {request.content!r}\n")
+
+    run = live(real_report())
+
+    def logged(request):
+        log_request(request)
+        return run(request)
+
+    api = fake_api(status=planner_status, run=logged)
+    monkeypatch.setattr(demo.subprocess, "Popen", Spawned)
+    monkeypatch.setattr(demo, "wait_healthy", lambda *a: None)
+    monkeypatch.setattr(demo, "stop", lambda proc: api_logs.append(Path(proc.kw["stdout"].name).read_text()))
+    monkeypatch.setattr(httpx, "Client", lambda **kw: api)
+
+    assert agent.main(REAL) == exit_code
+    out = capsys.readouterr()
+    everything = out.out + out.err + api_logs[0]
+    assert [v for v in SECRETS.values() if v in everything] == []
+    # the keys did reach the API (through its env, never its command line), so the check above has something to catch
+    env = spawned[0].kw["env"]
+    assert (env["NEBIUS_API_KEY"], env["TAVILY_API_KEY"], env["HF_TOKEN"]) == tuple(SECRETS[k] for k in ("NEBIUS_API_KEY", "TAVILY_API_KEY", "HF_TOKEN"))
+    assert "VASTAI_API_KEY" not in env and "NEBIUS_IAM_TOKEN" not in env and "STUB" not in env
+    assert not any(v in " ".join(spawned[0].argv) for v in SECRETS.values())
+    assert "POST http://api/agent/plan" in api_logs[0]  # the log has the requests: a key sent in one would be in it
+    assert ("e2e: PASS" in out.out) == (exit_code == 0) and "STUB=1" not in out.out

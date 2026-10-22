@@ -2,6 +2,7 @@
 
 import copy
 import json
+import re
 import socket
 import subprocess
 from pathlib import Path
@@ -440,6 +441,47 @@ def test_poll_run_ends_when_the_done_test_says_so(monkeypatch):
     c = httpx.Client(base_url="http://api", transport=httpx.MockTransport(lambda r: httpx.Response(200, json=next(replies))))
     reply, _ = e2e.poll_run(c, "r1", "/agent/runs/r1/report", done=lambda r: r["ready"], cancel_token="tok-1")  # terminal is not enough
     assert reply["ready"] is True
+
+
+def test_check_run_wants_unsloth_trains_lora_adapter_and_not_a_merged_model():
+    """Templates 4 and 5 train with merge: false, which registers the adapter only (ml-w7)."""
+    s = good_summary()
+    s["nodes"].append({"node_id": "train", "type": "unsloth-train", "status": "succeeded", "usd": 0.0, "error": None})
+    s["artifacts"].append({"id": "train-cost_json", "node_id": "train", "name": "cost_json", "kind": "metrics", "uri": "r2://b/x",
+                           "download_url": "/d", "meta": {}})
+    assert e2e.check_run(s) == ["unsloth-train 'train' did not register lora_adapter"]
+    s["artifacts"].append({"id": "train-lora_adapter", "node_id": "train", "name": "lora_adapter", "kind": "model", "uri": "r2://b/y",
+                           "download_url": "/d", "meta": {}})
+    assert e2e.check_run(s) == []
+
+
+class RecordedBuilds:
+    """subprocess.run stand-in for `docker build`: keeps each command line and answers like a build that worked."""
+
+    def __init__(self):
+        self.commands = []
+
+    def __call__(self, cmd, **kwargs):
+        self.commands.append(cmd)
+        return SimpleNamespace(returncode=0, stdout="sha256:0", stderr="")
+
+
+def test_build_images_builds_unsloth_train_from_its_stub_stage_and_every_other_node_as_before(monkeypatch):
+    """ml-w7: the stub stack has no 20 GB amd64 CUDA image to build, so unsloth-train is built from its slim `stub` stage."""
+    builds = RecordedBuilds()
+    monkeypatch.setattr(e2e.subprocess, "run", builds)
+    assert e2e.build_images(["data-prep", "unsloth-train", "data-prep"]) is None  # a node type twice builds once
+    assert builds.commands == [
+        ["docker", "build", "-q", "-t", "orchapod/data-prep:dev", "-f", "containers/data-prep/Dockerfile", "."],
+        ["docker", "build", "-q", "--target", "stub", "-t", "orchapod/unsloth-train:dev", "-f", "containers/unsloth-train/Dockerfile", "."]]
+
+
+def test_every_stub_target_is_a_stage_of_its_dockerfile():
+    """A renamed stage would fail the stub e2e at its build, after the others'. (tests/containers pins the stage's content.)"""
+    assert e2e.STUB_TARGETS == {"unsloth-train": "stub"}
+    for node, stage in e2e.STUB_TARGETS.items():
+        dockerfile = (ROOT / "containers" / node / "Dockerfile").read_text()
+        assert re.search(rf"^FROM .+ AS {stage}\s*$", dockerfile, re.MULTILINE | re.IGNORECASE), f"containers/{node}/Dockerfile has no stage {stage}"
 
 
 def test_check_run_wants_what_each_node_type_promises():

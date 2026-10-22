@@ -32,6 +32,8 @@ INTENTS = [  # the /agent page's examples (apps/web/app/agent/page.tsx)
 ]
 DOCS = ("Distill a Nebius docs specialist: fine-tune NVIDIA Nemotron Nano 8B on the Nebius AI Cloud and Token Factory "
         "docs")  # golden path
+DOCS_CPU = ("Distill a Nebius docs specialist and judge it on CPU without an endpoint: train Nemotron Nano 8B, then compare "
+            "base and tuned")  # its variant without a GPU endpoint
 GOOD = {"name": "qa-data", "nodes": [  # valid with the nodes on this branch's base
     {"id": "synth", "type": "synth-distilabel", "needs": [], "inputs": {"pipeline_template": "self-instruct", "n_samples": 100}},
     {"id": "prep", "type": "data-prep", "needs": ["synth"], "inputs": {"dataset": "${{ nodes.synth.outputs.dataset }}"}},
@@ -91,7 +93,7 @@ def answer(plan, rationale="r"):
 async def test_templates_are_the_three_canonical_intents_and_the_docs_specialist(client):
     templates = (await client.get("/agent/templates")).json()
 
-    assert [t["intent"] for t in templates] == INTENTS + [DOCS]
+    assert [t["intent"] for t in templates] == INTENTS + [DOCS, DOCS_CPU]
     for t in templates:
         assert {"slug", "title", "intent", "plan", "estimate"} <= set(t)
         assert set(t["estimate"]["by_node"]) == {n["id"] for n in t["plan"]["nodes"]}
@@ -111,13 +113,14 @@ async def test_run_it_yourself_clones_each_template_at_reduced_scale(client, mon
         assert set(t["reduced_inputs"]) <= {n["id"] for n in t["plan"]["nodes"]}
         assert 0 < small["estimate"]["usd"] < t["estimate"]["usd"]
     # gpu-l40s-a at $1.55/h for vllm-serve's ~5 min start + keep_alive_min (real-estate was $0.83 before the start was
-    # billed); the docs specialist (Lane B) is mostly unsloth-train's typical 25 min of H100 ($1.88) plus that endpoint
-    assert [round(t["reduced"]["estimate"]["usd"], 2) for t in templates] == [0.96, 0.03, 0.02, 2.32]
+    # billed); the docs specialist (Lane B) is mostly unsloth-train's typical 25 min of H100 ($1.88) plus that endpoint,
+    # and its CPU variant the same training with no endpoint
+    assert [round(t["reduced"]["estimate"]["usd"], 2) for t in templates] == [0.96, 0.03, 0.02, 2.32, 1.93]
     # fits: the reduced plan's estimate within the caller's run cap ($3 x ORCHAPOD_ANON_SCALE 0.1 when anonymous)
-    assert [t["fits"] for t in templates] == [False, True, True, False]  # real-estate and docs: admin-only by default
+    assert [t["fits"] for t in templates] == [False, True, True, False, False]  # GPU templates: admin-only by default
     monkeypatch.setenv("ORCHAPOD_ADMIN_TOKEN", "s3cret")
     admin = (await client.get("/agent/templates", headers={"X-Orchapod-Admin": "s3cret"})).json()
-    assert [t["fits"] for t in admin] == [True, True, True, True]
+    assert [t["fits"] for t in admin] == [True] * 5
 
     launched = []  # intent #2 at reduced scale runs for an anonymous caller ($3 x 0.1 run cap)
     monkeypatch.setattr(ex, "launch", lambda run_id, scale: launched.append(scale))
@@ -150,13 +153,28 @@ def test_the_docs_specialist_validates_at_both_scales_on_10_to_20_docs_pages(mon
     assert re.findall(r"https://docs\.[\w./-]*[\w-]", planner._knowledge()) == seeds  # the live planner's list, same order
 
 
+def test_the_cpu_variant_judges_the_students_gguf_with_and_without_its_lora(monkeypatch):
+    """R24's fallback on Lane B: no endpoint; base = the student's GGUF, tuned = the same GGUF plus its GGUF LoRA."""
+    monkeypatch.setattr(planner, "get_providers", lambda: {"nebius": object()})
+    docs, cpu = planner.templates()[3:5]
+    for plan in (cpu["plan"], planner.reduced(cpu)["plan"]):
+        assert planner.review(plan)[0] == []
+    assert cpu["plan"]["nodes"][:4] == docs["plan"]["nodes"][:4]  # the same data and training as the GPU template
+    quantize, evaluate = cpu["plan"]["nodes"][4:]
+    assert (quantize["type"], quantize["inputs"]["model"], quantize["inputs"]["lora_adapter"]) == (
+        "quantize", "nvidia/Llama-3.1-Nemotron-Nano-8B-v1", "${{ nodes.train.outputs.lora_adapter }}")
+    gguf = "${{ nodes.quantize.outputs.gguf_file }}"
+    assert (evaluate["inputs"]["base_model_ref"], evaluate["inputs"]["tuned_model_ref"], evaluate["inputs"]["tuned_lora"]) == (
+        gguf, gguf, "${{ nodes.quantize.outputs.gguf_lora }}")
+
+
 async def test_stub_plans_with_the_closest_template_and_calls_nothing(client, monkeypatch):
     monkeypatch.setenv("STUB", "1")
     monkeypatch.delenv("NEBIUS_API_KEY")
     monkeypatch.setattr(budget, "control_plane", None)  # a model call would crash
     templates = planner.templates()
 
-    for intent, t in zip(INTENTS + [DOCS], templates, strict=True):  # each intent maps to its own template
+    for intent, t in zip(INTENTS + [DOCS, DOCS_CPU], templates, strict=True):  # each intent maps to its own template
         r = await client.post("/agent/plan", json={"intent": intent})
         assert r.status_code == 200
         assert set(r.json()) == {"plan", "rationale", "estimate", "warnings", "errors"}
@@ -171,6 +189,7 @@ async def test_stub_plans_with_the_closest_template_and_calls_nothing(client, mo
     ("Distill an expert in the Nebius documentation", "nebius-docs-specialist"),
     ("Distill an expert in Nebius", "nebius-docs-specialist"),
     ("A model which is an expert in US real-estate compliance", "real-estate-compliance"),
+    ("Nebius docs specialist judged on CPU", "nebius-docs-specialist-cpu"),
 ])
 async def test_stub_matching_ignores_stopwords(client, monkeypatch, intent, slug):
     monkeypatch.setenv("STUB", "1")

@@ -550,3 +550,4 @@ worktrees:
   - Stale docs for devrel: README 10/31/121/143/158/159/165, NODE_CONTRACT.md:89, devpost:24, CHANGELOG:22.
   - Concerns: the smoke runs the reduced plan; --target stub in every mode (safe by refusal order); template 5 uncovered.
   - Review dispatched (sonnet). Trial merge clean.
+- 2026-10-22T07:27Z LIVE RUN #2 started: `make agent-e2e INTENT=3 MAX_COST=0.5` on bc9f9dc (maths quantize; Ultra judges live; it also exercises acf5e7f's env-by-name for real). No other e2e running.

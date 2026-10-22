@@ -2,7 +2,7 @@
 // (Node >= 22.18 strips the types itself, so there is nothing to install.)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { yamlValue, buildYamlFromGraph, planYaml, STARTER_YAML } from "../../apps/web/lib/workflowYaml.ts";
 import { api, apiDate, cancelToken, capNote, demoNote, explainError, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
 import { applyCompareEvent, applyRunEvent, canRetry, finished, REPORT_WAIT_MS, reportNext, runShown, seenFinishedAt, splitReport } from "../../apps/web/lib/runEvents.ts";
@@ -197,6 +197,17 @@ test("nothing made up on screen (team, owner, counts, budget) and no links to th
   for (const page of pages.filter((p) => p.endsWith(".tsx"))) assert.doesNotMatch(read(`app/${page}`), /orbital-research|>EM</, page);
   const sidebar = read("components/Sidebar.tsx");
   for (const fake of [/count: "\d+"/, /orbital|Elena|\$250/, /href: "\/(inference|endpoints)"/]) assert.doesNotMatch(sidebar, fake);
+});
+
+test("no sidebar link leads to a page that says \"Coming soon\", or to no page at all", () => {
+  const web = (path: string) => new URL(`../../apps/web/${path}`, import.meta.url);
+  const hrefs = [...readFileSync(web("components/Sidebar.tsx"), "utf8").matchAll(/href: "(\/[a-z-]*)"/g)].map((m) => m[1]);
+  assert.ok(hrefs.includes("/agent") && hrefs.includes("/runs"), `read the sidebar's links: ${hrefs}`);
+  for (const href of hrefs) {
+    const page = web(`app${href === "/" ? "" : href}/page.tsx`);
+    assert.ok(existsSync(page), `${href}: no page`);
+    assert.doesNotMatch(readFileSync(page, "utf8"), /coming soon/i, href);
+  }
 });
 
 test("API datetimes are UTC: a naive one gets Z, one with a zone is kept", () => {

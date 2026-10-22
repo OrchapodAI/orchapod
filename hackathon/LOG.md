@@ -446,3 +446,15 @@ worktrees:
   - qa-w7 told: compare the normalised plan name.
   - planner.py's dead tf-deploy lines → orchestrator after this merge.
 - 2026-10-22T05:27Z Dispatched on 97b749c: devrel-w6 (opus, a7b1e898cb32a8e00: README/Devpost/feedback/video-script/WORKFLOW_SPEC for R24/R25 and the Super reporter); frontend-w6 (sonnet, a0b588992b033feb4: palette without tf-deploy in R25 order, lora_adapter/tuned_lora forms, report card polling with a bound, templates' fits).
+- 2026-10-22T05:41Z backend-w7 re-review (sonnet): APPROVED. All 5 fixed, each with a mutant caught.
+  - Minors (planner create=False unasserted; 80-char cap untested; template_report echoes a multi-line intent/error) → orchestrator.
+- 2026-10-22T05:41Z MERGED backend-w7 → 98cd829. contracts.md conflict resolved: backend's report line, main's templates line.
+  - 90020da (orchestrator): planner's tf-deploy paths deleted (ml-w6 M1); the minors folded in.
+  - make check green: the known flakes are gone with backend-w7.
+- 2026-10-22T05:41Z qa-w7 reported DONE_WITH_CONCERNS (549f0eb..0163fc1 on 25bf429).
+  - tests/e2e 111 passed; 53 mutants, 0 survive; leak test.
+  - Live command: `set -a; . ./.env; set +a; make up; make agent-e2e INTENT=2 MAX_COST=0.5`.
+  - Deviation: it mutates demo.LIMIT_S and neutralises check_run's $0 rule.
+  - Notes: intent 3's estimate is 30.3 min vs the 30 min limit; local_docker passes node env as `docker run -e K=V` (the key is on a command line for an instant; platform P2); README:159 → devrel-w6 (sent).
+  - Review dispatched (sonnet, abb46fa15cf21e029). Trial merge clean.
+- 2026-10-22T05:41Z Integration run started on 90020da: make check E2E=1, then make ui-smoke.

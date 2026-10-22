@@ -434,3 +434,15 @@ worktrees:
   - 891 passed; ruff clean; web 30/30.
   - Open: --enable-lora unproven on Nebius (runbook in the report); the reduced estimate prices unsloth-train at a flat $1.88 (backend's estimator).
   - Scoped re-review dispatched (sonnet, a677940a140672b15). Trial merge with NebiusHackathon: clean.
+- 2026-10-22T05:27Z ml-w6 re-review (sonnet): APPROVED. All findings fixed; arithmetic checked: $0.998 left ≥ $0.775 preflight, judge-eval keeps $0.22 vs $0.14, R14 worst case $2.916.
+- 2026-10-22T05:27Z MERGED ml-w6 → 3b21074.
+  - Merge-time fixes: template 5's saving reads $0.52 by the estimate, up to $0.78; the devrel-w6 brief now says 15 min and $2.66, adds WORKFLOW_SPEC.md:43 and README:21, and tests/docs pins Lightning.
+  - G2 runbook addendum: a merged-weights fallback now needs a retrain with merge: true.
+  - make check: 3 known flakes (test_budget concurrent, two IAM tests), fixed on hack/backend-w7; 892 passed.
+- 2026-10-22T05:27Z backend-w7 fix round 1 done (956d709 merge, bd1fb70, 33353c6).
+  - _SendOnce gone (chat create=True); title one line ≤ 80; single-flight + retry tests; health test clock-free.
+  - 10/10 tests/api; 885 passed; web 30/30.
+  - Re-review dispatched (sonnet, aed90d5b5a5eeb613). Trial merge: contracts.md conflict only (resolve at merge).
+  - qa-w7 told: compare the normalised plan name.
+  - planner.py's dead tf-deploy lines → orchestrator after this merge.
+- 2026-10-22T05:27Z Dispatched on 97b749c: devrel-w6 (opus, a7b1e898cb32a8e00: README/Devpost/feedback/video-script/WORKFLOW_SPEC for R24/R25 and the Super reporter); frontend-w6 (sonnet, a0b588992b033feb4: palette without tf-deploy in R25 order, lora_adapter/tuned_lora forms, report card polling with a bound, templates' fits).

@@ -561,3 +561,8 @@ worktrees:
   - Run 59786797-26ca-4a01-9b80-80a730234a97 succeeded in 255 s; cost $0.0128 (Ultra judge, live); 50 gsm8k test rows; Super's report ready (892 chars).
   - Total $0.0175 (run $0.0128 + planner/reporter $0.0047).
   - FOLLOW-UP (qa): a real run should also print eval_summary's n, judged, win_rate, exact_match and the base/tuned model ids, so LOG/README get the numbers.
+- 2026-10-22T07:35Z Live run #3's numbers, read from local MinIO (runs/59786797…):
+  - hf_download: 3.10 GB, 11 files, sha256 verified.
+  - quantize: q4_k_m 0.99 GB from f16 3.09 GB in 75 s on CPU.
+  - judge-eval: n 5, judged 5, 1 win / 4 ties / 0 losses, win_rate 0.6, consistency 1.0; exact match base (f16) 0.6 vs tuned (q4_k_m) 0.8; judge nvidia/Nemotron-3-Ultra-550b-a55b, stub false.
+  - Smoke-scale result (5 judged): report it as such.

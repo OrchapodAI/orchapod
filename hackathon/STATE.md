@@ -1,5 +1,5 @@
 # STATE — Orchapod × Nebius hackathon
-Updated: 2026-10-22T07:58Z by orchestrator · Phase: P1 · G1 MET 2026-10-22 · Next gate: G2 Oct 25 (GPU quota) · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
+Updated: 2026-10-22T10:32Z by orchestrator · Phase: P1 · G1 MET 2026-10-22 · Next gate: G2 Oct 25 (GPU quota) · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
 1. Hari — G2 (Oct 25): follow hackathon/G2-CHECKLIST.md (Nebius project + quotas 1×H100, 1×L40S, VM vCPU; bucket; compute service account; VM .env incl. ORCHAPOD_ADMIN_TOKEN, ORCHAPOD_ENDPOINT_TOKEN, TAVILY_API_KEY; GHCR packages public (Purva); DNS app./api.orchapod.dev). Then the orchestrator runs `make e2e API=https://api.orchapod.dev`. Also: TAVILY_API_KEY in the Mac's .env (spike 3); OPEN DECISION below on a GPU-free fallback; AI disclosure; vast.ai instances; golden-run topic is the docs specialist unless Hari says otherwise.
@@ -48,7 +48,7 @@ Updated: 2026-10-22T07:58Z by orchestrator · Phase: P1 · G1 MET 2026-10-22 · 
 - [ ] P1 D3 vllm-serve: test `--enable-lora` with the 8B adapter (one endpoint for base + tuned); merged weights are the proven fallback — TODO
 - [x] P0 SECURITY vllm-serve token out of meta at the source (ModelRef api_key_env) + API redaction — DONE (ml-w4, backend-w3)
 - [x] P1 shared R18 fence in packages/providers (NFKC/zero-width/bidi/tag-block aware, linear) used by synth-distilabel, data-prep, judge-eval — DONE (platform-w6)
-- [ ] P1 D3 vllm-serve spec (vllm/vllm-openai:v0.18.0-cu130, token auth) + smoke script — TODO
+- [x] P1 D3 vllm-serve spec (vllm/vllm-openai:v0.18.0-cu130, token auth, --enable-lora base + tuned on one endpoint) — DONE (ml-w4..w6; live smoke = the golden run on G2)
 - [ ] P1 D5 after G2: real Serverless Job + Endpoint; D6 eval vs base; D7 judging-window plan — TODO
 ### backend
 - [x] P0 D1 spike 2: strict json_schema + thinking=False confirmed live; intent #2 plan valid first time ($0.0025, 7 s); Lightning too slow for reports → Super — DONE (2026-10-22, $0.0055)
@@ -69,11 +69,11 @@ Updated: 2026-10-22T07:58Z by orchestrator · Phase: P1 · G1 MET 2026-10-22 · 
 - [x] P0 D2 palette: hidden nodes without containers; Research/Fine-tune/Deploy/Evaluate forms; R13 JSON inputs — DONE
 - [x] P0 D2 /agent page: chat box, plan card (Edit/Run), live run view, report card — DONE
 - [x] P0 wave-2 frontend carry-overs (YAML quoting, RunView .catch, badges, a11y, defaultInputs) — DONE (frontend-w2)
-- [ ] P1 Deploy palette text promises per-token serving — align with spike 1's answer — IN_PROGRESS(frontend-w6) (sidebar counts: DONE frontend-w2; web tests in make check + CI: DONE qa-w2)
+- [x] P1 Deploy palette text promises per-token serving — DONE (frontend-w6: tf-deploy out of the palette, R25 order, forms for train/serve)
 - [x] P0 D3 run page cost meter + retry node (frontend-w2); template gallery with one-click Run (frontend-w3) — DONE (3d250c5)
 - [x] P0 D4 eval view, dataset card, compare playground (STUB pills) — DONE (frontend-w3, 3d250c5); P2: the STUB pill reads metrics meta, dropped above 16 KB
 - [x] P1 D3 loss chart fills from the fine-tune node's loss_curve on load; live events append — DONE (frontend-w4)
-- [x] P0 D6 polish: toasts, honest error/empty/loading states, OG image, demo banner, `fits` on template cards, loss chart from loss_curve — DONE (frontend-w4); D7 screenshots — TODO
+- [x] P0 D6 polish: toasts, honest error/empty/loading states, OG image, demo banner, `fits` on template cards, loss chart from loss_curve — DONE (frontend-w4); fresh-clone polish (scroll, no 'Coming soon', title, labels) DONE (frontend-w7); D7 screenshots — TODO (after the live golden run)
 ### P2 follow-ups (2026-10-22)
 - [x] platform: local_docker passes node env by name (`-e K`, values in the CLI's env) — DONE (orchestrator, checked on Docker Desktop); [ ] platform reviews the orchestrator's chat(create=True) (21e3806) at its next task — TODO
 - [ ] data: quality_filter → chat(create=True); Lightning's 16–110 s latency vs its 30 s read timeout (opt-in, no template uses it) — TODO
@@ -81,12 +81,12 @@ Updated: 2026-10-22T07:58Z by orchestrator · Phase: P1 · G1 MET 2026-10-22 · 
 ### qa
 - [x] P0 D1 CI on NebiusHackathon + repo ruff config so `make check` is green; synth-distilabel in the image matrix — DONE (e11757e)
 - [x] P0 D2 CI pushes `:latest` on NebiusHackathon (R4); pins in requirements-dev.txt — DONE
-- [ ] P2 pytest warnings now 126 (sqlmodel session.exec deprecations; datetime.utcnow) — TODO
+- [x] P2 pytest warnings (were 126) — now 2 (1123 passed) — DONE
 - [ ] P0 D2 provider contract tests from recorded responses + a $1/day real Token Factory call — TODO
-- [ ] P0 D3 scripts/e2e_demo.py: --stub DONE (qa-w2; green 2026-10-21); real with --max-cost + nightly — TODO (needs the key)
+- [x] P0 D3 real e2e: `make agent-e2e INTENT=… MAX_COST=…` (qa-w7; live runs 84e57f84, 59786797) and the live golden run `make e2e API=https://api.<domain>` (qa-w9, runs on G2 day) — DONE; nightly: dropped (manual, capped runs instead)
 - [x] P0 D3 scripts/e2e_agent.py --stub for the three canonical intents (+ plan-shape rules); strict by construction since qa-w5 (no SKIP path) — DONE
 - [x] P0 D4 Playwright smoke (`make ui-smoke`, orchestrator-only): /agent intent #2, template run, public-cap check, golden path — DONE (qa-w3..w5)
-- [ ] P0 D5 failure drills · D7 fresh-clone test < 20 min · D8 three rehearsals — TODO
+- [x] P0 D7 fresh-clone test: green in 6 min 38 s on warm caches (qa-w10, 2026-10-22); its P0 (MinIO image gone) fixed — DONE · [x] failure drills (tests/drills) — DONE · [ ] D8 three rehearsals — TODO
 ### devrel
 - [x] P0 D2 README skeleton — DONE
 - [x] P1 README pass (STALE list, TODO(D8) markers) — DONE (devrel-w2)

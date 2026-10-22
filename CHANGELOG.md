@@ -12,6 +12,10 @@ Dated, user-facing changes made during the Nebius × NVIDIA hackathon submission
 - The golden path (template 4, Nemotron Nano docs specialist) runs end to end in stub mode, through the Agent API and from the web app's template card to the eval view and the compare playground.
 - The web app's node palette shows only the nodes on the demo path, in golden-path order, with forms for training and serving; a report that never arrives is reported after 60 s.
 - Node containers receive keys by name only, so no key appears on a command line.
+- A fresh clone reaches green in under 7 minutes (warm caches). The local object store now uses a community MinIO build, because the official image can no longer be pulled anonymously.
+- `make e2e API=https://api.<domain>` runs the live golden run against the hosted API with an admin token, a $3 cap and a two-hour limit, and prints the evidence: per-node times, costs and the endpoint's expiry.
+- Web polish for first-time visitors: the plan card and the run view scroll into view, no empty "Coming soon" pages, the title is Orchapod, and the log panel no longer moves the page.
+- Secret scan over every branch is clean; the README's setup steps match what a new user runs.
 
 ## 2026-10-21
 - Evaluation: Nemotron 3 Ultra judges base against tuned answers in both orders against a reference answer, reporting win rate, consistency and (for maths) exact match; scraped text is always fenced as untrusted input. Quantized models are served locally with llama.cpp; a llama.cpp bug that garbled f16 answers on Apple silicon is fixed.

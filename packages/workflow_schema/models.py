@@ -194,10 +194,13 @@ class UnslothTrainInputs(BaseModel):
     checkpoint_steps: int = Field(default=100, ge=1, description="Upload a checkpoint (and validate) every N steps; "
                                                                  "a retry resumes from the newest")
     load_in_4bit: bool = Field(default=False, description="QLoRA; the default is 16-bit LoRA")
+    merge: bool = Field(default=True, description="Also merge the adapter into 16-bit weights (merged_model, ~16 GB for "
+                                                  "8B); false when the plan reads only lora_adapter (vllm-serve with "
+                                                  "lora_adapter, quantize)")
 
 class UnslothTrainOutputs(BaseModel):
-    lora_adapter: str       # PEFT dir; metadata {format: peft, base_model}
-    merged_model: str       # 16-bit HF dir (vllm-serve's model); metadata {format: hf, base_model}
+    lora_adapter: str               # PEFT dir; metadata {format: peft, base_model}
+    merged_model: str | None = None  # with merge: 16-bit HF dir (vllm-serve's model); metadata {format: hf, base_model}
 
 
 class DistillSFTInputs(BaseModel):
@@ -379,7 +382,8 @@ NODE_REGISTRY: dict[NodeType, dict] = {
         "runtime": "cpu",
     },
     NodeType.UNSLOTH_TRAIN: {
-        "description": "Fine-tune a model with LoRA SFT via Unsloth (2-5x faster, 80% less VRAM).",
+        "description": "Fine-tune a model with LoRA SFT via Unsloth (2-5x faster, 80% less VRAM): lora_adapter, and with "
+                       "merge (default true) the merged 16-bit weights as merged_model.",
         "inputs_schema": UnslothTrainInputs,
         "outputs_schema": UnslothTrainOutputs,
         "runtime": "gpu",

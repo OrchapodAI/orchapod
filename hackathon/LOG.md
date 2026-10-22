@@ -633,3 +633,6 @@ worktrees:
   - devrel-w8 (a7b1e898cb32a8e00): README fresh-clone fixes (the pnpm 11 code block, ports, STUB mapping, first-run size, one status note instead of 29 TODOs).
   - frontend-w7 (a0b588992b033feb4): /agent plan card scrolls into view; remove the 'Coming soon' sidebar links.
 - 2026-10-22T10:16Z devrel-w8 DONE (1a2ffad, 2790d4d): README fresh-clone fixes + a docs test pinning the working pnpm line. Orchestrator check of the diff: OK (the status note keeps the links TODO). MERGED; worktree removed. Left: NEXT_PUBLIC_* in .env.example (platform, P2).
+- 2026-10-22T10:17Z SLIP (orchestrator): 331465d added NEXT_PUBLIC_* to .env.example and was pushed with test_env_example failing (`pytest | tail` hid the exit code).
+  - Reverted within minutes (git revert, no force).
+  - Rule for myself: `set -o pipefail` (or no pipe) whenever a test gates a commit.

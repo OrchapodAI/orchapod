@@ -145,7 +145,7 @@ def check_run(summary: dict, max_cost: float | None = None) -> list[str]:
         if (n["usd"] != 0) if max_cost is None else (n["usd"] < 0):
             problems.append(f"node {n['node_id']!r} reports usd {n['usd']}, expected {'0 in STUB' if max_cost is None else 'at least 0'}")
         if "cost_json" not in made[n["node_id"]]:
-            problems.append(f"node {n['node_id']!r} wrote no cost_json, so its $0 was never measured")
+            problems.append(f"node {n['node_id']!r} wrote no cost_json, so its {'$0' if max_cost is None else 'cost'} was never measured")
     return problems
 
 

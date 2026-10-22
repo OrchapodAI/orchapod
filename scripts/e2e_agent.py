@@ -50,6 +50,7 @@ sys.path.insert(0, str(demo.ROOT))  # a script's sys.path[0] is scripts/; the no
 from packages.workflow_schema.models import NODE_REGISTRY, SynthDistilabelInputs  # noqa: E402
 
 CAP_USD = 3.0  # ORCHAPOD_MAX_RUN_USD: a plan estimated above it can never run
+TF_BASE = "https://api.tokenfactory.nebius.com/v1"  # NEBIUS_BASE_URL's default, where the providers send the key (a test pins it to theirs)
 # The caps are pinned so a shell's ORCHAPOD_* cannot change the verdict; the UI is anonymous, so full scale is ANON_SCALE=1.
 FULL_CAPS = {"ORCHAPOD_ANON_SCALE": "1", "ORCHAPOD_MAX_RUN_USD": f"{CAP_USD:g}", "ORCHAPOD_MAX_DAY_USD": "15"}
 REAL_LIMIT_S = 3600  # a real run ends within an hour (intent #3 is estimated at 30 minutes: judge-eval answers on a CPU)
@@ -88,7 +89,7 @@ def spend_line(db: Path) -> str:
     control plane's day ledger (the Spend table: the planner's and the report writer's calls), which the run's cost leaves out.
     This is the figure for hackathon/LOG.md."""
     try:
-        with closing(sqlite3.connect(db, timeout=10)) as con:
+        with closing(sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True, timeout=10)) as con:  # looking must not make a DB
             run = con.execute("SELECT COALESCE(SUM(cost_usd), 0) FROM run").fetchone()[0]
             ledger = con.execute("SELECT COALESCE(SUM(usd), 0) FROM spend").fetchone()[0]
     except sqlite3.Error as e:
@@ -307,6 +308,8 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("refusing to run without --intent: a real run takes one intent, 1, 2, 3 or any text")
     if not os.environ.get("NEBIUS_API_KEY", "").strip():
         ap.error("refusing to run: NEBIUS_API_KEY is unset (the Agent plans with Nemotron on Token Factory; load .env: set -a; . ./.env; set +a)")
+    if os.environ.get("NEBIUS_BASE_URL", "").strip().rstrip("/") not in ("", TF_BASE):  # the providers send the key where it points
+        ap.error("refusing to run: NEBIUS_BASE_URL is not Token Factory's URL and the key would go there (unset it; its value is not shown)")
     if os.environ.get("E2E_BIND_HOST"):  # blank counts as unset, as in demo.bind_host
         ap.error("refusing to run: E2E_BIND_HOST is set, but the API of a real run holds your key and listens on 127.0.0.1 only (unset it)")
     with tempfile.TemporaryDirectory(prefix="orchapod-e2e-db-") as tmp:  # the API's DB is ours to read: its ledger is the spend

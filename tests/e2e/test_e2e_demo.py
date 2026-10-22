@@ -219,6 +219,17 @@ def test_check_run_of_a_real_run_wants_more_than_zero_and_at_most_the_cap():
     assert any("expected 0 in STUB" in p for p in e2e.check_run(spent(0.0823, synth=0.0823)))  # no cap: the STUB rule, as before
 
 
+def test_check_run_names_a_missing_cost_json_in_the_words_of_its_kind_of_run():
+    """A real run's node that wrote no cost_json was not measured, which is not the same as costing $0."""
+    def without_synth_cost_json(s):
+        s["artifacts"] = [a for a in s["artifacts"] if (a["node_id"], a["name"]) != ("synth", "cost_json")]
+        return s
+
+    assert e2e.check_run(without_synth_cost_json(good_summary())) == ["node 'synth' wrote no cost_json, so its $0 was never measured"]
+    assert e2e.check_run(without_synth_cost_json(spent(0.0823, synth=0.0823)), 0.5) == [
+        "node 'synth' wrote no cost_json, so its cost was never measured"]
+
+
 def test_check_run_of_a_failed_real_run_names_the_node_error_not_the_cost():
     s = spent(0.0)
     s["status"], s["error"] = "failed", "exit 1: boom"

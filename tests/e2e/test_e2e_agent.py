@@ -4,6 +4,7 @@ and the real run of one intent (`make agent-e2e INTENT=2 MAX_COST=0.5`, the Orch
 import copy
 import json
 import shutil
+import sqlite3
 import subprocess
 import uuid
 from decimal import Decimal
@@ -271,6 +272,48 @@ def test_a_stub_run_may_listen_on_the_docker_bridge(stack_spy, monkeypatch):
     """Linux: the node containers reach a stub API through docker0; a stub API holds no key."""
     monkeypatch.setenv("E2E_BIND_HOST", "172.17.0.1")
     assert agent.main(["--stub"]) == 0 and len(stack_spy) == 1
+
+
+TOKEN_FACTORY = "https://api.tokenfactory.nebius.com/v1"
+
+
+@pytest.mark.parametrize("base", [
+    "https://api.example.com/v1",
+    "http://api.tokenfactory.nebius.com/v1",  # not https
+    "https://api.tokenfactory.nebius.com/v2",
+    "https://api.tokenfactory.nebius.com.attacker.example/v1",
+    "https://user:s3cret-pw@api.tokenfactory.nebius.com/v1",  # a URL can carry userinfo, so it is never echoed
+])
+def test_a_real_run_is_refused_when_the_key_would_go_to_another_base_url(base, stack_spy, monkeypatch, capsys):
+    """NEBIUS_BASE_URL is where the providers send NEBIUS_API_KEY; the client's pairing rule cannot catch it, since base == NEBIUS_BASE_URL
+    by construction. Exit 2 before the stack, and the value is not printed."""
+    monkeypatch.setenv("NEBIUS_API_KEY", KEY)
+    monkeypatch.setenv("NEBIUS_BASE_URL", base)
+    with pytest.raises(SystemExit) as e:
+        agent.main(REAL)
+    seen = capsys.readouterr()
+    assert e.value.code == 2 and "NEBIUS_BASE_URL" in seen.err and stack_spy == [], seen.err
+    assert not [v for v in (base, "s3cret-pw", "attacker.example", KEY) if v in seen.err + seen.out]
+
+
+@pytest.mark.parametrize("base", ["", "   ", TOKEN_FACTORY, TOKEN_FACTORY + "/", f"  {TOKEN_FACTORY}//  "])  # compared after strip and rstrip("/")
+def test_a_real_run_may_have_a_blank_or_the_token_factory_base_url(base, stack_spy, monkeypatch):
+    monkeypatch.setenv("NEBIUS_API_KEY", KEY)
+    monkeypatch.setenv("NEBIUS_BASE_URL", base)
+    assert agent.main(REAL) == 0 and len(stack_spy) == 1
+
+
+def test_a_stub_run_does_not_care_about_the_base_url(stack_spy, monkeypatch):
+    """A stub run forwards no key, so no base URL can receive one."""
+    monkeypatch.setenv("NEBIUS_BASE_URL", "https://api.example.com/v1")
+    assert agent.main(["--stub"]) == 0 and len(stack_spy) == 1
+
+
+def test_the_hardcoded_token_factory_url_is_the_providers_default():
+    """The script cannot import the providers (their SDK is not on a script's path), so it hardcodes the default; this pins it."""
+    from packages.providers.tokenfactory import TF_BASE
+
+    assert agent.TF_BASE == TF_BASE == TOKEN_FACTORY
 
 
 @pytest.mark.parametrize("argv", [["--stub"], ["--stub", "--intent", "2", "--max-cost", "0.5"]])
@@ -753,9 +796,31 @@ def test_the_spend_line_adds_the_planner_and_reporter_ledger_to_the_runs_cost(tm
     assert agent.spend_line(tmp_path / "refused.db") == "total $0.0031 (run $0.0000 + planner/reporter $0.0031)"
 
 
-def test_the_spend_line_says_so_when_the_db_cannot_be_read(tmp_path):
+def test_the_spend_line_says_so_when_the_db_cannot_be_read_and_never_creates_it(tmp_path):
     line = agent.spend_line(tmp_path / "never-created.db")
-    assert line.startswith("total spend unknown") and "no such table: run" in line
+    assert line.startswith("total spend unknown") and "unable to open database file" in line
+    assert not (tmp_path / "never-created.db").exists()  # read-only: looking must not make a DB
+
+
+def test_the_spend_line_says_so_when_the_file_is_no_ledger(tmp_path):
+    other = sqlite3.connect(tmp_path / "other.db")  # a DB with none of the API's tables
+    other.execute("CREATE TABLE unrelated (x)")
+    other.close()
+    assert "no such table: run" in agent.spend_line(tmp_path / "other.db")
+
+
+def test_the_spend_line_reads_a_wal_db_the_api_still_holds_open(tmp_path):
+    """The API puts every SQLite connection in WAL mode (apps/api/database.py) and is up while the line is read: a read-only
+    open must still see what is committed, and must not wait on a transaction in flight."""
+    db = tmp_path / "e2e.db"
+    make_ledger(db, run=0.0823, planner=0.0031, reporter=0.0004)
+    api = sqlite3.connect(db)
+    try:
+        assert api.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+        api.execute("INSERT INTO spend (source, usd, created_at) VALUES ('reporter', 9, '2026-10-22 00:00:00')")  # not committed yet
+        assert agent.spend_line(db) == "total $0.0858 (run $0.0823 + planner/reporter $0.0035)"
+    finally:
+        api.close()
 
 
 @pytest.mark.parametrize("status, exit_code, ledger, line", [

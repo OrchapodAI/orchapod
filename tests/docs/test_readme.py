@@ -46,6 +46,9 @@ STALE = [
     "ANTHROPIC_API_KEY",  # stage one: no other model provider on the demo path
     "OPENAI_API_KEY",
     "$1.82",  # gpu-l40s-a is $1.55/h (Intel L40S); $1.82 is the AMD gpu-l40s-d (DECISION 2026-10-21)
+    "No pipeline has run live",  # intents #2 and #3 ran live through the Agent on 2026-10-22 (runs 84e57f84, 59786797)
+    "no live run yet",
+    "drives the real-estate template card",  # the smoke's golden-path test clicks template 4's card since qa-w8
 ]
 # Every TODO names when it clears: D8 (a live run, the hosted app) or G3 (the repo and its images go public).
 BARE_TODO = r"TODO(?!\((?:D8|G3)\))"
@@ -84,10 +87,10 @@ def test_every_todo_names_its_day():
 
 
 def test_unbuilt_make_targets_are_marked_todo():
-    # `make e2e` refuses real runs (scripts/e2e_demo.py has only --stub so far); `make agent-e2e` runs one intent for real
-    # (qa-w7) but has no live result yet. Drop this test when both have one.
+    # `make e2e` refuses real runs (scripts/e2e_demo.py has only --stub so far). `make agent-e2e` ran live on 2026-10-22,
+    # so it is no longer pinned. Drop this test when `make e2e` has a live result.
     for line in README.splitlines():
-        if re.search(r"\bmake (e2e|agent-e2e)\b", line):
+        if re.search(r"\bmake e2e\b", line):
             assert "TODO(D8)" in line, f"the target does not work yet: {line[:70]}"
 
 

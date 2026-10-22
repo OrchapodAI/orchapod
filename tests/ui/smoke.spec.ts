@@ -82,8 +82,8 @@ test("/agent: intent #2 is planned, run and reported", async ({ page }, testInfo
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
-// The template gallery, the dataset card, the eval view and the compare playground (frontend-w3) and the golden path (ml-w4's
-// vllm-serve): all merged, so a missing piece is a regression and fails.
+// The template gallery, the dataset card, the eval view and the compare playground (frontend-w3) and the golden path (template 4,
+// R25: unsloth-train, vllm-serve): all merged, so a missing piece is a regression and fails.
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** One click on a template card of the gallery (under the chat box on /agent; its button is named "Run template: <title>"). */

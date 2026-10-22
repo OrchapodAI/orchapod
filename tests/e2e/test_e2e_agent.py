@@ -1,4 +1,4 @@
-"""scripts/e2e_agent.py: the logic around the stub e2e of the canonical intents (the run is `make check E2E=1`: Docker, `make up`),
+"""scripts/e2e_agent.py: the logic around the stub e2e of the canonical intents and the golden path (the run is `make check E2E=1`: Docker, `make up`),
 and the real run of one intent (`make agent-e2e INTENT=2 MAX_COST=0.5`, the Orchestrator's), proved here on a fake API."""
 
 import copy

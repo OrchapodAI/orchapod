@@ -1,17 +1,20 @@
-"""The canonical intents through the Orchapod Agent, through the API only: all three on stubs ($0), or ONE for real, capped.
+"""The canonical intents and the golden path through the Orchapod Agent, through the API only: all four on stubs ($0), or ONE for real.
 
-    python scripts/e2e_agent.py --stub                       # all three; `make check E2E=1` runs it
-    python scripts/e2e_agent.py --stub --intent 2            # one canonical intent (1, 2 or 3), or any text: the STUB planner
-                                                             # answers with the closest canonical plan
-    python scripts/e2e_agent.py --intent 2 --max-cost 0.5    # real: one intent (1, 2, 3 or any text), `make agent-e2e INTENT=2 MAX_COST=0.5`
+    python scripts/e2e_agent.py --stub                       # intents 1, 2, 3 and the golden path (4); `make check E2E=1` runs it
+    python scripts/e2e_agent.py --stub --intent 2            # one of the four, or any text: the STUB planner answers with the
+                                                             # closest canonical plan
+    python scripts/e2e_agent.py --intent 2 --max-cost 0.5    # real: one intent (1, 2, 3, 4 or any text), `make agent-e2e INTENT=2 MAX_COST=0.5`
 
-Per intent: POST /agent/plan (the STUB planner must return that intent's canonical plan, error-free, estimate under the $3 run
-cap, with the shape docs/agent_knowledge.md gives it: #1 ends in judge-eval, #2 trains nothing, #3 runs quantize before
-judge-eval) -> POST /agent/run -> GET /agent/runs/{id}/report every 2 s until `ready`. Asserted: the run succeeded in under 5
-minutes with every node's contract artifacts and a cost_json, cost $0, the report names the plan, the data-prep dataset downloads
-(intent #2: rows with exactly the schema's fields), judge-eval's eval_summary has the contract's shape, and quantize
-keep_f16 registers the f16 baseline. It reuses e2e_demo.py: its stack (own API, STUB=1, throwaway DB, no paid key), image
-builds and run checks; the images it builds are the shared orchapod/<node>:dev, so it is opt-in like e2e_demo.py.
+Per canonical intent (1 to 3): POST /agent/plan (the STUB planner must return that intent's canonical plan, error-free, estimate
+under the $3 run cap, with the shape docs/agent_knowledge.md gives it: #1 ends in judge-eval, #2 trains nothing, #3 runs quantize
+before judge-eval) -> POST /agent/run -> GET /agent/runs/{id}/report every 2 s until `ready`. The golden path (4, R25: research,
+synth, prep, unsloth-train, vllm-serve, judge-eval) has no planner matching: a stub run posts template 4's plan to /agent/run as it
+is, at full scale (the stub caps), as the gallery's Run does. Asserted: the run succeeded in under 5 minutes with every node's
+contract artifacts and a cost_json, cost $0, the report names the plan, the data-prep dataset downloads (intent #2: rows with
+exactly the schema's fields), judge-eval's eval_summary has the contract's shape, quantize keep_f16 registers the f16 baseline, and
+a vllm-serve node registered a stub-* endpoint (no Nebius call under STUB). It reuses e2e_demo.py: its stack (own API, STUB=1,
+throwaway DB, no paid key), image builds (unsloth-train from its slim `stub` stage) and run checks; the images it builds are the
+shared orchapod/<node>:dev, so it is opt-in like e2e_demo.py.
 
 Any plan error is a FAIL: a canonical plan that names a node or an input that does not exist is a regression, never a skip.
 
@@ -116,7 +119,7 @@ def refusals(plan: dict, environ=os.environ) -> list[str]:
 
 
 def canonical(templates: list[dict], number: str) -> dict | None:
-    """The template of canonical intent 1, 2 or 3."""
+    """The template of canonical intent 1, 2 or 3, or of the golden path (4)."""
     return next((t for t in templates if t["slug"] == SLUGS[number]), None)
 
 
@@ -316,9 +319,10 @@ def run_all(c: httpx.Client, which: str | None, max_cost: float | None = None) -
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="E2E of the canonical intents through the Agent, on stubs or one for real (see the module docstring).")
+    ap = argparse.ArgumentParser(description="E2E of the canonical intents and the golden path through the Agent, on stubs or one for real "
+                                             "(see the module docstring).")
     ap.add_argument("--stub", action="store_true", help="STUB=1: $0, no keys, no network beyond the local stack")
-    ap.add_argument("--intent", help="1, 2 or 3 (a canonical intent), or any text; stub default: all three; a real run needs one")
+    ap.add_argument("--intent", help="1, 2 or 3 (a canonical intent), 4 (the golden path), or any text; stub default: the four; a real run needs one")
     ap.add_argument("--max-cost", type=float, help=f"USD cap of a real run, above 0 and at most ${CAP_USD:g}; a real run is refused without it")
     args = ap.parse_args(argv)
     if args.stub:

@@ -211,12 +211,13 @@ class _FineTuning(_Part):
 class _Lora(_Part):
     def deploy(self, name: str, base_model: str, source: str) -> str:
         """POST /v0/models with source "<job_id>:<checkpoint_id>"; returns the model id to chat with (may differ
-        from `name`). Unverified until spike 1, so a missing route or a rejected base raises kind `unsupported`."""
+        from `name`). A missing route, a rejected base or the route's retirement (410 for every base, spike 1) raises
+        kind `unsupported`."""
         try:
             model = self._tf._call("POST", "/v0/models", v0=True, create=True,
                                    json={"name": name, "base_model": base_model, "source": source})
         except ProviderError as e:
-            if e.status in (400, 404, 405, 422):
+            if e.status in (400, 404, 405, 410, 422):
                 raise ProviderError(P, "unsupported", e.status,
                                     f"Token Factory has no per-token LoRA deploy for {base_model} ({e.status}): "
                                     f"serve lora_adapter with vllm-serve; Token Factory said: {e.message}") from e

@@ -394,6 +394,17 @@ def test_lora_deploy_rejected_is_unsupported(replay, status):
             "serve lora_adapter with vllm-serve") in str(e.value)
 
 
+def test_lora_deploy_retired_410_is_unsupported(replay):
+    """Spike 1: POST /v0/models, sent as tf-deploy sends it, answers 410 for every base (deploy_result.json)."""
+    gone = recorded("deploy_result")
+    http, seen = replay(httpx.Response(gone["status"], text=gone["body"]))
+    with pytest.raises(ProviderError) as e:
+        TokenFactory(http=http).lora.deploy(**recorded("deploy_request"))
+    assert (e.value.kind, e.value.status, len(seen)) == ("unsupported", 410, 1)
+    assert str(e.value) == ("token_factory unsupported 410: Token Factory has no per-token LoRA deploy for "
+                            f"{LLAMA} (410): serve lora_adapter with vllm-serve; Token Factory said: {gone['body']}")
+
+
 # --- STUB=1 ---------------------------------------------------------------
 
 def test_stub_is_deterministic_and_offline(monkeypatch, train, recorder, replay):

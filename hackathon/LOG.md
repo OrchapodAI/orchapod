@@ -538,3 +538,6 @@ worktrees:
   - Stub e2e builds unsloth-train --target stub; e2e_agent --stub adds the golden path (template 4) → '4 PASS'; the smoke's golden path → template 4.
   - qa-w7 follow-ups: refuse a non-default NEBIUS_BASE_URL in real mode; real-run failure wording; DB mode=ro.
   - qa may run E2E + ui-smoke once at the end.
+- 2026-10-22T07:03Z Attempted a live click-through of intent #2 on /agent (local API on 8002 with the key, caps $0.50/run and $1/day, web on 3000) via the browser pane.
+  - The permission classifier denied starting the long-running server ('Unauthorized Persistence'). Not worked around; launch configs removed.
+  - The live Agent API run (84e57f84) is the G1 evidence; a /agent click-through waits for Hari (locally) or the hosted demo.

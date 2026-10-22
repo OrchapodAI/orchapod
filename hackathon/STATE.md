@@ -1,9 +1,9 @@
 # STATE — Orchapod × Nebius hackathon
-Updated: 2026-10-22T04:52Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
+Updated: 2026-10-22T05:08Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
 1. Hari — waiting: TAVILY_API_KEY; for the golden path (Lane B, R25) the Nebius AI Cloud setup — project id (NEBIUS_PROJECT_ID), a `nebius` CLI login on this Mac, the Object Storage bucket — plus the hosting console steps (vCPU quota 0→8 in eu-north1, GPU quotas → 1 + 1, VM, Hostinger A records; docs/HOSTING.md); golden-run topic by D6 (the docs specialist now uses Nemotron Nano); optional: HF_TOKEN + the Token Factory fine-tune rate only for the Llama templates; MinIO test data; AI disclosure; vast.ai instances.
-2. Spikes 1 and 2 DONE (R24, R25). Spike 3 waits for TAVILY_API_KEY. platform-w7 MERGED. In review: backend-w7 (test flakes; Super reporter in the background), ml-w6 (docs template on Nemotron Nano via Lane B, CPU LoRA variant). In progress: qa-w7 (e2e_agent real mode) → first live intent #2 run by the orchestrator, ≤ $0.50.
+2. Spikes 1 and 2 DONE (R24, R25). Spike 3 waits for TAVILY_API_KEY. platform-w7 MERGED. Fix rounds: backend-w7 (APPROVED; chat(create=True) replaces _SendOnce, title one line, single-flight tests), ml-w6 (I1: keep_alive_min 15 + unsloth `merge: false` keep Lane B under $3, ≈ $2.66). qa-w7 coding the e2e_agent real mode → first live intent #2 run (≤ $0.50). Queued after the merges: devrel-w6, frontend-w6 (briefs written).
 3. Wave 5: COMPLETE incl. qa-w6 and backend-w6 (startup sweep of leftover node containers; cancel race fixed; SQLite WAL). Parked: a millisecond double-click cancel can leave a node unmarked.
 4. G1 Oct 24 holds in STUB: e2e_agent 3/3, ui-smoke golden path green. Live G1 waits on the key + spike 1.
 

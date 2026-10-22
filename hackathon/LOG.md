@@ -510,3 +510,7 @@ worktrees:
   - The stub stage builds in 6 s (263 MB); a STUB run against the stub MinIO wrote lora_adapter, metrics_json, cost_json, logs.
   - Orchestrator review of the 10-line Dockerfile + test + docstring + contracts line: APPROVED. MERGED.
   - qa flag: `docker build --target stub -t orchapod/unsloth-train:dev -f containers/unsloth-train/Dockerfile .`; MUST_REGISTER unsloth-train = ('lora_adapter',).
+- 2026-10-22T06:36Z frontend-w6 fix round 2 done (68fa6d2 drop offset via screenToFlowPosition; 1f6a5c7 starter = synth → data-prep, $0.03, reviewed clean; e390410). Web 36/36.
+  - Concern: the /workflows/new AI-prompt examples ask for hidden distill-sft/lm-eval → the orchestrator swaps them for the canonical intents #2, #3 and the docs (golden) intent at merge.
+  - Ruling: agents keep their own model in the commit trailer (their role files say so); no rewrites.
+  - Scoped re-review (sonnet) of bccf186..e390410 dispatched. Trial merge clean.

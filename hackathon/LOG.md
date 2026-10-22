@@ -534,3 +534,7 @@ worktrees:
   - Super's report ready (1032 chars), titled '## movie-interactions-synthetic: succeeded'.
   - Total $0.1007 (run $0.0966 + planner/reporter $0.0041).
   - G1's 'intent #2 from the agent' holds live through the Agent API the /agent page uses.
+- 2026-10-22T07:02Z qa-w8 dispatched (resumed ae3c65befef5dcb2b; worktree qa-w8 @ 6f66473).
+  - Stub e2e builds unsloth-train --target stub; e2e_agent --stub adds the golden path (template 4) → '4 PASS'; the smoke's golden path → template 4.
+  - qa-w7 follow-ups: refuse a non-default NEBIUS_BASE_URL in real mode; real-run failure wording; DB mode=ro.
+  - qa may run E2E + ui-smoke once at the end.

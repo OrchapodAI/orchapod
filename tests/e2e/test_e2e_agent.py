@@ -221,14 +221,14 @@ def test_a_real_run_starts_a_stack_with_the_cap_pinned(stack_spy, monkeypatch):
         monkeypatch.setenv(name, value)
     assert agent.main(REAL) == 0
     [(_, extra)] = stack_spy
-    assert extra == {  # the keys that are set, STUB gone, the shell's base URL gone, both caps = --max-cost, full scale
-        "NEBIUS_API_KEY": KEY, "HF_TOKEN": "hf-1", "STUB": None, "NEBIUS_BASE_URL": None,
+    assert extra == {  # the keys that are set, STUB gone, both caps = --max-cost, full scale
+        "NEBIUS_API_KEY": KEY, "HF_TOKEN": "hf-1", "STUB": None,
         "ORCHAPOD_MAX_RUN_USD": "0.5", "ORCHAPOD_MAX_DAY_USD": "0.5", "ORCHAPOD_ANON_SCALE": "1"}
 
 
 def test_a_real_api_sees_three_keys_and_nothing_else_paid(tmp_path, monkeypatch):
-    """The env the API process gets (api_env over the shell): the three forwarded keys when set; STUB, the shell's base URL and
-    every other name in e2e_demo.PAID stay out."""
+    """The env the API process gets (api_env over the shell): the three forwarded keys when set, and a non-secret setting such as
+    NEBIUS_BASE_URL as the shell has it; STUB and every other name in e2e_demo.PAID stay out."""
     shell_env = {name: f"leak-{name}" for name in demo.PAID} | {"PATH": "/usr/bin", "STUB": "1", "NEBIUS_BASE_URL": "https://x.example/v1"}
     for name, value in shell_env.items():
         monkeypatch.setenv(name, value)
@@ -236,7 +236,7 @@ def test_a_real_api_sees_three_keys_and_nothing_else_paid(tmp_path, monkeypatch)
     assert set(agent.FORWARD) <= set(demo.PAID)  # else the shell's copies would reach the API, blank or not
     env = demo.api_env(8123, tmp_path / "e2e.db", shell_env, agent.real_env(0.5))
     assert {n for n in demo.PAID if n in env} == {"NEBIUS_API_KEY", "HF_TOKEN"}
-    assert env["NEBIUS_API_KEY"] == "leak-NEBIUS_API_KEY" and "STUB" not in env and "NEBIUS_BASE_URL" not in env
+    assert env["NEBIUS_API_KEY"] == "leak-NEBIUS_API_KEY" and "STUB" not in env and env["NEBIUS_BASE_URL"] == "https://x.example/v1"
     assert (env["ORCHAPOD_MAX_RUN_USD"], env["ORCHAPOD_MAX_DAY_USD"], env["ORCHAPOD_ANON_SCALE"]) == ("0.5", "0.5", "1")
     assert env["ORCHAPOD_KILL_SWITCH"] == "0" and env["DATABASE_URL"].startswith("sqlite+aiosqlite:///" + str(tmp_path))
 

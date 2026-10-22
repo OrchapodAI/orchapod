@@ -68,10 +68,10 @@ EVAL_KEYS = ("n", "judged", "wins", "ties", "losses", "errors", "win_rate", "con
 # ---------------------------------------------------------------------------
 
 def real_env(max_cost: float, environ=os.environ) -> dict[str, str | None]:
-    """api_env's `extra` for a real run: both caps = max_cost at full scale, STUB gone, the shell's base URL gone (the key goes
-    to Token Factory and nowhere else), and of e2e_demo.PAID only FORWARD, each when set."""
-    return FULL_CAPS | {"ORCHAPOD_MAX_RUN_USD": str(max_cost), "ORCHAPOD_MAX_DAY_USD": str(max_cost), "STUB": None,
-                        "NEBIUS_BASE_URL": None} | {k: environ[k] for k in FORWARD if environ.get(k, "").strip()}
+    """api_env's `extra` for a real run: both caps = max_cost at full scale, STUB gone, and of e2e_demo.PAID only FORWARD, each
+    when set. Anything else in the shell, NEBIUS_BASE_URL included, reaches the API as it does any non-secret setting."""
+    return FULL_CAPS | {"ORCHAPOD_MAX_RUN_USD": str(max_cost), "ORCHAPOD_MAX_DAY_USD": str(max_cost), "STUB": None} | {
+        k: environ[k] for k in FORWARD if environ.get(k, "").strip()}
 
 
 def refusals(plan: dict, environ=os.environ) -> list[str]:

@@ -7,9 +7,8 @@ import { Toaster } from "@/components/Toaster";
 // (https://app.<domain>) as a build arg, like NEXT_PUBLIC_API_URL. Open Graph and the Twitter card inherit the rest.
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"),
-  title: "Orchapod — LLM Fine-tuning Platform",
-  description: "Describe the specialist model you want in one sentence. Orchapod plans the pipeline, runs it on Nebius "
-    + "with NVIDIA Nemotron, evaluates the result against its base model and shows what it cost.",
+  title: "Orchapod",
+  description: "Orchapod — one sentence to a tuned, evaluated model on Nebius Token Factory and AI Cloud",
   openGraph: { title: "Orchapod.ai", siteName: "Orchapod.ai", type: "website" },
   twitter: { card: "summary_large_image" },
 };

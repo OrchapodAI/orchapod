@@ -2,12 +2,12 @@
 // (Node >= 22.18 strips the types itself, so there is nothing to install.)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { yamlValue, buildYamlFromGraph, planYaml, STARTER_YAML } from "../../apps/web/lib/workflowYaml.ts";
 import { api, apiDate, cancelToken, capNote, demoNote, explainError, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
 import { applyCompareEvent, applyRunEvent, canRetry, finished, REPORT_WAIT_MS, reportNext, runShown, seenFinishedAt, splitReport } from "../../apps/web/lib/runEvents.ts";
 import { defaultInputs, NODE_FORMS } from "../../apps/web/lib/nodeForms.ts";
-import { datasetOf, evalOf, lossPoints, lossSources, modelRefsOf } from "../../apps/web/lib/results.ts";
+import { datasetOf, evalOf, lossPoints, lossSources, modelRefsOf, refName } from "../../apps/web/lib/results.ts";
 
 const node = (id: string, node_type: string, inputs: Record<string, unknown>) =>
   ({ id, position: { x: 0, y: 0 }, data: { label: id, node_type, inputs, resources: {} } }) as never;
@@ -194,9 +194,20 @@ test("dropped nodes start from contract defaults: no teacher_kind, vllm-serve ke
 test("nothing made up on screen (team, owner, counts, budget) and no links to the Vast.ai/RunPod pages", () => {
   const read = (path: string) => readFileSync(new URL(`../../apps/web/${path}`, import.meta.url), "utf8");
   const pages = readdirSync(new URL("../../apps/web/app/", import.meta.url), { recursive: true }).map(String);
-  for (const page of pages.filter((p) => p.endsWith(".tsx"))) assert.doesNotMatch(read(`app/${page}`), /orbital-research|>EM</, page);
+  for (const page of pages.filter((p) => p.endsWith(".tsx"))) assert.doesNotMatch(read(`app/${page}`), /orbital-research|>EM<|LLM Fine-tuning Platform/, page);
   const sidebar = read("components/Sidebar.tsx");
   for (const fake of [/count: "\d+"/, /orbital|Elena|\$250/, /href: "\/(inference|endpoints)"/]) assert.doesNotMatch(sidebar, fake);
+});
+
+test("no sidebar link leads to a page that says \"Coming soon\", or to no page at all", () => {
+  const web = (path: string) => new URL(`../../apps/web/${path}`, import.meta.url);
+  const hrefs = [...readFileSync(web("components/Sidebar.tsx"), "utf8").matchAll(/href: "(\/[a-z-]*)"/g)].map((m) => m[1]);
+  assert.ok(hrefs.includes("/agent") && hrefs.includes("/runs"), `read the sidebar's links: ${hrefs}`);
+  for (const href of hrefs) {
+    const page = web(`app${href === "/" ? "" : href}/page.tsx`);
+    assert.ok(existsSync(page), `${href}: no page`);
+    assert.doesNotMatch(readFileSync(page, "utf8"), /coming soon/i, href);
+  }
 });
 
 test("API datetimes are UTC: a naive one gets Z, one with a zone is kept", () => {
@@ -359,6 +370,18 @@ test("the playground offers the run's ModelRefs: base and tuned first, deduped, 
   const local = { base_url: "http://127.0.0.1:8081/v1", model: "q4", api_key_env: "", base_model: null };
   assert.deepEqual(modelRefsOf(summary([nodeRun("judge", "judge-eval")], [art("judge", "eval_summary"),
     art("judge", "metrics_json", { win_rate: 1, base: local, tuned: { ...local, model: "f16" } })])), []);
+});
+
+test("a side is named by its label and by its model only when that differs: the served adapter \"tuned\" is not \"tuned · tuned\"", () => {
+  const ep = (model: string) => ({ base_url: "http://stub.invalid/v1", model, api_key_env: "ORCHAPOD_ENDPOINT_TOKEN", base_model: "meta-llama/Llama-3.2-3B-Instruct" });
+  // the seeded golden run's refs: the base by its Hugging Face id, the adapter served as "tuned"
+  const run = summary([nodeRun("judge", "judge-eval")], [art("judge", "eval_summary"),
+    art("judge", "metrics_json", { win_rate: 0.5, base: ep("meta-llama/Llama-3.2-3B-Instruct"), tuned: ep("tuned") })]);
+  assert.deepEqual(modelRefsOf(run).map((r) => refName(r.label, r.model)), ["base · meta-llama/Llama-3.2-3B-Instruct", "tuned"]);
+  assert.equal(refName("tuned", "orchapod-r1"), "tuned · orchapod-r1"); // a name that says more is kept
+  assert.equal(refName("deploy.model_ref", "tuned"), "deploy.model_ref · tuned");
+  assert.equal(refName("tuned", undefined), "tuned"); // the eval line's stats may lack a model
+  assert.equal(refName("base", "meta-llama/Llama-3.2-3B-Instruct", " "), "base meta-llama/Llama-3.2-3B-Instruct"); // the eval line's separator
 });
 
 test("no token reaches the browser: nothing reads meta.api_key, sends an Authorization header, asks for an HF token or calls /inference/extend", () => {

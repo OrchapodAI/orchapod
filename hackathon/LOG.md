@@ -514,3 +514,8 @@ worktrees:
   - Concern: the /workflows/new AI-prompt examples ask for hidden distill-sft/lm-eval → the orchestrator swaps them for the canonical intents #2, #3 and the docs (golden) intent at merge.
   - Ruling: agents keep their own model in the commit trailer (their role files say so); no rewrites.
   - Scoped re-review (sonnet) of bccf186..e390410 dispatched. Trial merge clean.
+- 2026-10-22T06:37Z qa-w7 fix round 1 done (head fe22452; merges 6d591ec, f2b732f; $0).
+  - Changes: parameters replace the global; stub-main guard; REAL_LIMIT_S 3600 + duration refusal; drift test; bind-host refusal; NEBIUS_BASE_URL passes through; a total-spend line; untilDone fails fast.
+  - tests/e2e 131; make check 5× green; 80 mutants caught; gitleaks clean.
+  - Note: a real run needs Docker Desktop (macOS/Windows), since it refuses E2E_BIND_HOST.
+  - Scoped re-review (sonnet) dispatched. Trial merge clean.

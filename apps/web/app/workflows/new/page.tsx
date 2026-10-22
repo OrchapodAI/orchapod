@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
+import { STARTER_YAML } from "@/lib/workflowYaml";
 
 type Mode = "prompt" | "yaml";
 
@@ -12,45 +13,6 @@ const EXAMPLE_PROMPTS = [
   "Distill Qwen3-4B into a 1.7B model for edge deployment, quantize to GGUF",
   "Fine-tune Llama 3.1 8B on Python code, evaluate on coding benchmarks, then serve",
 ];
-
-const STARTER_YAML = `name: my-finetune-workflow
-version: 1
-inputs:
-  dataset_uri:
-    type: string
-    description: "JSONL or HuggingFace dataset"
-  base_model:
-    type: string
-    default: "Qwen/Qwen3-4B-Instruct"
-nodes:
-  - id: prep
-    type: data-prep
-    inputs:
-      dataset: \${{ inputs.dataset_uri }}
-      format: chatml
-      train_split: 0.9
-
-  - id: train
-    type: unsloth-train
-    needs: [prep]
-    inputs:
-      model: \${{ inputs.base_model }}
-      train_data: \${{ nodes.prep.outputs.train_jsonl }}
-      eval_data: \${{ nodes.prep.outputs.eval_jsonl }}
-      lora_r: 16
-      max_steps: 500
-
-  - id: eval
-    type: lm-eval
-    needs: [train]
-    inputs:
-      models:
-        - \${{ nodes.train.outputs.merged_model }}
-      tasks:
-        - hellaswag
-        - gsm8k
-      judge_eval_set: \${{ nodes.prep.outputs.eval_jsonl }}
-`;
 
 export default function NewWorkflowPage() {
   const router = useRouter();
@@ -176,7 +138,7 @@ export default function NewWorkflowPage() {
                   <input
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    placeholder="my-finetune-workflow"
+                    placeholder="synthetic-movie-events"
                     style={inputStyle}
                   />
                 </div>

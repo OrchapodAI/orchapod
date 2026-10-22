@@ -42,3 +42,32 @@ export function buildYamlFromGraph(nodes: Node<OrchaNodeData>[], edges: Edge[], 
     }))),
   ].join("\n");
 }
+
+/** The New Workflow page's starter: intent #2's shape (the structured synth-distilabel template into data-prep): two nodes that need no
+ *  GPU and are small enough for the public demo's per-run cap. Palette node types only; tests/web keeps it so. */
+export const STARTER_YAML = `# Nemotron writes 100 rows that match row_schema; data-prep validates, dedupes and profiles them. No GPU.
+name: synthetic-movie-events
+nodes:
+  - id: synth
+    type: synth-distilabel
+    inputs:
+      pipeline_template: structured
+      n_samples: 100
+      max_tokens: 2500
+      row_schema:
+        type: object
+        additionalProperties: false
+        required: [user_id, movie_title, action, timestamp, device]
+        properties:
+          user_id: {type: string}
+          movie_title: {type: string}
+          action: {enum: [like, share, subscribe]}
+          timestamp: {type: string, format: date-time}
+          device: {enum: [mobile, tv, web, tablet]}
+  - id: prep
+    type: data-prep
+    needs: [synth]
+    inputs:
+      dataset: \${{ nodes.synth.outputs.dataset }}
+      format: structured
+`;

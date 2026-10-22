@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
-import { yamlValue, buildYamlFromGraph, planYaml } from "../../apps/web/lib/workflowYaml.ts";
+import { yamlValue, buildYamlFromGraph, planYaml, STARTER_YAML } from "../../apps/web/lib/workflowYaml.ts";
 import { api, apiDate, cancelToken, capNote, demoNote, explainError, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
 import { applyCompareEvent, applyRunEvent, canRetry, finished, REPORT_WAIT_MS, reportNext, runShown, seenFinishedAt, splitReport } from "../../apps/web/lib/runEvents.ts";
 import { defaultInputs, NODE_FORMS } from "../../apps/web/lib/nodeForms.ts";
@@ -257,6 +257,15 @@ test("the palette is the golden path first (R25), then exactly the node types th
   const known = [...read("apps/web/components/canvas/OrchaNode.tsx").matchAll(/^ {2}"([a-z0-9-]+)": +\{ label:/gm)].map((m) => m[1]); // NODE_META: what the web app can draw
   assert.deepEqual(palette.slice(0, 6), ["web-research", "synth-distilabel", "data-prep", "unsloth-train", "vllm-serve", "judge-eval"]);
   assert.deepEqual([...palette].sort(), visible.filter((t) => known.includes(t)).sort());
+});
+
+test("the New Workflow starter is intent #2's shape, synth-distilabel into data-prep, and uses only palette node types", () => {
+  const palette = [...readFileSync(new URL("../../apps/web/components/canvas/NodePalette.tsx", import.meta.url), "utf8").matchAll(/\{ type: "([a-z0-9-]+)",/g)].map((m) => m[1]);
+  const types = [...STARTER_YAML.matchAll(/^ {2}- id: \w+\n {4}type: ([a-z0-9-]+)$/gm)].map((m) => m[1]);
+  assert.deepEqual(types, ["synth-distilabel", "data-prep"]);
+  assert.deepEqual(types.filter((t) => !palette.includes(t)), []);
+  assert.match(STARTER_YAML, /^ {4}needs: \[synth\]$/m); // data-prep reads what synth wrote
+  assert.match(STARTER_YAML, /^ {6}dataset: \$\{\{ nodes\.synth\.outputs\.dataset \}\}$/m);
 });
 
 test("the template gallery reads GET /agent/templates", async () => {

@@ -3,11 +3,13 @@ containers/judge-eval/run.py — node judge-eval (api). Contract: docs/contracts
 
 Base and tuned answer the first max_samples test rows (the messages without the reference) with identical decoding; a
 GGUF input from quantize is served on 127.0.0.1 by llama-server for its phase. The judge (Nemotron 3 Ultra, guided
-JSON) then compares the first n_judge pairs against the reference in both orders. Verdicts are from the tuned side: a
-win needs both orders to pick tuned, a loss both to pick base, anything else is a tie. exact_match compares the last
-number of each answer with the reference's final number (GSM8K "#### n"). The judge sees question, reference, context
-and answers only inside tags marked untrusted (R18). A row whose call still fails after the client's retries keeps its
-error and is excluded; eval_summary is written, then the node exits 1 if more than 10% of the rows failed.
+JSON) then compares the first n_judge pairs against the reference in both orders. With tuned_lora (quantize's
+gguf_lora) the tuned side's llama-server also loads that adapter (--lora) over the tuned GGUF, so a tuned model is
+served on CPU as its base GGUF plus the LoRA. Verdicts are from the tuned side: a win needs both orders to pick tuned,
+a loss both to pick base, anything else is a tie. exact_match compares the last number of each answer with the
+reference's final number (GSM8K "#### n"). The judge sees question, reference, context and answers only inside tags
+marked untrusted (R18). A row whose call still fails after the client's retries keeps its error and is excluded;
+eval_summary is written, then the node exits 1 if more than 10% of the rows failed.
 """
 
 import contextlib
@@ -99,6 +101,19 @@ def model_ref(name: str, value) -> dict:
             "base_model": base_model if isinstance(base_model, str) else None}
 
 
+def gguf_lora(uri) -> str | None:
+    """tuned_lora (quantize's gguf_lora) → the local file, or None when unset; exit 1 unless it is an r2:// GGUF."""
+    if uri in (None, ""):
+        return None
+    if not isinstance(uri, str) or "${{" in uri or not uri.startswith("r2://"):
+        fail(f"unresolved ref tuned_lora: {uri!r} (expected quantize's r2:// gguf_lora)")
+    path = io.download_input(uri, tempfile.mkdtemp())
+    with path.open("rb") as f:
+        if f.read(4) != b"GGUF":
+            fail(f"tuned_lora {uri} is not a GGUF file")
+    return str(path)
+
+
 def public(ref: dict) -> dict:
     return {k: ref[k] for k in ("base_url", "model", "api_key_env", "base_model")}
 
@@ -116,10 +131,11 @@ def serving(side: str, ref: dict, max_tokens: int):
         yield served
         return
     server_log = Path(f"{ref['gguf']}.server.log")
+    lora = ["--lora", ref["lora"]] if ref.get("lora") else []  # tuned_lora: the adapter over this GGUF
     with server_log.open("w") as out:
         proc = subprocess.Popen(["llama-server", "-m", ref["gguf"], "--host", "127.0.0.1", "--port", str(port),
                                  "--alias", ref["model"], "--jinja", "-np", str(WORKERS),
-                                 "-c", str(WORKERS * (max_tokens + 2048))], stdout=out, stderr=subprocess.STDOUT)
+                                 "-c", str(WORKERS * (max_tokens + 2048)), *lora], stdout=out, stderr=subprocess.STDOUT)
     try:
         deadline = time.monotonic() + LOAD_TIMEOUT_S
         while True:
@@ -222,7 +238,12 @@ def main():
     rows = read_rows(inputs.get("test_data"))[:max_samples]  # before the refs: a GGUF pair is about 4 GB to fetch
     if not rows:
         fail("no test rows")
+    lora = gguf_lora(inputs.get("tuned_lora"))  # also before the refs: the LoRA is MBs, a GGUF model GBs
     refs = {side: model_ref(f"{side}_model_ref", inputs.get(f"{side}_model_ref")) for side in ("base", "tuned")}
+    if lora:  # tuned = its GGUF plus the adapter: the ref names the LoRA, on the GGUF as its base
+        if not refs["tuned"].get("gguf"):
+            fail("tuned_lora needs a GGUF tuned_model_ref (quantize's gguf_file): llama-server applies the LoRA to it")
+        refs["tuned"] = {**refs["tuned"], "model": inputs["tuned_lora"], "base_model": refs["tuned"]["model"], "lora": lora}
     samples, prompts = zip(*(sample(i, r) for i, r in enumerate(rows)))
     tf = TokenFactory(on_usage=cost.add)
 

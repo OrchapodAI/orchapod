@@ -512,6 +512,9 @@ class JudgeEvalInputs(BaseModel):
     max_tokens: int = Field(default=512, ge=16, le=8192, description="Decoding for both models (identical)")
     exact_match: bool = Field(default=False, description="Also compare the last number of each answer with the "
                                                          "reference's final number (GSM8K '#### n')")
+    tuned_lora: str | None = Field(default=None, description="quantize's gguf_lora: llama-server applies this GGUF LoRA on "
+                                                             "top of tuned_model_ref's GGUF (e.g. the same gguf_file as "
+                                                             "the base), so tuned = base + adapter on CPU")
 
 class JudgeEvalOutputs(BaseModel):
     eval_summary: str  # {n, judged, wins, ties, losses, errors, win_rate, consistency, exact_match, base, tuned, ..., samples}

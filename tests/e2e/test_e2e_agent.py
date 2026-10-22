@@ -233,6 +233,7 @@ def test_a_real_api_sees_three_keys_and_nothing_else_paid(tmp_path, monkeypatch)
     for name, value in shell_env.items():
         monkeypatch.setenv(name, value)
     monkeypatch.setenv("TAVILY_API_KEY", " ")  # blank counts as unset
+    assert set(agent.FORWARD) <= set(demo.PAID)  # else the shell's copies would reach the API, blank or not
     env = demo.api_env(8123, tmp_path / "e2e.db", shell_env, agent.real_env(0.5))
     assert {n for n in demo.PAID if n in env} == {"NEBIUS_API_KEY", "HF_TOKEN"}
     assert env["NEBIUS_API_KEY"] == "leak-NEBIUS_API_KEY" and "STUB" not in env and "NEBIUS_BASE_URL" not in env
@@ -264,7 +265,7 @@ RESEARCH = {"id": "research", "type": "web-research", "needs": [], "inputs": {"s
 
 @pytest.mark.parametrize("nodes, errors, max_cost, tavily, line", [
     ([], ["synth: unknown input 'bogus'"], 0.5, "tv", "synth: unknown input 'bogus'"),
-    ([], [], 0.1, "tv", "the estimate $0.15 is over the $0.1 run cap"),  # I2's estimate is $0.15
+    ([], [], 0.1, "tv", "the estimate $0.15 is over --max-cost $0.1"),  # I2's estimate is $0.15
     ([SERVE], [], 0.5, "tv", "vllm-serve 'serve' rents a GPU"),
     ([TRAIN], [], 0.5, "tv", "unsloth-train 'train' rents a GPU"),
     ([RESEARCH], [], 0.5, "", "web-research 'research' needs TAVILY_API_KEY, which is unset"),

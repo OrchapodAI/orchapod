@@ -26,6 +26,8 @@ ui-deps:
 	pnpm -C tests/ui exec playwright install chromium  # a fresh clone has no browser; a cached one makes this a no-op
 ui-smoke: ui-deps ; $(PY) scripts/e2e_ui.py $(UI_ARGS)
 e2e:       ; $(PY) scripts/e2e_demo.py --max-cost 3
+# make agent-e2e INTENT=2 MAX_COST=0.5: ONE intent through the Agent for real, capped at MAX_COST (default and most: 3). It spends,
+# so it is the orchestrator's: .env loaded (set -a; . ./.env; set +a), `make up`, and it retags the shared orchapod/<node>:dev images.
 MAX_COST ?= 3
 agent-e2e: ; $(PY) scripts/e2e_agent.py --intent "$(INTENT)" --max-cost "$(MAX_COST)"
 demo:      ; $(PY) scripts/seed-golden-run.py

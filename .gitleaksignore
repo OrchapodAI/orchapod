@@ -11,3 +11,5 @@ c36f051cf812d81952c171326b777d7011d77944:hackathon/briefs/2026-10-22-wave3-qa-w3
 c53db2a6c24e5f964fa8a13d8a55d9c11471411e:hackathon/briefs/2026-10-23-wave4-backend-w4-report.md:generic-api-key:106
 e7bff8fd0ad2543e9b51e944e480858ea6b587f6:apps/api/executor/run_workflow.py:generic-api-key:49
 ee6227b4d4754ade5fbb417ddb8774de784bf4ce:tests/e2e/test_e2e_demo.py:generic-api-key:190
+# pre-hackathon branch (May 2026): an empty OPENAI_API_KEY= read with the next line STUB_TEACHER=true as its value
+c2bc9f7a10a64631411a1225d2ea2a35794f1f50:.env.example:generic-api-key:38

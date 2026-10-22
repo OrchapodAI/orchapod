@@ -506,3 +506,7 @@ worktrees:
   - Palette = the 9 visible registry types; Retry restarts the 60 s report wait (reproduced first, then a test); unsloth-train and vllm-serve forms with registry defaults and contract wording; web 35/35; mutation-checked.
   - Found and assigned as fix round 2: a canvas drop-offset bug (one line in onDrop) and the starter YAML ending in hidden lm-eval → synth → data-prep.
   - One scoped re-review after round 2.
+- 2026-10-22T06:29Z ml-w7 DONE (fb1241e, 99a3e76, 7175f98; $0; no Docker leftovers).
+  - The stub stage builds in 6 s (263 MB); a STUB run against the stub MinIO wrote lora_adapter, metrics_json, cost_json, logs.
+  - Orchestrator review of the 10-line Dockerfile + test + docstring + contracts line: APPROVED. MERGED.
+  - qa flag: `docker build --target stub -t orchapod/unsloth-train:dev -f containers/unsloth-train/Dockerfile .`; MUST_REGISTER unsloth-train = ('lora_adapter',).

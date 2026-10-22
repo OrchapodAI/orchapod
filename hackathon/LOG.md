@@ -632,3 +632,4 @@ worktrees:
 - 2026-10-22T10:11Z Dispatched on 450389e (both resumed):
   - devrel-w8 (a7b1e898cb32a8e00): README fresh-clone fixes (the pnpm 11 code block, ports, STUB mapping, first-run size, one status note instead of 29 TODOs).
   - frontend-w7 (a0b588992b033feb4): /agent plan card scrolls into view; remove the 'Coming soon' sidebar links.
+- 2026-10-22T10:16Z devrel-w8 DONE (1a2ffad, 2790d4d): README fresh-clone fixes + a docs test pinning the working pnpm line. Orchestrator check of the diff: OK (the status note keeps the links TODO). MERGED; worktree removed. Left: NEXT_PUBLIC_* in .env.example (platform, P2).

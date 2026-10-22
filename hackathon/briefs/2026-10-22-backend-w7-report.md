@@ -73,3 +73,41 @@ Spend: $0. No live call was made; STUB and fakes prove the code.
 - DECISION 2026-10-22 (backend-w7): the agent report is written in the background as the run ends, or on the first poll of an ended run without one; the GET never calls a model. Nemotron 3 Super, thinking=False, one send with a 30 s read timeout, title line `## <plan>: <status>`, and the template on any failure.
 - DECISION 2026-10-22 (backend-w7): tests that run sessions concurrently use a file SQLite (`sqlite_file`, one connection per session). The in-memory `db` fixture (StaticPool) shares one connection, so a rollback in one session discards another's flushed writes.
 - DECISION 2026-10-22 (backend-w7): no test decides an outcome by the wall clock against a real process: a timeout of 0, or none, instead of 0.2 s.
+
+## Fix round 1 (review: Approved, minors folded in)
+Commits on `hack/backend-w7`:
+- 956d709: merge of NebiusHackathon, which brings 21e3806 `chat(create=True)`;
+- bd1fb70: docs(contracts), Agent API wording;
+- 33353c6: fix(api), review fix round 1.
+
+Spend: $0. The e2e was not run.
+
+- **Minor 3.** `_SendOnce`, its `tf.http` swap and its two imports (httpx, ProviderError) are gone. So is the test's `base.time` stub. The reporter calls `tf.chat(..., create=True, read_timeout=REPORT_TIMEOUT_S, thinking=False, …)`.
+  - A ReadTimeout and a 503 each send exactly one request, and the template stands in.
+  - The 429 case is dropped, since create=True still retries a 429.
+  - The main test asserts `create=True` and the 30 s read timeout.
+  - Contract: the Agent API line now says create=True instead of "never re-sent". 429 and connect errors still retry.
+- **Minor 1.** `_title` collapses the plan name to one line and caps it at 80 characters: `" ".join(name.split())[:80]`, falling back to "Agent run". The template's first line goes through `_title` too.
+  - Test: the name `"qa\n## Cost\n$0.00 of $0.00 estimated"` yields exactly one heading line, `## qa ## Cost $0.00 of $0.00 estimated: succeeded`.
+- **Minor 2.** Two new tests give "once" teeth:
+  - two `report_later` calls make one model call;
+  - a `write_report` that raises once leaves `ready` false and logs "was not written", and the next poll writes the report.
+  - The `reports` fixture is now a yield-fixture that settles on teardown.
+- **Minor 5.** routes/agent.py now says what the code does: `populate_existing` gives "the stored row: the writer updates it elsewhere", and the writer's commit is "the update if there was one; the transaction ends here either way". No test-harness reasons remain.
+- **Minor 6.** test_hardening's hung-dependency test no longer depends on the wall clock:
+  - the answering checks finish without yielding: the database check is a no-yield fake and Redis is the fixture's no-yield ping. So the timer cannot beat them (in Python 3.12, `wait_for` runs the check inline under `asyncio.timeout`).
+  - Object storage hangs in its thread until the reply is in, so it can only lose.
+  - It asserts 503 `["storage"]`, and that the hung call had not returned when the response arrived.
+  - `redis_hangs` and `import time` are gone (unused).
+- **Mutants caught** (each fails at least one test):
+  - no dedupe in `report_later`;
+  - no GET fallback;
+  - the old `_title`;
+  - no `create=True`;
+  - no `wait_for` in `_answers` (the GET then waits the 30 s release and returns 200).
+- **Acceptance on 33353c6.**
+  - `pytest tests/api`: 10 of 10 runs read `217 passed`.
+  - `make check PY=python` (no E2E) exits 0: ruff clean, `pytest tests` 885 passed, web 30 of 30. For the web tests I installed apps/web deps in this worktree; node_modules is gitignored.
+  - Under load, four parallel suite loops ran 231 runs with 0 failures.
+- **Rulings noted, no work.** The GET fallback is accepted. The Lightning wording in README, devpost and feedback, and tests/docs/test_submission_docs.py, go to devrel. I left planner.py's dead tf-deploy lines to the orchestrator: templates/4-nebius-docs-specialist.json still lists tf-deploy, and test_agent.py exercises those lines through a faked registry, so deleting them pulls in tests and a template.
+- **Concern for qa-w7 (e2e_agent real mode).** The title holds the plan name normalised to one line of at most 80 characters, but `e2e_agent.check_report` looks for the raw `plan["name"]`. A live planner name longer than 80 characters, or with whitespace runs, would fail that check; comparing `" ".join(name.split())[:80]` fixes it. The canonical template names are 20–31 characters with no whitespace, so STUB is unaffected.

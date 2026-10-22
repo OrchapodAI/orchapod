@@ -347,16 +347,19 @@ async def test_only_an_api_node_that_creates_endpoints_gets_a_fresh_iam_token(db
 SERVE_ONLY = "name: s\nnodes:\n  - {id: serve, type: vllm-serve, inputs: {model: m}}\n"
 
 
-@pytest.mark.parametrize("cli, error", [
-    (None, "no Nebius IAM token: the API host has no nebius CLI, and NEBIUS_IAM_TOKEN is blank or malformed"),
+@pytest.mark.parametrize("cli, timeout, error", [
+    (None, None, "no Nebius IAM token: the API host has no nebius CLI, and NEBIUS_IAM_TOKEN is blank or malformed"),
     # stderr can name profiles, tenants, projects or a federation URL, and node errors are public: never shown
-    ('echo "profile /home/sa/.nebius tenant-e00secret" >&2\nexit 3', "no Nebius IAM token: nebius iam get-access-token exited 3"),
-    ('echo "token: x"\necho "Warning: rotate soon"', "no Nebius IAM token: nebius iam get-access-token printed no token"),
-    ("exec sleep 5", "no Nebius IAM token: nebius iam get-access-token took over 0.2 s"),
+    ('echo "profile /home/sa/.nebius tenant-e00secret" >&2\nexit 3', None,
+     "no Nebius IAM token: nebius iam get-access-token exited 3"),
+    ('echo "token: x"\necho "Warning: rotate soon"', None, "no Nebius IAM token: nebius iam get-access-token printed no token"),
+    ("exec sleep 5", 0, "no Nebius IAM token: nebius iam get-access-token took over 0 s"),
 ])
 async def test_an_endpoint_node_without_a_token_fails_before_it_starts(db, provider, nebius_cli, endpoint_node,
-                                                                       monkeypatch, cli, error):
-    monkeypatch.setattr(ex, "IAM_TIMEOUT_S", 0.2)
+                                                                       monkeypatch, cli, timeout, error):
+    """No wall clock decides a case: a CLI that exits is waited for without a timer (one of 0.2 s lost to a loaded
+    machine's process start), and the hung one meets a timeout of 0, which asyncio.wait_for raises at once."""
+    monkeypatch.setattr(ex, "IAM_TIMEOUT_S", timeout)
     if cli is None:
         nebius_cli.path.unlink()
     else:
@@ -837,13 +840,17 @@ async def test_an_error_between_nodes_still_leaves_one_failed_node(db, provider)
 # --- run control API ---------------------------------------------------------
 
 @pytest.fixture
-def launched(db, monkeypatch):
-    """Executor tasks started by the routes; they get their own sessions on the test database."""
+async def launched(db, monkeypatch):
+    """Executor tasks started by the routes; they get their own sessions on the test database. The report writers their
+    ends start (routes/agent.report_later) finish before that database goes."""
+    from api.routes import agent
     monkeypatch.setattr("api.database.AsyncSessionLocal",
                         async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False))
     tasks, real = [], ex.launch
     monkeypatch.setattr(ex, "launch", lambda run_id, scale: tasks.append(real(run_id, scale)) or tasks[-1])
-    return tasks
+    yield tasks
+    while agent._reporting:
+        await asyncio.wait(set(agent._reporting.values()))
 
 
 @pytest.fixture

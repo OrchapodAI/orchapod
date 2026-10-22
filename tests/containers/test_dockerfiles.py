@@ -49,3 +49,14 @@ def test_no_vendored_sdk_copy():
 def test_continuation_with_trailing_whitespace(tmp_path):
     (tmp_path / "Dockerfile").write_text("FROM x\nCOPY a \\ \t\n     b /dst/\nRUN true\n")
     assert copy_sources(tmp_path / "Dockerfile") == ["a", "b"]
+
+
+def test_unsloth_train_has_a_slim_stub_stage_first_and_the_cuda_image_last():
+    """STUB=1 needs only the SDK and run.py (its GPU imports are lazy), so the stub stack builds `--target stub` on any
+    machine; the CUDA stage stays last, the default target that CI, the build script and Nebius Jobs get."""
+    stages = re.split(r"(?m)^FROM\s+", (ROOT / "containers/unsloth-train/Dockerfile").read_text())[1:]
+    stub, cuda = stages[0], stages[-1]
+    assert re.match(r"python:3\.12-slim\s+AS\s+stub\s*\n", stub, re.I), stub.splitlines()[0]
+    assert all(f"COPY {src} " in stub for src in ("packages/sdk-py/orchapod", "containers/unsloth-train/run.py"))
+    assert "CMD" in stub and "requirements.lock" not in stub  # runnable, and none of the GPU stack
+    assert len(stages) == 2 and re.match(r"pytorch/pytorch:\S*cuda", cuda)

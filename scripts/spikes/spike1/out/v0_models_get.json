@@ -1,0 +1,5 @@
+{
+ "body": "{\"detail\":\"Method Not Allowed\"}",
+ "kind": "bad_request",
+ "status": 405
+}

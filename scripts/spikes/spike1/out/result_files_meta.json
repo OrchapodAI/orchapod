@@ -1,0 +1,62 @@
+[
+ {
+  "bytes": 1146,
+  "created_at": 1792639230,
+  "filename": "ftckpt_b5621f7a-f370-41bd-8188-a4dfbb2d030d/adapter_config.json",
+  "id": "file-341729a76a14558c89f1e966f048d1f6",
+  "object": "file",
+  "purpose": "fine-tune",
+  "status": null,
+  "status_details": null
+ },
+ {
+  "bytes": 41994968,
+  "created_at": 1792639230,
+  "filename": "ftckpt_b5621f7a-f370-41bd-8188-a4dfbb2d030d/adapter_model.safetensors",
+  "id": "file-7314053926a65b598bc180ced378cc64",
+  "object": "file",
+  "purpose": "fine-tune",
+  "status": null,
+  "status_details": null
+ },
+ {
+  "bytes": 4614,
+  "created_at": 1792639230,
+  "filename": "ftckpt_b5621f7a-f370-41bd-8188-a4dfbb2d030d/chat_template.jinja",
+  "id": "file-b648c9db7d5b5cdba6d1d3886b5114e6",
+  "object": "file",
+  "purpose": "fine-tune",
+  "status": null,
+  "status_details": null
+ },
+ {
+  "bytes": 176,
+  "created_at": 1792639230,
+  "filename": "ftckpt_b5621f7a-f370-41bd-8188-a4dfbb2d030d/checkpoint.meta",
+  "id": "file-af36bfd3208e5d52b03722111562d6ea",
+  "object": "file",
+  "purpose": "fine-tune",
+  "status": null,
+  "status_details": null
+ },
+ {
+  "bytes": 17209920,
+  "created_at": 1792639231,
+  "filename": "ftckpt_b5621f7a-f370-41bd-8188-a4dfbb2d030d/tokenizer.json",
+  "id": "file-ed3dc07bc6ee5799a5be16255a8092b4",
+  "object": "file",
+  "purpose": "fine-tune",
+  "status": null,
+  "status_details": null
+ },
+ {
+  "bytes": 325,
+  "created_at": 1792639231,
+  "filename": "ftckpt_b5621f7a-f370-41bd-8188-a4dfbb2d030d/tokenizer_config.json",
+  "id": "file-4ebf2db813315f73b04002368fb3d8ea",
+  "object": "file",
+  "purpose": "fine-tune",
+  "status": null,
+  "status_details": null
+ }
+]

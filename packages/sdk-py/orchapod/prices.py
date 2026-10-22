@@ -1,17 +1,21 @@
 """The one price table (contracts R5, R16): orchapod.cost re-exports it, the provider clients import it from here.
 
-Unknown prices are absent, so every lookup of them fails closed. Spike 1 adds Nano, Llama-3.1-8B (a LoRA is
-priced as its base_model) and the fine-tune rates (GET /v1/models?verbose=true returns `pricing`).
+Unknown prices are absent, so every lookup of them fails closed.
 """
 
 PRICES = {
-    # $ per 1M tokens, by Token Factory model id.
+    # $ per 1M tokens, by Token Factory model id. Source: GET /v1/models?verbose=true `pricing.prompt`/`.completion`
+    # ($ per token), read 2026-10-22 by spike 1. meta-llama/Llama-3.1-8B-Instruct is not in that serverless catalog
+    # (no Llama is), so it has no per-token price and stays absent.
     "token_factory": {
         "nvidia/nemotron-3-super-120b-a12b": {"in": 0.30, "out": 0.90},
         "nvidia/Nemotron-3-Ultra-550b-a55b": {"in": 1.00, "out": 3.00},
         "nvidia/Nemotron-3_5-Lightning": {"in": 0.06, "out": 0.24},
+        "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B": {"in": 0.06, "out": 0.24},
     },
-    # $ per trained token, by base model.
+    # $ per trained token, by base model. Unverified as of 2026-10-22 (spike 1): the API does not return it and the
+    # public price link opens the console's billing route (tokenfactory.nebius.com/organization/prices), whose page
+    # as served carries no prices; absent.
     "token_factory_finetune": {},
     # $ per credit: search 1 (basic) or 2 (advanced); extract 1 or 2 per 5 successful URLs.
     "tavily": {"credit": 0.008},

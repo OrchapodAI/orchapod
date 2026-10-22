@@ -1,0 +1,20 @@
+[
+ {
+  "created_at": 1792639488,
+  "id": "9bcfa6de-fb61-4ee6-af50-50de71c804a6",
+  "job_uuid": "ftjob-a31d71e5334b463ebf7a29597d0a2447",
+  "level": "info",
+  "message": "Job is submitted",
+  "object": "fine_tuning.job.event",
+  "source": "api"
+ },
+ {
+  "created_at": 1792639507,
+  "id": "1c8ac007-2aee-4e34-b353-3fcfe85f4b0a",
+  "job_uuid": "ftjob-a31d71e5334b463ebf7a29597d0a2447",
+  "level": "error",
+  "message": "Finetuning was cancelled",
+  "object": "fine_tuning.job.event",
+  "source": "datasets"
+ }
+]

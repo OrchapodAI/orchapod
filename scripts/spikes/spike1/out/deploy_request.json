@@ -1,0 +1,5 @@
+{
+ "base_model": "meta-llama/Llama-3.1-8B-Instruct",
+ "name": "spike1-0324",
+ "source": "ftjob-cee40df61e074d91a354eabcedaa3243:ftckpt_b5621f7a-f370-41bd-8188-a4dfbb2d030d"
+}

@@ -1,0 +1,616 @@
+{
+ "models": [
+  {
+   "context_window_k": 131,
+   "description": "Unsloth's BF16 conversion of OpenAI's gpt-oss-20b open-weight MoE model, intended for reasoning, tool use, and agentic workflows.",
+   "hf_repo_name": "unsloth/gpt-oss-20b-BF16",
+   "huggingface_url": "https://huggingface.co/unsloth/gpt-oss-20b-BF16",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://www.apache.org/licenses/LICENSE-2.0"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_small",
+    "value": 5.0
+   },
+   "quantization": "bf16",
+   "size_b": 20.91
+  },
+  {
+   "context_window_k": 131,
+   "description": "Unsloth's BF16 conversion of OpenAI's gpt-oss-120b open-weight MoE model, built for high-capability reasoning, tool use, and agentic workflows.",
+   "hf_repo_name": "unsloth/gpt-oss-120b-BF16",
+   "huggingface_url": "https://huggingface.co/unsloth/gpt-oss-120b-BF16",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://www.apache.org/licenses/LICENSE-2.0"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_medium",
+    "value": 6.0
+   },
+   "quantization": "bf16",
+   "size_b": 116.83
+  },
+  {
+   "context_window_k": 262,
+   "description": "Qwen's instruction-tuned sparse MoE coding model, optimized for agentic coding, repository-scale understanding, and tool-driven development.",
+   "hf_repo_name": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+   "huggingface_url": "https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct/blob/main/LICENSE"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_small",
+    "value": 5.0
+   },
+   "quantization": "bf16",
+   "size_b": 30.53
+  },
+  {
+   "context_window_k": 40,
+   "description": "Qwen's sparse MoE language model with hybrid thinking and non-thinking modes for reasoning, instruction following, coding, and tool use.",
+   "hf_repo_name": "Qwen/Qwen3-30B-A3B",
+   "huggingface_url": "https://huggingface.co/Qwen/Qwen3-30B-A3B",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://huggingface.co/Qwen/Qwen3-30B-A3B/blob/main/LICENSE"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_small",
+    "value": 5.0
+   },
+   "quantization": "bf16",
+   "size_b": 30.53
+  },
+  {
+   "context_window_k": 262,
+   "description": "Qwen's updated non-thinking instruction-tuned sparse MoE model for general tasks, coding, tool use, and long-context understanding.",
+   "hf_repo_name": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+   "huggingface_url": "https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507/blob/main/LICENSE"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_small",
+    "value": 5.0
+   },
+   "quantization": "bf16",
+   "size_b": 30.53
+  },
+  {
+   "context_window_k": 262,
+   "description": "Qwen's updated thinking-focused sparse MoE model for complex reasoning, mathematics, science, coding, and long-context tasks.",
+   "hf_repo_name": "Qwen/Qwen3-30B-A3B-Thinking-2507",
+   "huggingface_url": "https://huggingface.co/Qwen/Qwen3-30B-A3B-Thinking-2507",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://huggingface.co/Qwen/Qwen3-30B-A3B-Thinking-2507/blob/main/LICENSE"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_small",
+    "value": 5.0
+   },
+   "quantization": "bf16",
+   "size_b": 30.53
+  },
+  {
+   "context_window_k": 131,
+   "description": "Meta's instruction-tuned multilingual Llama 3.1 model for dialogue, assistant workflows, text generation, and long-context applications.",
+   "hf_repo_name": "meta-llama/Llama-3.1-8B-Instruct",
+   "huggingface_url": "https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct",
+   "license": {
+    "name": "Llama 3.1 Community License",
+    "type": "",
+    "url": "https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct/blob/main/LICENSE"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_small",
+    "value": 5.0
+   },
+   "quantization": "bf16",
+   "size_b": 8.03
+  },
+  {
+   "context_window_k": 40,
+   "description": "Qwen's compact language model with hybrid thinking modes, designed for reasoning, instruction following, coding, and multilingual tasks.",
+   "hf_repo_name": "Qwen/Qwen3-4B",
+   "huggingface_url": "https://huggingface.co/Qwen/Qwen3-4B",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://huggingface.co/Qwen/Qwen3-4B/blob/main/LICENSE"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_small",
+    "value": 5.0
+   },
+   "quantization": "bf16",
+   "size_b": 4.02
+  },
+  {
+   "context_window_k": 40,
+   "description": "Qwen's general-purpose language model with hybrid thinking modes for reasoning, instruction following, coding, and multilingual tasks.",
+   "hf_repo_name": "Qwen/Qwen3-8B",
+   "huggingface_url": "https://huggingface.co/Qwen/Qwen3-8B",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://huggingface.co/Qwen/Qwen3-8B/blob/main/LICENSE"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_small",
+    "value": 5.0
+   },
+   "quantization": "bf16",
+   "size_b": 8.19
+  },
+  {
+   "context_window_k": 262,
+   "description": "Qwen's post-trained multimodal model combining text and vision with a hybrid architecture for reasoning, coding, agents, and visual understanding.",
+   "hf_repo_name": "Qwen/Qwen3.5-9B",
+   "huggingface_url": "https://huggingface.co/Qwen/Qwen3.5-9B",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://huggingface.co/Qwen/Qwen3.5-9B/blob/main/LICENSE"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_small",
+    "value": 5.0
+   },
+   "quantization": "bf16",
+   "size_b": 9.65
+  },
+  {
+   "context_window_k": 262,
+   "description": "Qwen's compact post-trained multimodal model for reasoning, coding, agentic tasks, multilingual use, and visual understanding.",
+   "hf_repo_name": "Qwen/Qwen3.5-4B",
+   "huggingface_url": "https://huggingface.co/Qwen/Qwen3.5-4B",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://huggingface.co/Qwen/Qwen3.5-4B/blob/main/LICENSE"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_small",
+    "value": 5.0
+   },
+   "quantization": "bf16",
+   "size_b": 4.66
+  },
+  {
+   "context_window_k": 262,
+   "description": "Qwen's post-trained multimodal sparse MoE model with a hybrid architecture for reasoning, coding, agents, multilingual use, and visual understanding.",
+   "hf_repo_name": "Qwen/Qwen3.5-35B-A3B",
+   "huggingface_url": "https://huggingface.co/Qwen/Qwen3.5-35B-A3B",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://huggingface.co/Qwen/Qwen3.5-35B-A3B/blob/main/LICENSE"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_small",
+    "value": 5.0
+   },
+   "quantization": "bf16",
+   "size_b": 35.95
+  },
+  {
+   "context_window_k": 262,
+   "description": "Qwen's FP8-quantized multimodal sparse MoE model with a hybrid architecture for efficient reasoning, coding, agents, and visual understanding.",
+   "hf_repo_name": "Qwen/Qwen3.5-35B-A3B-FP8",
+   "huggingface_url": "https://huggingface.co/Qwen/Qwen3.5-35B-A3B-FP8",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://huggingface.co/Qwen/Qwen3.5-35B-A3B/blob/main/LICENSE"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_small",
+    "value": 5.0
+   },
+   "quantization": "fp8",
+   "size_b": 35.95
+  },
+  {
+   "context_window_k": 262,
+   "description": "Qwen's large post-trained multimodal sparse MoE model for advanced reasoning, coding, agentic workflows, and visual understanding.",
+   "hf_repo_name": "Qwen/Qwen3.5-122B-A10B",
+   "huggingface_url": "https://huggingface.co/Qwen/Qwen3.5-122B-A10B",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://huggingface.co/Qwen/Qwen3.5-122B-A10B/blob/main/LICENSE"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_medium",
+    "value": 6.0
+   },
+   "quantization": "bf16",
+   "size_b": 125.09
+  },
+  {
+   "context_window_k": 262,
+   "description": "Qwen's FP8-quantized large multimodal sparse MoE model for efficient reasoning, coding, agentic workflows, and visual understanding.",
+   "hf_repo_name": "Qwen/Qwen3.5-122B-A10B-FP8",
+   "huggingface_url": "https://huggingface.co/Qwen/Qwen3.5-122B-A10B-FP8",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://huggingface.co/Qwen/Qwen3.5-122B-A10B-FP8/blob/main/LICENSE"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_medium",
+    "value": 6.0
+   },
+   "quantization": "fp8",
+   "size_b": 125.09
+  },
+  {
+   "context_window_k": 262,
+   "description": "Qwen's flagship post-trained multimodal sparse MoE model for complex reasoning, coding, agentic workflows, multilingual use, and vision tasks.",
+   "hf_repo_name": "Qwen/Qwen3.5-397B-A17B",
+   "huggingface_url": "https://huggingface.co/Qwen/Qwen3.5-397B-A17B",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://huggingface.co/Qwen/Qwen3.5-397B-A17B/blob/main/LICENSE"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_large",
+    "value": 9.0
+   },
+   "quantization": "bf16",
+   "size_b": 403.4
+  },
+  {
+   "context_window_k": 262,
+   "description": "Qwen's FP8-quantized flagship multimodal sparse MoE model for efficient reasoning, coding, agentic workflows, multilingual use, and vision tasks.",
+   "hf_repo_name": "Qwen/Qwen3.5-397B-A17B-FP8",
+   "huggingface_url": "https://huggingface.co/Qwen/Qwen3.5-397B-A17B-FP8",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://huggingface.co/Qwen/Qwen3.5-397B-A17B/blob/main/LICENSE"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_large",
+    "value": 9.0
+   },
+   "quantization": "fp8",
+   "size_b": 403.42
+  },
+  {
+   "context_window_k": 262,
+   "description": "NVIDIA's NVFP4-quantized version of Qwen3.5-397B-A17B, optimized for memory-efficient inference on NVIDIA Blackwell GPUs.",
+   "hf_repo_name": "nvidia/Qwen3.5-397B-A17B-NVFP4",
+   "huggingface_url": "https://huggingface.co/nvidia/Qwen3.5-397B-A17B-NVFP4",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://www.apache.org/licenses/LICENSE-2.0"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_large",
+    "value": 9.0
+   },
+   "quantization": "nvfp4",
+   "size_b": 403.4
+  },
+  {
+   "context_window_k": 262,
+   "description": "AxionML's NVFP4-quantized Qwen3.5-9B model, reducing storage and memory requirements for efficient multimodal serving on Blackwell GPUs.",
+   "hf_repo_name": "AxionML/Qwen3.5-9B-NVFP4",
+   "huggingface_url": "https://huggingface.co/AxionML/Qwen3.5-9B-NVFP4",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://www.apache.org/licenses/LICENSE-2.0"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_small",
+    "value": 5.0
+   },
+   "quantization": "nvfp4",
+   "size_b": 6.63
+  },
+  {
+   "context_window_k": 262,
+   "description": "Qwen's post-trained sparse MoE model for reasoning, coding, agentic tool use, multilingual tasks, and multimodal understanding.",
+   "hf_repo_name": "Qwen/Qwen3.6-35B-A3B",
+   "huggingface_url": "https://huggingface.co/Qwen/Qwen3.6-35B-A3B",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://huggingface.co/Qwen/Qwen3.6-35B-A3B/blob/main/LICENSE"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_small",
+    "value": 5.0
+   },
+   "quantization": "bf16",
+   "size_b": 35.95
+  },
+  {
+   "context_window_k": 262,
+   "description": "Qwen's FP8-quantized sparse MoE model for efficient reasoning, coding, agentic tool use, multilingual tasks, and multimodal understanding.",
+   "hf_repo_name": "Qwen/Qwen3.6-35B-A3B-FP8",
+   "huggingface_url": "https://huggingface.co/Qwen/Qwen3.6-35B-A3B-FP8",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://huggingface.co/Qwen/Qwen3.6-35B-A3B-FP8/blob/main/LICENSE"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_small",
+    "value": 5.0
+   },
+   "quantization": "fp8",
+   "size_b": 35.95
+  },
+  {
+   "context_window_k": 262,
+   "description": "Red Hat's validated NVFP4-quantized Qwen3.6-35B-A3B model for efficient text, vision, tool-use, and speculative-decoding deployments.",
+   "hf_repo_name": "RedHatAI/Qwen3.6-35B-A3B-NVFP4",
+   "huggingface_url": "https://huggingface.co/RedHatAI/Qwen3.6-35B-A3B-NVFP4",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://huggingface.co/Qwen/Qwen3.6-35B-A3B/blob/main/LICENSE"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_small",
+    "value": 5.0
+   },
+   "quantization": "nvfp4",
+   "size_b": 35.95
+  },
+  {
+   "context_window_k": 262,
+   "description": "Unsloth's NVFP4-quantized Qwen3.6-27B model for memory-efficient reasoning, coding, agentic tool use, and multimodal workloads.",
+   "hf_repo_name": "unsloth/Qwen3.6-27B-NVFP4",
+   "huggingface_url": "https://huggingface.co/unsloth/Qwen3.6-27B-NVFP4",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://huggingface.co/Qwen/Qwen3.6-27B/blob/main/LICENSE"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_small",
+    "value": 5.0
+   },
+   "quantization": "nvfp4",
+   "size_b": 18.9
+  },
+  {
+   "context_window_k": 196,
+   "description": "MiniMax's sparse MoE language model focused on coding, tool use, search, office productivity, and long-horizon agentic workflows.",
+   "hf_repo_name": "MiniMaxAI/MiniMax-M2.5",
+   "huggingface_url": "https://huggingface.co/MiniMaxAI/MiniMax-M2.5",
+   "license": {
+    "name": "MiniMax Model License",
+    "type": "",
+    "url": "https://github.com/MiniMax-AI/MiniMax-M2.5/blob/main/LICENSE-MODEL"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_medium",
+    "value": 6.0
+   },
+   "quantization": "fp8",
+   "size_b": 228.7
+  },
+  {
+   "context_window_k": 196,
+   "description": "NVIDIA's NVFP4-quantized MiniMax-M2.5 model for efficient deployment in agent systems, chatbots, retrieval workflows, and coding applications.",
+   "hf_repo_name": "nvidia/MiniMax-M2.5-NVFP4",
+   "huggingface_url": "https://huggingface.co/nvidia/MiniMax-M2.5-NVFP4",
+   "license": {
+    "name": "NVIDIA Open Model License",
+    "type": "",
+    "url": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_medium",
+    "value": 6.0
+   },
+   "quantization": "nvfp4",
+   "size_b": 116.35
+  },
+  {
+   "context_window_k": 204,
+   "description": "MiniMax's sparse MoE model for complex software engineering, agent teams, dynamic tool search, production troubleshooting, and office productivity.",
+   "hf_repo_name": "MiniMaxAI/MiniMax-M2.7",
+   "huggingface_url": "https://huggingface.co/MiniMaxAI/MiniMax-M2.7",
+   "license": {
+    "name": "MiniMax M2.7",
+    "type": "",
+    "url": "https://github.com/MiniMax-AI/MiniMax-M2.7/blob/main/LICENSE"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_medium",
+    "value": 6.0
+   },
+   "quantization": "fp8",
+   "size_b": 228.7
+  },
+  {
+   "context_window_k": 196,
+   "description": "NVIDIA's NVFP4-quantized MiniMax-M2.7 model for research into advanced coding, agentic workflows, tool use, and complex productivity tasks.",
+   "hf_repo_name": "nvidia/MiniMax-M2.7-NVFP4",
+   "huggingface_url": "https://huggingface.co/nvidia/MiniMax-M2.7-NVFP4",
+   "license": {
+    "name": "NVIDIA Software and Model Evaluation License",
+    "type": "",
+    "url": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-and-model-evaluation-license"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_medium",
+    "value": 6.0
+   },
+   "quantization": "nvfp4",
+   "size_b": 116.35
+  },
+  {
+   "context_window_k": 202,
+   "description": "NVIDIA's NVFP4-quantized GLM-4.7 model, optimized for efficient deployment in agent systems, chatbots, retrieval workflows, and coding applications.",
+   "hf_repo_name": "nvidia/GLM-4.7-NVFP4",
+   "huggingface_url": "https://huggingface.co/nvidia/GLM-4.7-NVFP4",
+   "license": {
+    "name": "MIT License",
+    "type": "",
+    "url": "https://opensource.org/license/mit"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_medium",
+    "value": 6.0
+   },
+   "quantization": "nvfp4",
+   "size_b": 183.48
+  },
+  {
+   "context_window_k": 202,
+   "description": "Z.ai's compact sparse MoE model for efficient reasoning, coding, tool use, instruction following, and agentic applications.",
+   "hf_repo_name": "zai-org/GLM-4.7-Flash",
+   "huggingface_url": "https://huggingface.co/zai-org/GLM-4.7-Flash",
+   "license": {
+    "name": "MIT License",
+    "type": "",
+    "url": "https://opensource.org/license/mit"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_small",
+    "value": 5.0
+   },
+   "quantization": "bf16",
+   "size_b": 31.22
+  },
+  {
+   "context_window_k": 202,
+   "description": "Unsloth's dynamic FP8-quantized GLM-4.7-Flash model for memory-efficient reasoning, coding, tool use, and agentic inference.",
+   "hf_repo_name": "unsloth/GLM-4.7-Flash-FP8-Dynamic",
+   "huggingface_url": "https://huggingface.co/unsloth/GLM-4.7-Flash-FP8-Dynamic",
+   "license": {
+    "name": "MIT License",
+    "type": "",
+    "url": "https://opensource.org/license/mit"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_small",
+    "value": 5.0
+   },
+   "quantization": "fp8",
+   "size_b": 29.96
+  },
+  {
+   "context_window_k": 202,
+   "description": "A mixed-precision NVFP4 quantization of GLM-4.7-Flash that retains BF16 attention for improved accuracy while reducing storage and GPU memory.",
+   "hf_repo_name": "GadflyII/GLM-4.7-Flash-NVFP4",
+   "huggingface_url": "https://huggingface.co/GadflyII/GLM-4.7-Flash-NVFP4",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://www.apache.org/licenses/LICENSE-2.0"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_small",
+    "value": 5.0
+   },
+   "quantization": "nvfp4",
+   "size_b": 18.44
+  },
+  {
+   "context_window_k": 262,
+   "description": "Qwen's FP8-quantized dense multimodal model for efficient reasoning, coding, agentic tool use, multilingual tasks, and visual understanding.",
+   "hf_repo_name": "Qwen/Qwen3.5-27B-FP8",
+   "huggingface_url": "https://huggingface.co/Qwen/Qwen3.5-27B-FP8",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://huggingface.co/Qwen/Qwen3.5-27B-FP8/blob/main/LICENSE"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_small",
+    "value": 5.0
+   },
+   "quantization": "fp8",
+   "size_b": 27.78
+  },
+  {
+   "context_window_k": 262,
+   "description": "AxionML's NVFP4-quantized Qwen3.5-35B-A3B sparse MoE model for efficient multimodal serving, reasoning, coding, and agentic workloads.",
+   "hf_repo_name": "AxionML/Qwen3.5-35B-A3B-NVFP4",
+   "huggingface_url": "https://huggingface.co/AxionML/Qwen3.5-35B-A3B-NVFP4",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://www.apache.org/licenses/LICENSE-2.0"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_small",
+    "value": 5.0
+   },
+   "quantization": "nvfp4",
+   "size_b": 35.95
+  },
+  {
+   "context_window_k": 262,
+   "description": "Red Hat's validated NVFP4-quantized Qwen3.5-122B-A10B model for efficient text, vision, tool-use, and speculative-decoding deployments.",
+   "hf_repo_name": "RedHatAI/Qwen3.5-122B-A10B-NVFP4",
+   "huggingface_url": "https://huggingface.co/RedHatAI/Qwen3.5-122B-A10B-NVFP4",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://huggingface.co/Qwen/Qwen3.5-122B-A10B/blob/main/LICENSE"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_small",
+    "value": 5.0
+   },
+   "quantization": "nvfp4",
+   "size_b": 71.22
+  },
+  {
+   "context_window_k": 131,
+   "description": "OpenAI's high-capability open-weight sparse MoE reasoning model for agentic workflows, tool use, coding, and customizable deployment.",
+   "hf_repo_name": "openai/gpt-oss-120b",
+   "huggingface_url": "https://huggingface.co/openai/gpt-oss-120b",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://www.apache.org/licenses/LICENSE-2.0"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_medium",
+    "value": 6.0
+   },
+   "quantization": "mxfp4",
+   "size_b": 120.41
+  },
+  {
+   "context_window_k": 131,
+   "description": "OpenAI's compact open-weight sparse MoE reasoning model for agentic workflows, tool use, coding, and local or specialized deployment.",
+   "hf_repo_name": "openai/gpt-oss-20b",
+   "huggingface_url": "https://huggingface.co/openai/gpt-oss-20b",
+   "license": {
+    "name": "Apache License 2.0",
+    "type": "",
+    "url": "https://www.apache.org/licenses/LICENSE-2.0"
+   },
+   "price": {
+    "sku_id": "text_fine_tuning_model_agnostic_training_drafter_small",
+    "value": 5.0
+   },
+   "quantization": "mxfp4",
+   "size_b": 21.51
+  }
+ ]
+}

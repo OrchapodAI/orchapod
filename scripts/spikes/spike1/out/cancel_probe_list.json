@@ -1,0 +1,121 @@
+[
+ {
+  "benchmark_mode": false,
+  "created_at": 1792639485,
+  "error": null,
+  "estimated_finish": null,
+  "finished_at": null,
+  "from_checkpoint": null,
+  "hyperparameters": {
+   "batch_size": 8,
+   "context_length": 8192,
+   "learning_rate": 1e-05,
+   "lora": true,
+   "lora_alpha": 8,
+   "lora_dropout": 0.0,
+   "lora_r": 8,
+   "max_grad_norm": 1.0,
+   "n_epochs": 1,
+   "packing": true,
+   "warmup_ratio": 0.0,
+   "weight_decay": 0.0
+  },
+  "id": "ftjob-a31d71e5334b463ebf7a29597d0a2447",
+  "integrations": null,
+  "method": {
+   "supervised": {
+    "hyperparameters": {
+     "batch_size": 8,
+     "context_length": 8192,
+     "learning_rate": 1e-05,
+     "lora": true,
+     "lora_alpha": 8,
+     "lora_dropout": 0.0,
+     "lora_r": 8,
+     "max_grad_norm": 1.0,
+     "n_epochs": 1,
+     "packing": true,
+     "warmup_ratio": 0.0,
+     "weight_decay": 0.0
+    }
+   },
+   "type": "supervised"
+  },
+  "model": "meta-llama/Llama-3.1-8B-Instruct",
+  "object": "fine_tuning.job",
+  "organization_id": "",
+  "profile_mode": true,
+  "result_files": [],
+  "seed": 0,
+  "status": "running",
+  "suffix": "spike1-0324",
+  "total_steps": null,
+  "trained_steps": 0,
+  "trained_tokens": 0,
+  "training_file": "file-01a1619a-bd38-7236-88bb-237f9a8b7137",
+  "validation_file": "file-01a1619a-bf99-796a-89ad-2bbccf700aba"
+ },
+ {
+  "benchmark_mode": false,
+  "created_at": 1792638897,
+  "error": null,
+  "estimated_finish": 1792639200,
+  "finished_at": 1792639302,
+  "from_checkpoint": null,
+  "hyperparameters": {
+   "batch_size": 8,
+   "context_length": 8192,
+   "learning_rate": 1e-05,
+   "lora": true,
+   "lora_alpha": 8,
+   "lora_dropout": 0.0,
+   "lora_r": 8,
+   "max_grad_norm": 1.0,
+   "n_epochs": 1,
+   "packing": true,
+   "warmup_ratio": 0.0,
+   "weight_decay": 0.0
+  },
+  "id": "ftjob-cee40df61e074d91a354eabcedaa3243",
+  "integrations": null,
+  "method": {
+   "supervised": {
+    "hyperparameters": {
+     "batch_size": 8,
+     "context_length": 8192,
+     "learning_rate": 1e-05,
+     "lora": true,
+     "lora_alpha": 8,
+     "lora_dropout": 0.0,
+     "lora_r": 8,
+     "max_grad_norm": 1.0,
+     "n_epochs": 1,
+     "packing": true,
+     "warmup_ratio": 0.0,
+     "weight_decay": 0.0
+    }
+   },
+   "type": "supervised"
+  },
+  "model": "meta-llama/Llama-3.1-8B-Instruct",
+  "object": "fine_tuning.job",
+  "organization_id": "",
+  "profile_mode": true,
+  "result_files": [
+   "file-341729a76a14558c89f1e966f048d1f6",
+   "file-7314053926a65b598bc180ced378cc64",
+   "file-b648c9db7d5b5cdba6d1d3886b5114e6",
+   "file-af36bfd3208e5d52b03722111562d6ea",
+   "file-ed3dc07bc6ee5799a5be16255a8092b4",
+   "file-4ebf2db813315f73b04002368fb3d8ea"
+  ],
+  "seed": 0,
+  "status": "succeeded",
+  "suffix": "spike1-0314",
+  "total_steps": 1,
+  "trained_steps": 1,
+  "trained_tokens": 2599,
+  "training_file": "file-01a1619a-bd38-7236-88bb-237f9a8b7137",
+  "validation_file": "file-01a1619a-bf99-796a-89ad-2bbccf700aba"
+ }
+]

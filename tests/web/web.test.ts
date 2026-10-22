@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { yamlValue, buildYamlFromGraph, planYaml } from "../../apps/web/lib/workflowYaml.ts";
 import { api, apiDate, cancelToken, capNote, demoNote, explainError, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
-import { applyCompareEvent, applyRunEvent, canRetry, finished, runShown } from "../../apps/web/lib/runEvents.ts";
+import { applyCompareEvent, applyRunEvent, canRetry, finished, REPORT_WAIT_MS, reportNext, runShown, splitReport } from "../../apps/web/lib/runEvents.ts";
 import { defaultInputs, NODE_FORMS } from "../../apps/web/lib/nodeForms.ts";
 import { datasetOf, evalOf, lossPoints, lossSources, modelRefsOf } from "../../apps/web/lib/results.ts";
 
@@ -374,6 +374,24 @@ test("the demo banner says what a run costs (the estimates one-click Run uses) a
   assert.equal(demoNote([template(0.15, true), template(0.88, false), template(0.02)]),
     "Every run shows its estimated cost before you press Run: $0.02 to $0.88 for the templates below. "
     + "Public runs are capped per run and per day; a template above the per-run cap links to its golden run instead.");
+});
+
+test("the report card polls until the report is ready, also after the run ended, and gives up 60 s after it ended", () => {
+  const t0 = 1_000_000; // when a poll first saw the run finished
+  assert.equal(REPORT_WAIT_MS, 60_000);
+  assert.equal(reportNext(false, undefined, t0 + 6 * 3_600_000), "wait"); // the run is still going: no bound, however long it takes
+  assert.equal(reportNext(false, t0, t0), "wait"); // just ended: the API writes the report in the background
+  assert.equal(reportNext(false, t0, t0 + REPORT_WAIT_MS - 1), "wait");
+  assert.equal(reportNext(false, t0, t0 + REPORT_WAIT_MS), "gone"); // "Report unavailable, see the run page"
+  assert.equal(reportNext(true, undefined, t0), "done");
+  assert.equal(reportNext(true, t0, t0 + 2 * REPORT_WAIT_MS), "done"); // a report that lands late is still shown
+});
+
+test("the report's first line, ## <plan>: <status>, is its title; the rest stays Markdown as written", () => {
+  assert.deepEqual(splitReport("## movies: succeeded\n\n**Intent:** x\n\n## Cost\n$0"), { title: "movies: succeeded", body: "**Intent:** x\n\n## Cost\n$0" });
+  assert.deepEqual(splitReport("## only a title"), { title: "only a title", body: "" });
+  assert.deepEqual(splitReport("no title\n## Cost"), { title: null, body: "no title\n## Cost" }); // only the first line is the title
+  assert.equal(splitReport("### Cost\nx").title, null); // and only `## `, the level the API writes
 });
 
 test("a failed fetch with no error display of its own raises one readable toast", () => {

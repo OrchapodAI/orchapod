@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, capNote, demoNote, explainError, usd } from "@/lib/api";
 import type { AgentPlan, AgentReport, AgentTemplate } from "@/lib/types";
+import { finished, reportNext, splitReport } from "@/lib/runEvents";
 import { planYaml } from "@/lib/workflowYaml";
 import { NODE_META } from "@/components/canvas/OrchaNode";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -241,7 +242,7 @@ export default function AgentPage() {
               <div className="card" style={{ height: 560, overflow: "hidden" }}>
                 <RunView id={runId} embedded />
               </div>
-              <ReportCard runId={runId} />
+              <ReportCard key={runId} runId={runId} />
             </>
           )}
         </div>
@@ -253,28 +254,37 @@ export default function AgentPage() {
 function ReportCard({ runId }: { runId: string }) {
   const [report, setReport] = useState<AgentReport | null>(null);
   const [error, setError] = useState("");
+  const [gone, setGone] = useState(false); // the run ended REPORT_WAIT_MS ago and its report never came
 
-  // Poll every 5 s until the report is ready; a 404 means this run will never have one.
+  // The one poll loop, every 5 s: until the report is ready (the API writes it in the background once the run ends), for at most
+  // REPORT_WAIT_MS after the run ended (reportNext); a 404 means this run will never have one.
   useEffect(() => {
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let endedAt: number | undefined; // when a poll first saw the run finished
     async function poll() {
+      let ready = false;
       try {
         const r = await api.agent.report(runId);
         if (!live) return;
         setReport(r);
         setError("");
-        if (r.ready) return;
+        ready = r.ready;
+        if (finished(r.status)) endedAt ??= Date.now();
       } catch (err) {
         if (!live) return;
         setError(explainError(err));
         if ((err as { status?: number }).status === 404) return;
       }
-      timer = setTimeout(poll, 5000);
+      const next = reportNext(ready, endedAt, Date.now());
+      if (next === "gone") setGone(true);
+      else if (next === "wait") timer = setTimeout(poll, 5000);
     }
     poll();
     return () => { live = false; clearTimeout(timer); };
   }, [runId]);
+
+  const { title, body } = splitReport(report?.markdown ?? ""); // null until the report is ready
 
   return (
     <div className="card" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -291,9 +301,16 @@ function ReportCard({ runId }: { runId: string }) {
       {error && <Callout tone="rose" title="Couldn't load the report">{error}</Callout>}
       {report?.error && <Callout tone="rose" title="Run failed">{report.error}</Callout>}
       {report?.ready && report.markdown ? (
-        <pre style={{ whiteSpace: "pre-wrap", fontFamily: "var(--font-ui)", fontSize: 13, lineHeight: 1.6, margin: 0 }}>
-          {report.markdown}
-        </pre>
+        <>
+          {title && <h2 style={{ fontSize: 15, fontWeight: 600 }}>{title}</h2>}
+          <pre style={{ whiteSpace: "pre-wrap", fontFamily: "var(--font-ui)", fontSize: 13, lineHeight: 1.6, margin: 0 }}>
+            {body}
+          </pre>
+        </>
+      ) : gone ? (
+        <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+          Report unavailable, <Link href={`/runs/${runId}`} style={{ color: "var(--brand)", textDecoration: "underline" }}>see the run page</Link>
+        </p>
       ) : !error && (
         <p className="muted" style={{ fontSize: 13, margin: 0 }}>
           Nemotron writes the report when the run finishes; checking every 5 s.

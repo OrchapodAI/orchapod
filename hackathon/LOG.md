@@ -396,3 +396,11 @@ worktrees:
   - Minors: a fixed message for storage-host errors (an S3 body echoed the signature into a public node error); httpx logger at WARNING; a hard deadline before re-sends; cap 512 MiB; a multi-chunk test.
   - Fix round 1 → a8310dc13964b1d1a.
 - 2026-10-22T04:29Z platform-w7 fix round 1 (271298a contracts, 13323f9 code), verified by the orchestrator rerunning the reviewer's 11-case probe. Refused: plaintext http hops, loops past 3 hops (ProviderError without the URL). Stripped: Authorization on every cross-origin hop. Storage errors give the status only (no S3 body/signature). The size cap aborts mid-stream; no re-send after the deadline; httpx INFO logging silenced. Ledger: platform-w7 fix rounds 1/5, 0 open. Merged; tests/providers 202 passed. DECISION: files.content follows ≤ 3 https hops without the key, bounded at 512 MiB and 600 s. Note for backend-w7: the 0.2 s IAM-CLI test in test_executor also flakes under load.
+- 2026-10-22T04:43Z ml-w6 reported DONE (e5ff9ce..94e29dd on 2b29844; $0).
+  - tf-deploy hidden (plan review refuses it).
+  - Docs template on Lane B with Nemotron Nano 8B: unsloth-train → vllm-serve base + lora_adapter (--enable-lora, unproven live; merged would need a 2nd endpoint ≈ $3.70) → judge-eval; estimate $2.92 full / $2.32 reduced.
+  - CPU fallback: quantize lora_adapter → gguf_lora; judge-eval tuned_lora (llama-server --lora); a 5th template, the docs CPU variant (still trains on the H100 Job).
+  - Real CPU check on SmolLM2-135M with a synthetic LoRA: --lora output identical to merged weights.
+  - The two known flaky tests still flake (backend-w7).
+  - Merge will conflict in docs/contracts.md (R24/R25 on main).
+  - Review dispatched (opus).

@@ -125,8 +125,9 @@ def broken_plans():
     judge["needs"] = []
     judge_first["nodes"].remove(judge)
     judge_first["nodes"].insert(0, judge)
-    no_serve = copy.deepcopy(I4["plan"])  # the golden path that no longer serves what it judges
+    no_serve = copy.deepcopy(I4["plan"])  # the golden path that no longer serves what it judges (its other nodes still run in order)
     no_serve["nodes"] = [n for n in no_serve["nodes"] if n["type"] != "vllm-serve"]
+    next(n for n in no_serve["nodes"] if n["type"] == "judge-eval")["needs"] = ["prep", "train"]
     return {"1": no_judge, "2": trains, "3": judge_first, "4": no_serve}
 
 
@@ -138,6 +139,16 @@ def test_a_template_edit_that_drops_or_misplaces_a_step_fails_the_e2e(number, la
     assert agent.run_all(fake_api(templates=templates), number) == 1  # the no_docker fixture fails the test if it got as far as Docker
     out = capsys.readouterr().out
     assert f"e2e FAIL {label}" in out and agent.INTENTS[number][2] in out
+
+
+def test_a_golden_path_that_serves_before_it_trains_fails_the_e2e(capsys):
+    plan = copy.deepcopy(I4["plan"])
+    serve, train = (next(n for n in plan["nodes"] if n["type"] == t) for t in ("vllm-serve", "unsloth-train"))
+    serve["needs"], train["needs"] = ["prep"], ["serve"]  # the adapter would be served before it exists
+    assert agent.node_types(plan) == ["web-research", "synth-distilabel", "data-prep", "vllm-serve", "unsloth-train", "judge-eval"]
+    templates = [{**t, "plan": plan} if t is I4 else t for t in TEMPLATES]
+    assert agent.run_all(fake_api(templates=templates), "4") == 1
+    assert "e2e FAIL golden path" in capsys.readouterr().out
 
 
 def test_node_types_follow_needs_not_the_listing_order():
@@ -951,15 +962,16 @@ def stub_endpoint_plan():
     return {"nodes": [{"id": "prep", "type": "data-prep", "inputs": {}}, {"id": "serve", "type": "vllm-serve", "inputs": {}}]}
 
 
-@pytest.mark.parametrize("endpoint_id, max_cost, problems", [
-    ("stub-serve", None, []),
-    ("endpoint-e00real", None, ["vllm-serve 'serve' registered no stub-* endpoint (endpoint_url: ['endpoint-e00real'])"]),
-    (None, None, ["vllm-serve 'serve' registered no stub-* endpoint (endpoint_url: none)"]),
-    ("endpoint-e00real", 0.5, []),  # a real run's vllm-serve is refused before it starts; its endpoint is a real one if it ever ran
+@pytest.mark.parametrize("endpoint_id, owner, max_cost, problems", [
+    ("stub-serve", "serve", None, []),
+    ("endpoint-e00real", "serve", None, ["vllm-serve 'serve' registered no stub-* endpoint (endpoint_url: ['endpoint-e00real'])"]),
+    (None, "serve", None, ["vllm-serve 'serve' registered no stub-* endpoint (endpoint_url: none)"]),
+    ("stub-serve", "prep", None, ["vllm-serve 'serve' registered no stub-* endpoint (endpoint_url: none)"]),  # another node's does not count
+    ("endpoint-e00real", "serve", 0.5, []),  # a real run's vllm-serve is refused before it starts; its endpoint is a real one if it ever ran
 ])
-def test_check_outputs_wants_a_stub_endpoint_of_a_stub_runs_vllm_serve(endpoint_id, max_cost, problems):
+def test_check_outputs_wants_a_stub_endpoint_of_a_stub_runs_vllm_serve(endpoint_id, owner, max_cost, problems):
     report = report_with([("prep", "dataset")], {"prep": "data-prep", "serve": "vllm-serve"})
     if endpoint_id:
-        report["artifacts"].append(STUB_ENDPOINT | {"meta": {"endpoint_id": endpoint_id}})
+        report["artifacts"].append(STUB_ENDPOINT | {"node_id": owner, "meta": {"endpoint_id": endpoint_id}})
     found = agent.check_outputs(download_client({"/d/prep/dataset": CHAT_ROWS}), report, stub_endpoint_plan(), max_cost)
     assert [p for p in found if "stub-* endpoint" in p] == problems

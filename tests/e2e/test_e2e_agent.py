@@ -659,6 +659,7 @@ def test_a_real_run_that_delivers_within_its_cap_passes_and_shows_five_lines_of_
            f"report ready ({len(MARKDOWN)} chars)" in out
     lines = MARKDOWN.splitlines()
     assert "\n".join(lines[:5]) in out and lines[5] not in out
+    assert "; eval " not in out  # no judge-eval in this plan: nothing to quote
     assert [path for _, path in calls].count("/agent/runs/r1/report") == 3  # polled past the two "ready: false" answers
     assert ("POST", "/runs/r1/cancel") not in calls
 
@@ -928,6 +929,7 @@ def test_the_golden_path_runs_its_template_as_it_is_and_passes(stack_ok, capsys)
     assert f"e2e: PASS golden path: run r1 succeeded in 0 s (limit {demo.LIMIT_S} s), cost $0, estimate ${I4['estimate']['usd']}, " \
            f"report ready ({len(golden_report()['markdown'])} chars)" in out
     assert "e2e: 1 PASS, 0 FAIL: golden path PASS" in out and "report, first 5 lines" not in out
+    assert "; eval " not in out  # a stub's judge numbers are fake: only a real run quotes them
 
 
 def with_endpoint_id(endpoint_id):
@@ -988,3 +990,49 @@ def test_check_outputs_wants_a_stub_endpoint_of_a_stub_runs_vllm_serve(endpoint_
         report["artifacts"].append(STUB_ENDPOINT | {"node_id": owner, "meta": {"endpoint_id": endpoint_id}})
     found = agent.check_outputs(download_client({"/d/prep/dataset": CHAT_ROWS}), report, stub_endpoint_plan(), max_cost)
     assert [p for p in found if "stub-* endpoint" in p] == problems
+
+
+# --- a real run with a judge quotes its numbers --------------------------------------------------------------------------------
+
+JUDGED = eval_summary(stub=False, n=20, judged=20, win_rate=None, exact_match={"base": 0.35, "tuned": 0.4})  # a real exact-match run's
+MATHS_TEXTS = {"/d/gsm8k/dataset": CHAT_ROWS, "/d/evaluate/eval_summary": json.dumps(JUDGED)}
+
+
+def test_check_outputs_hands_back_the_eval_summaries_it_read():
+    """The summary is read once, for the contract check and for the PASS line of a real run."""
+    files = [("gsm8k", "dataset"), ("quantize", "gguf_file"), ("quantize", "gguf_f16"), ("evaluate", "eval_summary")]
+    nodes = {"download": "hf-download", "quantize": "quantize", "gsm8k": "data-prep", "evaluate": "judge-eval"}
+    evals = []
+    assert agent.check_outputs(download_client(MATHS_TEXTS), report_with(files, nodes), I3["plan"], 0.5, evals) == []
+    assert evals == [("evaluate", JUDGED)]
+    assert agent.check_outputs(download_client(MATHS_TEXTS | {"/d/evaluate/eval_summary": "<html>"}), report_with(files, nodes), I3["plan"], 0.5, evals)
+    assert evals == [("evaluate", JUDGED)]  # a summary that is not JSON is a problem, not a number
+
+
+def maths_report(**changes):
+    """A succeeded real run of intent #3, which ends in a judge: four nodes, $0.0175, the judge's summary among the artifacts."""
+    nodes = {"download": "hf-download", "quantize": "quantize", "gsm8k": "data-prep", "evaluate": "judge-eval"}
+    files = [("download", "hf_model"), ("quantize", "gguf_file"), ("quantize", "gguf_f16"), ("gsm8k", "dataset"), ("gsm8k", "train_jsonl"),
+             ("gsm8k", "eval_jsonl"), ("evaluate", "eval_summary"), *((node, "cost_json") for node in nodes)]
+    base = report_with(files, nodes)
+    base["nodes"] = [n | {"usd": 0.0175 if n["node_id"] == "evaluate" else 0.0} for n in base["nodes"]]
+    return {**base, "run_id": "r1", "status": "succeeded", "cost_usd": 0.0175, "error": None, "intent": I3["intent"],
+            "estimate": I3["estimate"], "ready": True,
+            "markdown": f"## {I3['plan']['name']}: succeeded\n\n**Cost:** $0.0175 of $0.10 estimated."} | changes
+
+
+def test_a_real_run_with_a_judge_quotes_the_judges_numbers_on_its_pass_line(stack_ok, capsys):
+    assert agent.run_all(fake_api(run=live(maths_report(), files=MATHS_TEXTS)), "3", 0.5) == 0
+    pass_line = next(ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("e2e: PASS intent #3"))
+    assert pass_line.endswith('; eval evaluate: n 20, judged 20, win_rate null, exact_match {"base": 0.35, "tuned": 0.4}'), pass_line
+    assert "cost $0.0175, estimate $0.096, report ready (" in pass_line  # still the stub's line, with the numbers after it
+
+
+def test_a_pairwise_judge_is_quoted_by_its_win_rate(stack_ok, capsys):
+    pairwise = eval_summary(stub=False, n=30, judged=28, win_rate=0.625, exact_match=None)
+    plan_wants_no_exact_match = {**I3, "plan": {**I3["plan"], "nodes": [
+        n | {"inputs": {k: v for k, v in n["inputs"].items() if k != "exact_match"}} if n["type"] == "judge-eval" else n
+        for n in I3["plan"]["nodes"]]}}
+    api = fake_api(templates=[plan_wants_no_exact_match, *TEMPLATES[1:]], run=live(maths_report(), files=MATHS_TEXTS | {"/d/evaluate/eval_summary": json.dumps(pairwise)}))
+    assert agent.run_all(api, "3", 0.5) == 0
+    assert "; eval evaluate: n 30, judged 28, win_rate 0.625, exact_match null" in capsys.readouterr().out

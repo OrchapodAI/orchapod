@@ -34,7 +34,8 @@ passes only when it is blank or Token Factory's URL.
 - The run must end within REAL_LIMIT_S, an hour (a stub run keeps e2e_demo.LIMIT_S); past it, it is cancelled. Asserted besides the
   stub's checks: 0 < cost_usd <= --max-cost (a real run that cost $0 called nothing); a structured synth node's dataset (intent #2)
   holds at least 90 % of its n_samples; judge-eval's eval_summary says stub false. e2e_demo.check_run also wants a data-prep node.
-- Output: the PASS or FAIL line of the stub (run id, wall time, cost, estimate, report chars), then the report's first 5 lines, then
+- Output: the PASS or FAIL line of the stub (run id, wall time, cost, estimate, report chars; a real PASS line goes on with
+  `; eval <node>: n, judged, win_rate, exact_match` for each judge-eval, the numbers LOG.md and the README quote), then the report's first 5 lines, then
   `total $X (run $Y + planner/reporter $Z)`: the PASS line's cost is Run.cost_usd only, and Z, the planner's and the report writer's
   calls, is read from the Spend table of the throwaway DB (main gives the API its own, so it can). X is what to record in
   hackathon/LOG.md, with the run id.
@@ -213,8 +214,14 @@ def check_row_count(c: httpx.Client, report: dict, plan: dict) -> list[str]:
     return [f"the dataset has {rows} rows, under 90 % of the {asked} asked (n_samples)"] if rows * 10 < asked * 9 else []
 
 
-def check_outputs(c: httpx.Client, report: dict, plan: dict, max_cost: float | None = None) -> list[str]:
-    """What a finished plan promised beyond its artifacts existing: data rows, the eval summary, the f16 baseline."""
+def eval_numbers(node_id: str, s: dict) -> str:
+    """A real run's judge as LOG.md and the README quote it: rows asked and judged, the pairwise win rate, the exact-match scores."""
+    return f"; eval {node_id}: n {s['n']}, judged {s['judged']}, win_rate {json.dumps(s['win_rate'])}, exact_match {json.dumps(s['exact_match'])}"
+
+
+def check_outputs(c: httpx.Client, report: dict, plan: dict, max_cost: float | None = None, evals: list | None = None) -> list[str]:
+    """What a finished plan promised beyond its artifacts existing: data rows, the eval summary, the f16 baseline. `evals`, if given,
+    collects (node id, eval_summary) of each judge-eval it read, for a real run's PASS line."""
     problems = demo.fetch_dataset(c, report, plan)
     if max_cost is not None and not problems:
         problems = check_row_count(c, report, plan)
@@ -234,6 +241,8 @@ def check_outputs(c: httpx.Client, report: dict, plan: dict, max_cost: float | N
             except ValueError:
                 problem = f"{node['id']}.eval_summary is not JSON: {text[:60]!r}"
             problems += [problem] if problem else check_eval_summary(summary, bool(inputs.get("exact_match")), max_cost is None)
+            if not problem and isinstance(summary, dict) and evals is not None:
+                evals.append((node["id"], summary))
     return problems
 
 
@@ -283,15 +292,16 @@ def run_one(c: httpx.Client, label: str, intent: str, template: dict | None, num
     problems = check_report(report, intent, plan, max_cost)
     if seconds >= limit:
         problems.append(f"the run did not end within {limit} s, so it was cancelled")
+    evals = [] if max_cost is not None else None  # a stub's judge numbers are fake: only a real run quotes them
     if not problems:
-        problems = check_outputs(c, report, plan, max_cost)
+        problems = check_outputs(c, report, plan, max_cost, evals)
     cost = "$0" if max_cost is None else f"${report['cost_usd']:.4f}"
     if problems:  # a real run's FAIL says what it cost: that is what the Orchestrator logs
         facts = f"run {run_id} after {seconds:.0f} s" + ("" if max_cost is None else f", cost {cost}, estimate ${estimate['usd']}")
         show("FAIL", label, problems, f" ({facts})")
     else:
         demo.say(f"PASS {label}: run {run_id} succeeded in {seconds:.0f} s (limit {limit} s), cost {cost}, "
-                 f"estimate ${estimate['usd']}, report ready ({len(report['markdown'])} chars)")
+                 f"estimate ${estimate['usd']}, report ready ({len(report['markdown'])} chars)" + "".join(eval_numbers(i, e) for i, e in evals or []))
     if max_cost is not None and report["markdown"]:
         demo.say("report, first 5 lines:")
         print("\n".join(report["markdown"].splitlines()[:5]), flush=True)

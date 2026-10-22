@@ -194,7 +194,7 @@ test("dropped nodes start from contract defaults: no teacher_kind, vllm-serve ke
 test("nothing made up on screen (team, owner, counts, budget) and no links to the Vast.ai/RunPod pages", () => {
   const read = (path: string) => readFileSync(new URL(`../../apps/web/${path}`, import.meta.url), "utf8");
   const pages = readdirSync(new URL("../../apps/web/app/", import.meta.url), { recursive: true }).map(String);
-  for (const page of pages.filter((p) => p.endsWith(".tsx"))) assert.doesNotMatch(read(`app/${page}`), /orbital-research|>EM</, page);
+  for (const page of pages.filter((p) => p.endsWith(".tsx"))) assert.doesNotMatch(read(`app/${page}`), /orbital-research|>EM<|LLM Fine-tuning Platform/, page);
   const sidebar = read("components/Sidebar.tsx");
   for (const fake of [/count: "\d+"/, /orbital|Elena|\$250/, /href: "\/(inference|endpoints)"/]) assert.doesNotMatch(sidebar, fake);
 });

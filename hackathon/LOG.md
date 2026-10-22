@@ -490,3 +490,4 @@ worktrees:
   - Fix round 1 → a7b1e898cb32a8e00. Merge order: qa-w7 first.
   - qa-w7 was also told: smoke untilDone fails fast on 'Report unavailable'.
   - FINDING (orchestrator): G1 says 'golden path green from the UI', but since R25 the golden path is template 4, and the UI smoke runs template 1. Template 4 cannot run in the stub stack: unsloth-train needs a GPU provider, and the stub e2e drops NEBIUS_PROJECT_ID. Next wave: STUB runs gpu nodes on LocalDocker; the smoke's golden path becomes template 4.
+- 2026-10-22T06:04Z backend-w8 dispatched (sonnet; worktree backend-w8 @ 6ba382f): under STUB=1, gpu nodes run on LocalDocker ($0) and plan review skips the GPU-provider check. Non-STUB is unchanged; gpu_guard/fits are unchanged. Next: qa-w8 switches the smoke's golden path to template 4.

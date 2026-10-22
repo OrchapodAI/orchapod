@@ -465,3 +465,8 @@ worktrees:
   - Concerns: template 1's rationale still calls per-token deploy 'unverified' (orchestrator at merge); planner's dead tf-deploy warning was already deleted in 90020da.
   - Review dispatched (sonnet). Trial merge clean.
 - NOTE (orchestrator): never bare `git stash` again; the stash stack is shared with every worktree and agent. Use a WIP commit or a tagged stash.
+- 2026-10-22T05:50Z frontend-w6 reported DONE_WITH_CONCERNS (5477e1e, 2f7e210, 8eb7bbd, bccf186 on 97b749c).
+  - Palette in R25 order without tf-deploy; quantize lora_adapter and judge-eval tuned_lora forms; report card stops 60 s after the end with a run-page link; web 34.
+  - Ruling: the palette equals the registry's visible types, so distill-sft and lm-eval leave it (the registry hides them) — why: hidden = off the demo path, untested on Nebius, already out of the planner — cost if wrong: unhide them in the registry.
+  - Review dispatched (sonnet), with the ruling as a finding. Trial merge clean.
+- 2026-10-22T05:50Z 7adad9e template 1's rationale: per-token deploy retired (410), not 'unverified' (devrel concern).

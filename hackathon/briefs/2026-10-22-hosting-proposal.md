@@ -1,5 +1,5 @@
 # DECISION proposal: hosting for the Dec 1–15 judging window (platform-w3, wave 3, item 1; fix round 1)
-Status: PROPOSED, waiting for Hari. Nothing was created and nobody signed up for anything; this is desk research. Prices are the vendors' public pages read on 2026-10-20, in USD excluding tax unless marked EUR (sources at the end). Sizing figures are estimates, not measurements.
+Status: DECIDED by Hari on 2026-10-21 — A-M, fallbacks A-W then B2; domain orchapod.dev (bought at Hostinger). Previously: PROPOSED, waiting for Hari. Nothing was created and nobody signed up for anything; this is desk research. Prices are the vendors' public pages read on 2026-10-20, in USD excluding tax unless marked EUR (sources at the end). Sizing figures are estimates, not measurements.
 
 ## Bottom line
 - Recommend **A-M: one Nebius `cpu-e2` VM** (eu-north1, `4vcpu-16gb`, 120 GiB disk) running Docker Compose (Caddy, API, web, Postgres, Redis), with artifacts in Nebius Object Storage. About **$97 a month**; about **$173 for the whole window** (Oct 26 to Dec 16, domain included).

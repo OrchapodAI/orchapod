@@ -25,7 +25,7 @@ Updated: 2026-10-21T15:45Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [x] P1 D2 NebiusServerless (Jobs, Endpoints, REST ai/v1, IAM CLI fallback, find() recovery) + NebiusProvider on Jobs with a spend deadline — DONE (platform-w5; live behaviour waits on G2 quota + key)
 - [x] P0 D2 setup gaps (compose 8001 and no Anthropic/253B judge; build script loops containers/*/; ensure_bucket_exists at API start; web default 8001) — DONE (wave 2)
 - [x] P0 D3 .env.example complete (every var, default, where to get it, hosted-only block) + a test that every env name the code reads is listed — DONE (platform-w4)
-- [ ] P0 D4 hosting: repo side DONE (platform-w4: prod compose, Caddy, cloud-init, prod Dockerfiles, deploy/backup/watchdog, docs/HOSTING.md; local prod smoke green); cloud side waits on Hari's decision + console steps (hackathon/briefs/2026-10-22-hosting-proposal.md) — BLOCKED(Hari)
+- [ ] P0 D4 hosting: DECIDED A-M + orchapod.dev; repo side DONE (platform-w4); cloud side = Hari's console steps (docs/HOSTING.md bring-up: vCPU quota 0→8 in eu-north1 now, GPU quota 32→1 + 1, VM, bucket, Hostinger A records) — BLOCKED(Hari, console)
 ### data-engineering
 - [x] P0 D2 web-research node: seed URLs | query → extract → chunk → corpus.jsonl, dedupe, max_pages, STUB=1 — DONE (data-w2)
 - [x] P0 D2 synth-distilabel grounded mode (passage → short sourced Q&A, JSON schema) + price fix $0.30/$0.90 — DONE (data-w2)
@@ -103,7 +103,8 @@ Updated: 2026-10-21T15:45Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - DECISION 2026-10-21: gpu-l40s-a = $1.55/h (Intel L40S; $1.82 is the AMD gpu-l40s-d) — platform-w3, nebius.com/prices + docs component math; Lane B ≈ $2.65.
 - DECISION 2026-10-21 (orchestrator ruling): ORCHAPOD_ANON_SCALE stays 0.1; real-estate's reduced template ($0.83 at the corrected L40S price) is admin-only until Hari raises the scale (≥ 0.3) inside the hosting decision.
 - DECISION 2026-10-21: hosted VM never gets VASTAI_API_KEY; backups = 14 rotating slots in the bucket; deploy keeps explicit rsync excludes (.env, nebius/, deploys.log) — platform-w4, review agreed.
-- OPEN DECISION: intent #1 deploy default (waits on spike 1) · hosting (D4: proposal being fixed, then to Hari).
+- DECISION 2026-10-21 (Hari): hosting A-M (Nebius cpu-e2 4 vCPU/16 GB, eu-north1), fallbacks A-W then B2; domain orchapod.dev (registrar Hostinger). Defaults until Hari says otherwise: deploy by Hari, day cap $5, anon scale 0.1, teardown Dec 16.
+- OPEN DECISION: intent #1 deploy default (waits on spike 1).
 
 - DECISION 2026-10-20 (audit triage): Anthropic/OpenAI code leaves the demo path now (P0, stage-one rule); Vast.ai/RunPod/legacy Compute stack (~3,500 lines) is hidden from the demo path (P1) and deleted after G1 if still off-path (P2); other dead weight (Alembic beside create_all, second model registry, static Registry page, zero-caller modules) is P2.
 

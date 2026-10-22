@@ -14,7 +14,7 @@ from api.executor import run_workflow as ex
 from api.models.db import NodeRun, NodeStatus, RunStatus, Spend, utcnow
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.services import budget
-from tests.api.test_executor import FakeProvider, drain, launched, nodes, provider, seed  # noqa: F401 (fixtures)
+from tests.api.test_executor import FakeProvider, drain, launched, nodes, provider, seed, sqlite_file  # noqa: F401 (fixtures)
 
 ADMIN = {"X-Orchapod-Admin": "s3cret"}
 
@@ -126,9 +126,18 @@ async def test_every_node_boundary_checks_budget_and_kill_switch(db, provider, m
     assert provider.provisioned == []
 
 
+@pytest.fixture
+async def file_db(sqlite_file):
+    """A session whose engine gives every session its own connection, as in production. The in-memory `db` shares one
+    connection between all sessions, so one executor's rollback (its refusal path) discarded another's flushed, not yet
+    committed writes: a refused run ended failed with its node still pending."""
+    async with AsyncSession(sqlite_file, expire_on_commit=False) as s:
+        yield s
+
+
 async def concurrent_first_nodes(db, provider, n):
-    """n runs at once, each first node kept running: returns their runs and executor tasks once every run holds
-    its node's grant or has stopped at the boundary."""
+    """n runs at once, each first node kept running, each executor in its own session on db's engine: returns their runs
+    and executor tasks once every run holds its node's grant or has stopped at the boundary."""
     provider.script = {"a": {"exit": None}}
     runs = [await seed(db) for _ in range(n)]
     sessions = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
@@ -153,7 +162,8 @@ async def stop(tasks):
     assert budget._granted == {}  # each node's grant goes with its container
 
 
-async def test_concurrent_runs_never_grant_more_than_the_day_cap(db, provider, monkeypatch):
+async def test_concurrent_runs_never_grant_more_than_the_day_cap(file_db, provider, monkeypatch):
+    db = file_db
     monkeypatch.setenv("ORCHAPOD_MAX_DAY_USD", "1")
     runs, tasks = await concurrent_first_nodes(db, provider, 5)
 
@@ -163,7 +173,8 @@ async def test_concurrent_runs_never_grant_more_than_the_day_cap(db, provider, m
     await stop(tasks)
 
 
-async def test_grants_of_several_runs_add_up_to_the_day_cap(db, provider, monkeypatch):
+async def test_grants_of_several_runs_add_up_to_the_day_cap(file_db, provider, monkeypatch):
+    db = file_db
     monkeypatch.setenv("ORCHAPOD_MAX_RUN_USD", "1")
     monkeypatch.setenv("ORCHAPOD_MAX_DAY_USD", "2.5")
     runs, tasks = await concurrent_first_nodes(db, provider, 4)

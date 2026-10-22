@@ -1,5 +1,5 @@
 # STATE — Orchapod × Nebius hackathon
-Updated: 2026-10-22T05:43Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
+Updated: 2026-10-22T05:50Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
 1. Hari — waiting: TAVILY_API_KEY; for the golden path (Lane B, R25) the Nebius AI Cloud setup — project id (NEBIUS_PROJECT_ID), a `nebius` CLI login on this Mac, the Object Storage bucket — plus the hosting console steps (vCPU quota 0→8 in eu-north1, GPU quotas → 1 + 1, VM, Hostinger A records; docs/HOSTING.md); golden-run topic by D6 (the docs specialist now uses Nemotron Nano); optional: HF_TOKEN + the Token Factory fine-tune rate only for the Llama templates; MinIO test data; AI disclosure; vast.ai instances.
@@ -56,7 +56,7 @@ Updated: 2026-10-22T05:43Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [x] P0 D1 SDK: cost_json + metrics_json, progress, internal secret — DONE (bc5c59f)
 - [x] P0 D2 Orchapod Agent planner on Nemotron (Claude out of agent/workflow_builder.py) + POST /agent/plan — DONE (backend-w2)
 - [x] P0 D2 executor forwards only Nebius/Tavily/HF keys (_FORWARD); default provider_pref ["nebius"] — DONE
-- [ ] P1 D3 checkpoint-resume never fires (looks in a fresh NodeRun's empty outputs) — TODO (executor debug lines: DONE, 1 left)
+- [x] P1 D3 checkpoint-resume: retry reuses the row, so the newest checkpoint_step_* becomes ORCHAPOD_RESUME_CHECKPOINT_URI (tests/api/test_executor.py:316) — DONE
 - [ ] P0 D2 remote logs: public ORCHAPOD_CONTROL_URL, WebSocket fan-out verified — TODO
 - [x] P0 D2 lineage + cost roll-up; GET /runs/{id}/summary — DONE (bc5c59f)
 - [x] P0 D3 budget guard: per-run, per-day, anonymous scale, ORCHAPOD_KILL_SWITCH — DONE (backend-w2)
@@ -64,16 +64,20 @@ Updated: 2026-10-22T05:43Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [x] P0 D4 POST /compare; golden-run fixture (`make demo`); reduced-scale templates with `fits`; artifact meta redaction (R21/R22) — DONE (backend-w3)
 - [x] P1 backend follow-ups: STUB stopwords, tf-finetune from tokens, SDK cost_json without thread joins, workflow_name, cancel tokens, executor gpu refusal, IAM token for rents_gpu nodes, GPU wall-time billing, endpoint deletion at expiry — DONE (backend-w5)
 - [x] P0 D6 public-demo hardening: CORS allow-list, per-IP buckets (plan/run/compare/write), deep /health + /livez, kill switch per request, YAML aliases + 256k cap, extend deleted, read-only run workflows, gpu admin-only, secrets dropped at ingest — DONE (backend-w4); P2 left: anonymous cancel of others' runs, executor-level gpu refusal
-- [ ] P1 D5 Serverless Job runtime — TODO
+- [x] P1 D5 Serverless Job runtime: NebiusProvider on Jobs (platform-w5) + IAM token, GPU wall-time billing, endpoint deletion (backend-w5) — code DONE; live waits on G2 quota + the hosted API (Jobs need a public https ORCHAPOD_CONTROL_URL)
 ### frontend
 - [x] P0 D2 palette: hidden nodes without containers; Research/Fine-tune/Deploy/Evaluate forms; R13 JSON inputs — DONE
 - [x] P0 D2 /agent page: chat box, plan card (Edit/Run), live run view, report card — DONE
 - [x] P0 wave-2 frontend carry-overs (YAML quoting, RunView .catch, badges, a11y, defaultInputs) — DONE (frontend-w2)
-- [ ] P1 Deploy palette text promises per-token serving — align with spike 1's answer — TODO (sidebar counts: DONE frontend-w2; web tests in make check + CI: DONE qa-w2)
+- [ ] P1 Deploy palette text promises per-token serving — align with spike 1's answer — IN_PROGRESS(frontend-w6) (sidebar counts: DONE frontend-w2; web tests in make check + CI: DONE qa-w2)
 - [x] P0 D3 run page cost meter + retry node (frontend-w2); template gallery with one-click Run (frontend-w3) — DONE (3d250c5)
 - [x] P0 D4 eval view, dataset card, compare playground (STUB pills) — DONE (frontend-w3, 3d250c5); P2: the STUB pill reads metrics meta, dropped above 16 KB
 - [x] P1 D3 loss chart fills from the fine-tune node's loss_curve on load; live events append — DONE (frontend-w4)
 - [x] P0 D6 polish: toasts, honest error/empty/loading states, OG image, demo banner, `fits` on template cards, loss chart from loss_curve — DONE (frontend-w4); D7 screenshots — TODO
+### P2 follow-ups (2026-10-22)
+- [ ] platform: local_docker passes node env as `docker run -e K=V` (a key on a command line for an instant) → `-e K` with the value in the client's env; review the orchestrator's chat(create=True) (21e3806) — TODO
+- [ ] data: quality_filter → chat(create=True); Lightning's 16–110 s latency vs its 30 s read timeout (opt-in, no template uses it) — TODO
+- [ ] backend: estimate unsloth-train from max_steps (the flat $1.88 makes the reduced docs plan $2.32) — TODO
 ### qa
 - [x] P0 D1 CI on NebiusHackathon + repo ruff config so `make check` is green; synth-distilabel in the image matrix — DONE (e11757e)
 - [x] P0 D2 CI pushes `:latest` on NebiusHackathon (R4); pins in requirements-dev.txt — DONE

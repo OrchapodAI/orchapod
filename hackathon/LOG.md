@@ -404,3 +404,9 @@ worktrees:
   - The two known flaky tests still flake (backend-w7).
   - Merge will conflict in docs/contracts.md (R24/R25 on main).
   - Review dispatched (opus).
+- 2026-10-22T04:48Z backend-w7 reported DONE: 79ee016..ccef0af on 850e9f2; tests/api 50/50 clean; 238 runs under 4× load clean; 867 passed; $0.
+  - Budget flake root cause: the in-memory test DB shares one connection across sessions, so one run's rollback discarded another's uncommitted write; production unaffected; those tests now use a file DB.
+  - IAM flake: no test outcome decided by the wall clock.
+  - Reporter: Super, thinking off, one send with a 30 s read timeout (_SendOnce), template fallback, a `## <plan>: <status>` title, written in the background at run end, the GET never calls the model.
+  - Open: README:75/:83 + devpost:38 still say Lightning (devrel); platform could add chat(resend=False).
+  - Review dispatched (sonnet). Trial merge clean.

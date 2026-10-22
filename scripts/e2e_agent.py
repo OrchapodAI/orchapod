@@ -18,15 +18,20 @@ Any plan error is a FAIL: a canonical plan that names a node or an input that do
 A real run (--max-cost) spends money, so only the Orchestrator runs it, after a merge, with `.env` loaded (`set -a; . ./.env; set +a`)
 and `make up`. The same stack, but the API runs without STUB and the live Nemotron planner answers, so the plan is not the
 template's. Its env: ORCHAPOD_MAX_RUN_USD = ORCHAPOD_MAX_DAY_USD = --max-cost, ORCHAPOD_ANON_SCALE = 1, and of e2e_demo.PAID only
-NEBIUS_API_KEY, TAVILY_API_KEY and HF_TOKEN, each when set (no VASTAI, RunPod, Anthropic or OpenAI key, no Nebius project id).
-- Refused before anything starts, one line: no --max-cost, one at or under 0 or over the $3 run cap, no --intent, no NEBIUS_API_KEY.
-- Refused before POST /agent/run, one line each: a plan with an error; an estimate over --max-cost; a node that rents a GPU (the
-  golden run, e2e_demo.py --max-cost, owns those and needs G2 quota); a node whose key is unset (web-research: TAVILY_API_KEY).
-- The run must end within 30 minutes (judge-eval answers on a CPU for intent #3). Asserted besides the stub's checks: 0 < cost_usd
-  <= --max-cost (a real run that cost $0 called nothing); a structured synth node's dataset (intent #2) holds at least 90 % of
-  its n_samples; judge-eval's eval_summary says stub false. e2e_demo.check_run also wants a data-prep node in the plan.
-- Output: the PASS or FAIL line of the stub (run id, wall time, cost, estimate, report chars), then the report's first 5 lines.
-  Record the run id and cost in hackathon/LOG.md.
+NEBIUS_API_KEY, TAVILY_API_KEY and HF_TOKEN, each when set (no VASTAI, RunPod, Anthropic or OpenAI key, no Nebius project id);
+the rest of the shell, NEBIUS_BASE_URL included, reaches it as it does any non-secret setting.
+- Refused before anything starts, one line: no --max-cost, one at or under 0 or over the $3 run cap, no --intent, no NEBIUS_API_KEY,
+  E2E_BIND_HOST set (the API holds a key, so it listens on 127.0.0.1 only; it needs Docker Desktop's loopback forwarding).
+- Refused before POST /agent/run, one line each: a plan with an error; an estimate over --max-cost; an estimate longer than the hour
+  a real run waits (REAL_LIMIT_S); a node that rents a GPU (the golden run, e2e_demo.py --max-cost, owns those and needs G2 quota);
+  a node whose key is unset (web-research: TAVILY_API_KEY).
+- The run must end within REAL_LIMIT_S, an hour (a stub run keeps e2e_demo.LIMIT_S); past it, it is cancelled. Asserted besides the
+  stub's checks: 0 < cost_usd <= --max-cost (a real run that cost $0 called nothing); a structured synth node's dataset (intent #2)
+  holds at least 90 % of its n_samples; judge-eval's eval_summary says stub false. e2e_demo.check_run also wants a data-prep node.
+- Output: the PASS or FAIL line of the stub (run id, wall time, cost, estimate, report chars), then the report's first 5 lines, then
+  `total $X (run $Y + planner/reporter $Z)`: the PASS line's cost is Run.cost_usd only, and Z, the planner's and the report writer's
+  calls, is read from the Spend table of the throwaway DB (main gives the API its own, so it can). X is what to record in
+  hackathon/LOG.md, with the run id.
 """
 
 import argparse

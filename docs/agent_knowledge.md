@@ -6,9 +6,9 @@ Source of truth: `NODE_REGISTRY` in packages/workflow_schema/models.py. On every
 ## Models on Nebius Token Factory (https://api.tokenfactory.nebius.com/v1, key NEBIUS_API_KEY)
 | Role | Model ID | $ per 1M tokens in / out |
 | --- | --- | --- |
-| Teacher, planner | nvidia/nemotron-3-super-120b-a12b | 0.30 / 0.90 |
+| Teacher, planner, reporter | nvidia/nemotron-3-super-120b-a12b | 0.30 / 0.90 |
 | Judge | nvidia/Nemotron-3-Ultra-550b-a55b | 1.00 / 3.00 |
-| Fast calls, quality filter, reporter | nvidia/Nemotron-3_5-Lightning | 0.06 / 0.24 |
+| Fast calls, quality filter | nvidia/Nemotron-3_5-Lightning | 0.06 / 0.24 |
 | Fast calls (alternative) | nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B | see price page |
 | Vision | nvidia/Nemotron-3.5-Super-VL | see price page |
 

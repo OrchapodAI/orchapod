@@ -434,3 +434,53 @@ worktrees:
   - 891 passed; ruff clean; web 30/30.
   - Open: --enable-lora unproven on Nebius (runbook in the report); the reduced estimate prices unsloth-train at a flat $1.88 (backend's estimator).
   - Scoped re-review dispatched (sonnet, a677940a140672b15). Trial merge with NebiusHackathon: clean.
+- 2026-10-22T05:27Z ml-w6 re-review (sonnet): APPROVED. All findings fixed; arithmetic checked: $0.998 left ≥ $0.775 preflight, judge-eval keeps $0.22 vs $0.14, R14 worst case $2.916.
+- 2026-10-22T05:27Z MERGED ml-w6 → 3b21074.
+  - Merge-time fixes: template 5's saving reads $0.52 by the estimate, up to $0.78; the devrel-w6 brief now says 15 min and $2.66, adds WORKFLOW_SPEC.md:43 and README:21, and tests/docs pins Lightning.
+  - G2 runbook addendum: a merged-weights fallback now needs a retrain with merge: true.
+  - make check: 3 known flakes (test_budget concurrent, two IAM tests), fixed on hack/backend-w7; 892 passed.
+- 2026-10-22T05:27Z backend-w7 fix round 1 done (956d709 merge, bd1fb70, 33353c6).
+  - _SendOnce gone (chat create=True); title one line ≤ 80; single-flight + retry tests; health test clock-free.
+  - 10/10 tests/api; 885 passed; web 30/30.
+  - Re-review dispatched (sonnet, aed90d5b5a5eeb613). Trial merge: contracts.md conflict only (resolve at merge).
+  - qa-w7 told: compare the normalised plan name.
+  - planner.py's dead tf-deploy lines → orchestrator after this merge.
+- 2026-10-22T05:27Z Dispatched on 97b749c: devrel-w6 (opus, a7b1e898cb32a8e00: README/Devpost/feedback/video-script/WORKFLOW_SPEC for R24/R25 and the Super reporter); frontend-w6 (sonnet, a0b588992b033feb4: palette without tf-deploy in R25 order, lora_adapter/tuned_lora forms, report card polling with a bound, templates' fits).
+- 2026-10-22T05:41Z backend-w7 re-review (sonnet): APPROVED. All 5 fixed, each with a mutant caught.
+  - Minors (planner create=False unasserted; 80-char cap untested; template_report echoes a multi-line intent/error) → orchestrator.
+- 2026-10-22T05:41Z MERGED backend-w7 → 98cd829. contracts.md conflict resolved: backend's report line, main's templates line.
+  - 90020da (orchestrator): planner's tf-deploy paths deleted (ml-w6 M1); the minors folded in.
+  - make check green: the known flakes are gone with backend-w7.
+- 2026-10-22T05:41Z qa-w7 reported DONE_WITH_CONCERNS (549f0eb..0163fc1 on 25bf429).
+  - tests/e2e 111 passed; 53 mutants, 0 survive; leak test.
+  - Live command: `set -a; . ./.env; set +a; make up; make agent-e2e INTENT=2 MAX_COST=0.5`.
+  - Deviation: it mutates demo.LIMIT_S and neutralises check_run's $0 rule.
+  - Notes: intent 3's estimate is 30.3 min vs the 30 min limit; local_docker passes node env as `docker run -e K=V` (the key is on a command line for an instant; platform P2); README:159 → devrel-w6 (sent).
+  - Review dispatched (sonnet, abb46fa15cf21e029). Trial merge clean.
+- 2026-10-22T05:41Z Integration run started on 90020da: make check E2E=1, then make ui-smoke.
+- 2026-10-22T05:43Z Integration on 90020da GREEN: make check E2E=1 (e2e_demo + e2e_agent 3 PASS) and make ui-smoke 5/5.
+- 2026-10-22T05:49Z devrel-w6 reported DONE_WITH_CONCERNS (7e49651..6bf978f on 97b749c; $0).
+  - README, devpost, feedback, video-script, WORKFLOW_SPEC and tests/docs updated to R24/R25 and the Super reporter; README:159 real agent-e2e; tests/docs 27 passed.
+  - DECISIONs it proposes: (1) 'NVIDIA end to end' is scoped to the golden path (templates 4/5); real estate and maths are named as outside it. (2) tests/docs pins Super as the reporter.
+  - Concerns: template 1's rationale still calls per-token deploy 'unverified' (orchestrator at merge); planner's dead tf-deploy warning was already deleted in 90020da.
+  - Review dispatched (sonnet). Trial merge clean.
+- NOTE (orchestrator): never bare `git stash` again; the stash stack is shared with every worktree and agent. Use a WIP commit or a tagged stash.
+- 2026-10-22T05:50Z frontend-w6 reported DONE_WITH_CONCERNS (5477e1e, 2f7e210, 8eb7bbd, bccf186 on 97b749c).
+  - Palette in R25 order without tf-deploy; quantize lora_adapter and judge-eval tuned_lora forms; report card stops 60 s after the end with a run-page link; web 34.
+  - Ruling: the palette equals the registry's visible types, so distill-sft and lm-eval leave it (the registry hides them) — why: hidden = off the demo path, untested on Nebius, already out of the planner — cost if wrong: unhide them in the registry.
+  - Review dispatched (sonnet), with the ruling as a finding. Trial merge clean.
+- 2026-10-22T05:50Z 7adad9e template 1's rationale: per-token deploy retired (410), not 'unverified' (devrel concern).
+- 2026-10-22T06:01Z qa-w7 review (sonnet): Needs fixes. No money-safety defect: every refusal runs before the single /agent/run, caps = --max-cost, keys contained.
+  - Important: the demo.LIMIT_S write and the zeroed check_run copy → max_cost/limit parameters.
+  - Minors: a stub main test; a duration refusal; refusals vs budget.gpu_nodes drift; E2E_BIND_HOST in real mode; NEBIUS_BASE_URL dropped; PASS cost excludes planner/reporter.
+  - Rulings:
+    - REAL_LIMIT_S 3600 and a refusal when the estimate exceeds it — why: a cancel at the limit wastes what was spent — cost if wrong: a slow real run waits longer.
+    - The PASS line prints the throwaway DB's day ledger total — why: LOG.md must record the real spend — cost if wrong: none.
+  - Fix round 1 → ae3c65befef5dcb2b, starting with `git merge NebiusHackathon`.
+- 2026-10-22T06:02Z frontend-w6 review (sonnet): Needs fixes.
+  - (1) The palette keeps hidden distill-sft/lm-eval (the ruling stands; set equality with the registry).
+  - (2) endedAt is not reset when Retry node re-runs a failed run, so the card shows 'unavailable' while running.
+  - Polling, heading (plain text: <h2> + <pre>, no HTML injection) and help texts are verified.
+  - Minor → QA: smoke untilDone doesn't know 'Report unavailable'.
+  - Follow-up folded in: forms for unsloth-train and vllm-serve, so the golden path can be built on the canvas.
+  - Fix round 1 → a0b588992b033feb4.

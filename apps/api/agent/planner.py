@@ -2,7 +2,7 @@
 apps/api/agent/planner.py
 
 The Orchapod Agent (docs/contracts.md "Agent API"): Nemotron 3 Super turns an intent into a plan (a workflow spec as
-JSON), review() validates and prices it, and Nemotron 3.5 Lightning writes the report once the run ends. Every model
+JSON), review() validates and prices it, and Nemotron 3 Super writes the report once the run ends. Every model
 call goes through Token Factory and the control-plane day ledger (services/budget.control_plane). With STUB=1 the
 plan is the closest canonical template (templates/*.json) and the report is the deterministic template.
 """
@@ -30,7 +30,7 @@ from api.models.db import AgentRun
 from api.services import budget
 from api.services.provider_selector import get_providers
 from orchapod.prices import PRICES
-from packages.providers.tokenfactory import LIGHTNING, SUPER, ULTRA
+from packages.providers.tokenfactory import SUPER, ULTRA
 from packages.workflow_schema.models import NODE_REGISTRY, ResourceSpec
 
 log = logging.getLogger("api.agent")
@@ -42,16 +42,15 @@ TEMPLATES = Path(__file__).parent / "templates"
 # much they spend are priced from PRICES in estimate(). ponytail: rough until spikes 1–3 measure real runs.
 TYPICAL = {
     "web-research": (0.10, 3), "synth-distilabel": (0.30, 6), "data-prep": (0.0, 2), "tf-finetune": (0.50, 30),
-    "tf-deploy": (0.0, 6), "judge-eval": (0.30, 15), "hf-download": (0.0, 5), "quantize": (0.0, 15),
+    "judge-eval": (0.30, 15), "hf-download": (0.0, 5), "quantize": (0.0, 15),
     "unsloth-train": (1.88, 25), "vllm-serve": (0.91, 8),
 }
-# docs/agent_knowledge.md "Constraints": what Token Factory fine-tunes, and the per-token LoRA bases spike 1 tests.
+# docs/agent_knowledge.md "Constraints": what Token Factory fine-tunes.
 TF_FINETUNE_BASES = re.compile(r"llama-3\.1-(8b|70b)|llama-3\.2-(1b|3b)|llama-3\.3-70b|qwen3|qwen2\.5|gpt-oss|deepseek|gemma-4",
                                re.IGNORECASE)
-SERVERLESS_LORA_BASES = {"meta-llama/Meta-Llama-3.1-8B-Instruct", "meta-llama/Llama-3.1-8B-Instruct"}
-# The outputs a *_model_ref input may reference (contracts "ModelRef"): our endpoints, Token Factory LoRAs, GGUF files.
-MODEL_REF_SOURCES = {("vllm-serve", "model_ref"), ("vllm-serve", "base_model_ref"), ("tf-deploy", "model_ref"),
-                     ("quantize", "gguf_file"), ("quantize", "gguf_f16")}
+# The outputs a *_model_ref input may reference (contracts "ModelRef"): our endpoints and GGUF files.
+MODEL_REF_SOURCES = {("vllm-serve", "model_ref"), ("vllm-serve", "base_model_ref"), ("quantize", "gguf_file"),
+                     ("quantize", "gguf_f16")}
 TF_FAILED = "Nemotron on Token Factory failed; the API log has the cause"
 _ID = re.compile(r"^[a-z][a-z0-9_]*$")
 
@@ -155,9 +154,6 @@ def estimate(plan: dict) -> tuple[dict, list[str]]:
                     usd = rows * TRAIN_TOKENS_PER_ROW * epochs * price
         except (TypeError, ValueError):
             pass  # a ref or a bad value: review() reports it; the typical cost stands
-        if t == "tf-deploy":
-            warnings.append(f"{n['id']}: per-token LoRA deploy is unverified until spike 1; "
-                            f"if it fails, serve the lora_adapter with vllm-serve")
         by_node[n["id"]] = {"usd": round(max(usd, 0.0), 4), "minutes": round(max(minutes, 0.0), 1)}
     return {"usd": round(sum(x["usd"] for x in by_node.values()), 4),
             "minutes": round(sum(x["minutes"] for x in by_node.values()), 1), "by_node": by_node}, warnings
@@ -227,7 +223,7 @@ def _input_problems(key: str, value: Any, n: PlanNode, nodes: dict[str, PlanNode
     if "${{" not in value:
         if model_ref and ("://" in value or "{" in value):  # its provenance cannot be checked
             return ["a model ref is a Token Factory model id, an inline Token Factory ref, or a ref to a "
-                    "vllm-serve, tf-deploy or quantize output"]
+                    "vllm-serve or quantize output"]
         return []
     m = REF.fullmatch(value.strip())
     if not m:
@@ -242,7 +238,7 @@ def _input_problems(key: str, value: Any, n: PlanNode, nodes: dict[str, PlanNode
         return [f"{m[2]} ({source.type}) has no output {m[3]!r}"]
     if model_ref and source and (source.type, m[3]) not in MODEL_REF_SOURCES:
         return [f"{m[2]}.{m[3]} is not a model: refs come from vllm-serve model_ref or base_model_ref, "
-                "tf-deploy model_ref, or quantize gguf_file or gguf_f16"]
+                "or quantize gguf_file or gguf_f16"]
     return []
 
 
@@ -271,14 +267,6 @@ def _constraint_problems(n: PlanNode, nodes: dict[str, PlanNode]) -> list[str]:
         if "nemotron" in model.lower() or not TF_FINETUNE_BASES.search(model):
             problems.append(f"Token Factory does not fine-tune {model}: use Llama 3.1 8B/70B, 3.2 1B/3B, 3.3 70B, Qwen3, "
                             "Qwen2.5, gpt-oss, DeepSeek or Gemma 4 (a Nemotron student trains with unsloth-train)")
-    if n.type == "tf-deploy":
-        job = v.get("job")
-        m = REF.fullmatch(job.strip()) if isinstance(job, str) else None
-        source = nodes.get(m[2]) if m and m[2] else None
-        base = job.get("model") if isinstance(job, dict) else _values(source.model_dump()).get("model") if source else None
-        if base and str(base) not in SERVERLESS_LORA_BASES:
-            problems.append(f"Token Factory has no per-token LoRA deploy for {base}: "
-                            "serve the tf-finetune lora_adapter with vllm-serve")
     return problems
 
 
@@ -390,28 +378,38 @@ download_url, or the model to call). Use only the facts given. If the run failed
 and say that Retry node resumes from it."""
 
 
+REPORT_TIMEOUT_S = 30  # spike 2: Super wrote this report in 2.1 s; Lightning took 16-110 s and once 4 x 120 s
+
+
 async def write_report(agent_run: AgentRun, summary: dict, db: AsyncSession, scale: float) -> str:
-    """Nemotron 3.5 Lightning writes the report; STUB=1, the kill switch, an empty day budget or a failed call fall back
-    to the deterministic template."""
+    """Nemotron 3 Super writes the report under the template's title line (so it names the plan), sent at most once it
+    may have landed (create=True) with a REPORT_TIMEOUT_S read timeout; STUB=1, the kill switch, an empty day budget or
+    a failed call fall back to the template."""
     if config.env("STUB") != "1" and not budget.kill_switch() and (await budget.left(db, None, scale))[0] > 0:
         facts = json.dumps({"intent": agent_run.intent, "plan": agent_run.plan, "estimate": agent_run.estimate,
                             "run": summary}, default=str)[:20_000]
         try:
             out = await budget.control_plane(db, "reporter", lambda tf: tf.chat(
-                [{"role": "system", "content": REPORT_PROMPT}, {"role": "user", "content": facts}],
-                LIGHTNING, temperature=0.0, max_tokens=1200, thinking=False))
+                [{"role": "system", "content": REPORT_PROMPT}, {"role": "user", "content": facts}], SUPER, create=True,
+                temperature=0.0, max_tokens=1200, thinking=False, read_timeout=REPORT_TIMEOUT_S))
             if out["text"].strip():
-                return out["text"].strip()
+                return f"{_title(agent_run, summary)}\n\n{out['text'].strip()}"
         except Exception as e:  # a ProviderError, or a reply the client could not read
             log.warning("report of run %s falls back to the template: %r", agent_run.run_id, e)
     return template_report(agent_run, summary)
 
 
+def _title(agent_run: AgentRun, s: dict) -> str:
+    """One plain line: a plan name's newlines (or a "## Cost" in it) never become headings of the report."""
+    name = " ".join((agent_run.plan.get("name") or "").split())[:80]
+    return f"## {name or 'Agent run'}: {s['status']}"
+
+
 def template_report(agent_run: AgentRun, s: dict) -> str:
-    lines = [f"## {agent_run.plan.get('name') or 'Agent run'}: {s['status']}", "", f"**Intent:** {agent_run.intent}", "",
+    lines = [_title(agent_run, s), "", f"**Intent:** {' '.join(agent_run.intent.split())}", "",
              f"**Cost:** ${s['cost_usd']:.4f} of ${agent_run.estimate.get('usd', 0):.2f} estimated.", ""]
     if s.get("error"):
-        lines += [f"**Error:** {s['error']} (Retry node resumes from the failed node.)", ""]
+        lines += [f"**Error:** {' '.join(str(s['error']).split())} (Retry node resumes from the failed node.)", ""]
     lines += ["| Node | Type | Status | $ |", "| --- | --- | --- | --- |"]
     lines += [f"| {n['node_id']} | {n['type']} | {n['status']} | {n['usd']:.4f} |" for n in s["nodes"]]
     files = [a for a in s["artifacts"] if a.get("download_url") and a["kind"] not in ("metrics", "log")]

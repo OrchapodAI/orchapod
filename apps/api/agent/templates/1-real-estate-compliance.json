@@ -2,7 +2,7 @@
   "slug": "real-estate-compliance",
   "title": "Llama 3B tuned on US real-estate compliance",
   "intent": "Fine-tune Llama 3B on US real-estate compliance: Fair Housing Act, RESPA, TILA/TRID, state licensing",
-  "rationale": "Tavily gathers the regulations, Nemotron 3 Super writes grounded Q&A from them, and Token Factory fine-tunes Llama 3.2 3B with LoRA. Token Factory's per-token LoRA deploy is unverified for 3B (spike 1), so vllm-serve hosts base and adapter on one AI Cloud endpoint for 30 min; Nemotron 3 Ultra then judges base against tuned on held-out questions with the source passage as reference.",
+  "rationale": "Tavily gathers the regulations, Nemotron 3 Super writes grounded Q&A from them, and Token Factory fine-tunes Llama 3.2 3B with LoRA. Token Factory retired per-token LoRA deploy (410, spike 1), so vllm-serve hosts base and adapter on one AI Cloud endpoint for 30 min; Nemotron 3 Ultra then judges base against tuned on held-out questions with the source passage as reference.",
   "plan": {
     "name": "real-estate-compliance-llama-3b",
     "nodes": [

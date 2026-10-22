@@ -315,6 +315,12 @@ async def test_the_executor_never_starts_a_gpu_node_of_an_anonymous_run(db, prov
     await ex.run_workflow(admin.id, db, AsyncMock(), 1.0)
     assert (await nodes(db, admin))["train"].error == "no gpu provider: NEBIUS_PROJECT_ID not set"  # the admin's gets there
 
+    monkeypatch.setenv("STUB", "1")  # STUB would place the node on LocalDocker, but GPU plans stay admin-only
+    stub = await seed(db, GPU_FIRST)
+    await ex.run_workflow(stub.id, db, AsyncMock(), 0.1)
+    assert (await nodes(db, stub))["train"].error == "admin only: unsloth-train runs on a rented GPU"
+    assert (len(picked), provider.provisioned, budget._granted) == (1, [], {})  # the admin's pick; no provider for this one
+
 
 def test_an_attempt_costs_the_executors_bill_or_what_the_node_reported_whichever_is_more():
     bill = {"billed_by": "executor", "wall_usd": 2.25, "usd": 2.25}

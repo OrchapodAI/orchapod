@@ -456,6 +456,25 @@ async def test_a_gpu_attempt_costs_its_wall_time_or_what_its_node_reported_which
     assert await cost(early) == (4.5, 4.5)
 
 
+@pytest.mark.parametrize("stub, placed, usd", [(None, {"local-docker": 0, "nebius": 1}, 2.25),
+                                               ("1", {"local-docker": 1, "nebius": 0}, 0.0)])
+async def test_stub_runs_a_gpu_node_on_local_docker_and_bills_nothing(db, provider, gpu, monkeypatch, stub, placed, usd):
+    """Under STUB no node touches a GPU (unsloth-train writes a fake adapter), so a gpu node runs on LocalDocker like a cpu
+    node and its wall time is not billed. Without STUB it lands on the GPU provider and bills its 30 min of H100, as before."""
+    monkeypatch.delenv("STUB", raising=False)
+    if stub:
+        monkeypatch.setenv("STUB", stub)
+    clock = [0.0]
+    monkeypatch.setattr(ex, "monotonic", lambda: clock.append(clock[-1] + 1800) or clock[-1])  # 30 min a pod
+    run = await seed(db, ONE_GPU)
+
+    await ex.run_workflow(run.id, db, AsyncMock(), 1.0)
+
+    await db.refresh(run)
+    assert run.status == RunStatus.SUCCEEDED
+    assert ({p.name: len(p.provisioned) for p in (provider, gpu)}, float(run.cost_usd or 0)) == (placed, usd)
+
+
 async def test_a_cost_json_racing_the_executors_bill_is_counted_once(client, provider, gpu, tmp_path, monkeypatch):
     """The node's flush lands while the executor bills, between its read of the attempt and its insert: one lock
     orders them, so the attempt still totals max(the bill, the report), not their sum. A file database gives each

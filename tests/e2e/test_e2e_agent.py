@@ -240,6 +240,8 @@ def limit_untouched():
     (["--intent", "  ", "--max-cost", "0.5"], KEY, "without --intent"),  # `make agent-e2e` with INTENT unset passes ""
     (REAL, None, "NEBIUS_API_KEY is unset"),
     (REAL, "   ", "NEBIUS_API_KEY is unset"),
+    (["--intent", "4", "--max-cost", "0.5"], KEY, "the golden path is a stub run"),  # a real run would spend a planner call, then be refused
+    (["--intent", " 4 ", "--max-cost", "0.5"], KEY, "the golden path is a stub run"),
 ])
 def test_a_real_run_is_refused_before_anything_starts(argv, key, message, stack_spy, monkeypatch, capsys):
     if key is not None:
@@ -249,6 +251,10 @@ def test_a_real_run_is_refused_before_anything_starts(argv, key, message, stack_
     err = capsys.readouterr().err
     assert e.value.code == 2 and message in err and stack_spy == [], err
     assert (message == REFUSED) == (REFUSED in err) and KEY not in err, err
+
+
+def test_the_golden_path_alone_is_a_stub_run(stack_spy):
+    assert agent.main(["--stub", "--intent", "4"]) == 0 and len(stack_spy) == 1
 
 
 def test_the_cap_may_be_the_project_cap_itself(stack_spy, monkeypatch):
@@ -917,7 +923,7 @@ def test_the_golden_path_runs_its_template_as_it_is_and_passes(stack_ok, capsys)
     run = live(golden_report(), files=GOLDEN_TEXTS)
     assert agent.run_all(fake_api(run=run, calls=calls), "4") == 0
     assert ("POST", "/agent/plan") not in calls  # no planner matching: the template is the plan
-    assert run.posted == [{"intent": I4["intent"], "plan": I4["plan"]}]  # straight to /agent/run, as the gallery's Run does
+    assert run.posted == [{"intent": I4["intent"], "plan": I4["plan"]}]  # straight to /agent/run, no /agent/plan
     out = capsys.readouterr().out
     assert f"e2e: PASS golden path: run r1 succeeded in 0 s (limit {demo.LIMIT_S} s), cost $0, estimate ${I4['estimate']['usd']}, " \
            f"report ready ({len(golden_report()['markdown'])} chars)" in out

@@ -1,15 +1,15 @@
 """The canonical intents and the golden path through the Orchapod Agent, through the API only: all four on stubs ($0), or ONE for real.
 
     python scripts/e2e_agent.py --stub                       # intents 1, 2, 3 and the golden path (4); `make check E2E=1` runs it
-    python scripts/e2e_agent.py --stub --intent 2            # one of the four, or any text: the STUB planner answers with the
-                                                             # closest canonical plan
-    python scripts/e2e_agent.py --intent 2 --max-cost 0.5    # real: one intent (1, 2, 3, 4 or any text), `make agent-e2e INTENT=2 MAX_COST=0.5`
+    python scripts/e2e_agent.py --stub --intent 2            # one of the four (4, the golden path, is for stub runs only), or any
+                                                             # text: the STUB planner answers with the closest canonical plan
+    python scripts/e2e_agent.py --intent 2 --max-cost 0.5    # real: one intent (1, 2, 3 or any text), `make agent-e2e INTENT=2 MAX_COST=0.5`
 
 Per canonical intent (1 to 3): POST /agent/plan (the STUB planner must return that intent's canonical plan, error-free, estimate
 under the $3 run cap, with the shape docs/agent_knowledge.md gives it: #1 ends in judge-eval, #2 trains nothing, #3 runs quantize
 before judge-eval) -> POST /agent/run -> GET /agent/runs/{id}/report every 2 s until `ready`. The golden path (4, R25: research,
-synth, prep, unsloth-train, vllm-serve, judge-eval) has no planner matching: a stub run posts template 4's plan to /agent/run as it
-is, at full scale (the stub caps), as the gallery's Run does. Asserted: the run succeeded in under 5 minutes with every node's
+synth, prep, unsloth-train, vllm-serve, judge-eval) has no planner matching: a stub run posts template 4's plan straight to
+/agent/run, no /agent/plan, at full scale (the stub caps). Asserted: the run succeeded in under 5 minutes with every node's
 contract artifacts and a cost_json, cost $0, the report names the plan, the data-prep dataset downloads (intent #2: rows with
 exactly the schema's fields), judge-eval's eval_summary has the contract's shape, quantize keep_f16 registers the f16 baseline, and
 a vllm-serve node registered a stub-* endpoint (no Nebius call under STUB). It reuses e2e_demo.py: its stack (own API, STUB=1,
@@ -22,9 +22,12 @@ A real run (--max-cost) spends money, so only the Orchestrator runs it, after a 
 and `make up`. The same stack, but the API runs without STUB and the live Nemotron planner answers, so the plan is not the
 template's. Its env: ORCHAPOD_MAX_RUN_USD = ORCHAPOD_MAX_DAY_USD = --max-cost, ORCHAPOD_ANON_SCALE = 1, and of e2e_demo.PAID only
 NEBIUS_API_KEY, TAVILY_API_KEY and HF_TOKEN, each when set (no VASTAI, RunPod, Anthropic or OpenAI key, no Nebius project id);
-the rest of the shell, NEBIUS_BASE_URL included, reaches it as it does any non-secret setting.
-- Refused before anything starts, one line: no --max-cost, one at or under 0 or over the $3 run cap, no --intent, no NEBIUS_API_KEY,
-  E2E_BIND_HOST set (the API holds a key, so it listens on 127.0.0.1 only; it needs Docker Desktop's loopback forwarding).
+the rest of the shell reaches it as it does any non-secret setting, except that NEBIUS_BASE_URL, where the providers send the key,
+passes only when it is blank or Token Factory's URL.
+- Refused before anything starts, one line: no --max-cost, one at or under 0 or over the $3 run cap, no --intent, `--intent 4` (the
+  golden path is a stub run; its real run is e2e_demo.py --max-cost), no NEBIUS_API_KEY, a NEBIUS_BASE_URL that is neither blank nor
+  Token Factory's (its value is never shown: a URL can carry userinfo), E2E_BIND_HOST set (the API holds a key, so it listens on
+  127.0.0.1 only; it needs Docker Desktop's loopback forwarding).
 - Refused before POST /agent/run, one line each: a plan with an error; an estimate over --max-cost; an estimate longer than the hour
   a real run waits (REAL_LIMIT_S); a node that rents a GPU (the golden run, e2e_demo.py --max-cost, owns those and needs G2 quota);
   a node whose key is unset (web-research: TAVILY_API_KEY).
@@ -86,7 +89,8 @@ EVAL_KEYS = ("n", "judged", "wins", "ties", "losses", "errors", "win_rate", "con
 
 def real_env(max_cost: float, environ=os.environ) -> dict[str, str | None]:
     """api_env's `extra` for a real run: both caps = max_cost at full scale, STUB gone, and of e2e_demo.PAID only FORWARD, each
-    when set. Anything else in the shell, NEBIUS_BASE_URL included, reaches the API as it does any non-secret setting."""
+    when set. Anything else in the shell reaches the API as it does any non-secret setting; so does NEBIUS_BASE_URL, which main
+    has already refused unless it is blank or Token Factory's."""
     return FULL_CAPS | {"ORCHAPOD_MAX_RUN_USD": str(max_cost), "ORCHAPOD_MAX_DAY_USD": str(max_cost), "STUB": None} | {
         k: environ[k] for k in FORWARD if environ.get(k, "").strip()}
 
@@ -322,7 +326,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="E2E of the canonical intents and the golden path through the Agent, on stubs or one for real "
                                              "(see the module docstring).")
     ap.add_argument("--stub", action="store_true", help="STUB=1: $0, no keys, no network beyond the local stack")
-    ap.add_argument("--intent", help="1, 2 or 3 (a canonical intent), 4 (the golden path), or any text; stub default: the four; a real run needs one")
+    ap.add_argument("--intent", help="1, 2 or 3 (a canonical intent), or any text; 4 is the golden path, for stub runs only; "
+                                     "stub default: the four; a real run needs one of the others")
     ap.add_argument("--max-cost", type=float, help=f"USD cap of a real run, above 0 and at most ${CAP_USD:g}; a real run is refused without it")
     args = ap.parse_args(argv)
     if args.stub:
@@ -334,6 +339,9 @@ def main(argv: list[str] | None = None) -> int:
         ap.error(f"refusing --max-cost {cost:g}: the project caps a run at ${CAP_USD:g}")
     if not intent:
         ap.error("refusing to run without --intent: a real run takes one intent, 1, 2, 3 or any text")
+    if intent == GOLDEN:  # it would spend a planner call and then meet the GPU refusal
+        ap.error(f"refusing --intent {GOLDEN}: the golden path is a stub run (--stub --intent {GOLDEN}); its real run rents GPUs, "
+                 "so it is e2e_demo.py --max-cost")
     if not os.environ.get("NEBIUS_API_KEY", "").strip():
         ap.error("refusing to run: NEBIUS_API_KEY is unset (the Agent plans with Nemotron on Token Factory; load .env: set -a; . ./.env; set +a)")
     if os.environ.get("NEBIUS_BASE_URL", "").strip().rstrip("/") not in ("", TF_BASE):  # the providers send the key where it points

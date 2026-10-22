@@ -70,3 +70,49 @@
 ## For the Orchestrator
 - **DECISION:** `files.content` follows Token Factory's 307 to presigned object storage without the key, rather than calling `/files/{id}/link`. It is bounded at 2 GiB and 600 s per file, and a cut-off body is retried. See contracts 38a91e5.
 - **DECISION:** `lora.deploy` maps 410 to `unsupported`. See contracts 38a91e5.
+
+## Fix round 1 (review of 2ea3c65)
+
+**Commits:**
+- 271298a docs(contracts): files.content follows at most 3 https redirects, hides the target's error body, 512 MiB, a hard 600 s deadline
+- 13323f9 fix(providers): walk redirects ourselves (https only, at most 3 hops), hide the target's error body, hard 600 s deadline, 512 MiB
+
+**Cost:** $0, no live calls.
+
+### Important 1: walk the redirects ourselves (base.py `request`)
+- **How it sends now:** `request` sends with `follow_redirects=False` and walks `resp.next_request` inside the retry wrapper, so retries apply to every hop.
+- **Each hop:**
+  - It is checked against the deadline before it is sent.
+  - The response before it is closed first.
+  - It must be https, and at most `MAX_HOPS` = 3 hops are followed.
+- **Refusals:** an http target or a 4th hop raises `ProviderError` `bad_request 307: refused redirect: https only, at most 3 hops`, which names no URL. A loop therefore no longer ends in a raw `TooManyRedirects`.
+- **The key:** httpx builds `next_request` without `Authorization` off the origin, and that is kept.
+- **Tests:**
+  - Hop targets: `https://<api>:8443` is followed with `Authorization` None; `http://<api>` and `http://<storage>` are refused after one request.
+  - TF → storage → TF: the key is on hop 0 only, so it is never regained.
+  - A loop gives the refusal after 4 requests, and all four 307 responses are closed.
+  - Before the fix, the two http cases and the loop were red: "DID NOT RAISE", and the replay queue ran out.
+
+### Minors
+1. **Error bodies from the redirect target are no longer echoed.** When the final `resp.url.host` is not the API host, the message is `the redirect target answered <status>`. Tested with an S3 `SignatureDoesNotMatch` body that carries `<SignatureProvided>`: it was echoed before the fix.
+2. **httpx logging:** `logging.getLogger("httpx").setLevel(logging.WARNING)` in base.py.
+3. **Hard deadline.**
+   - **Checks:** `request(deadline=…)` checks before every send (hops and retries) and before every backoff. `files.content` passes the deadline through and also checks it before its own mid-body retry.
+   - **Overrun:** at most one connect + read timeout, 130 s, as the contract line now says.
+   - **Test:** a read that times out past the deadline gives no backoff and no second send; a 307 that lands past the deadline gives no hop.
+4. **Memory:** `FILE_MAX_BYTES` is now 512 MiB, about 12× the 42 MB adapter.
+5. **Size test:** a 1,000-chunk stream with a 4-byte cap stops after 3 chunks.
+6. **Polish:**
+   - `request`'s docstring states the GET-only assumption: on a 307, httpx re-sends the body and every header but `Authorization`.
+   - `base.backoff()` is shared by `request` and `files.content`.
+
+### Verification
+- **Provider tests:** `pytest tests/providers` → 202 passed. With tf-finetune and tf-deploy's container tests → 242 passed.
+- **tf-finetune end to end (temporary, deleted):** re-run through a 307 on 13323f9 → passed.
+- **`make check PY=python` (shared venv) on 13323f9 → rc=0:** `All checks passed!`, `876 passed, 2 warnings`, web `pass 30` / `fail 0`, `SKIP stub e2e`.
+- **Flakes:** two other `make check` runs failed only on known flakes that also fail on base 2b29844, under a load average of about 8:
+  - `tests/api/test_budget.py::test_concurrent_runs_never_grant_more_than_the_day_cap` (2 of 6 on the base);
+  - two cases of `tests/api/test_executor.py::test_an_endpoint_node_without_a_token_fails_before_it_starts`. Its fake `nebius` CLI must finish within `IAM_TIMEOUT_S` = 0.2 s, and run back to back with head it failed 1 of 4 on the base. For qa/backend.
+
+### DECISION, superseding the 2 GiB line above
+`files.content` follows at most 3 redirects, https only, never with the key. It reports a redirect target's error by status only. It is bounded at 512 MiB and 600 s, where the deadline is checked before every send and after every chunk. See contracts 271298a.

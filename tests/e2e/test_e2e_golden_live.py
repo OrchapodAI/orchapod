@@ -535,6 +535,14 @@ def test_a_warning_about_failing_polls_comes_at_most_once_a_minute(hosted_api, m
     assert [re.search(r"poll failed at (\d+) s", ln).group(1) for ln in warnings] == ["20", "80", "140", "200", "260"], warnings
 
 
+def test_a_warning_about_a_failing_poll_is_one_line_whatever_the_error_page_says(hosted_api, capsys):
+    page = httpx.Response(502, text="<html>\n<body>\n  Bad\n  Gateway\n</body>\n</html>")
+    hosted_api(not_ready=1, before=reports_fail(page, since=2, until=2))
+    assert demo.main(LIVE) == 0
+    (warning,) = [ln for ln in capsys.readouterr().out.splitlines() if "poll failed" in ln]
+    assert "<html> <body> Bad Gateway </body> </html>" in warning
+
+
 @pytest.mark.parametrize("status, headers", [(404, {}), (401, {}), (307, {"location": "https://elsewhere.example.test/"})])
 def test_a_poll_that_will_not_heal_is_not_waited_through_and_the_run_is_left_with_its_curl(status, headers, hosted_api, capsys):
     gone = reports_fail(httpx.Response(status, headers=headers, json={"detail": "no"}), since=2, until=2)

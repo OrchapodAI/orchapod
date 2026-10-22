@@ -84,8 +84,8 @@ def test_every_todo_names_its_day():
 
 
 def test_unbuilt_make_targets_are_marked_todo():
-    # `make e2e` and `make agent-e2e` refuse real runs: scripts/e2e_demo.py and e2e_agent.py have only --stub so far
-    # (`make demo` works). Drop this test when both targets run for real.
+    # `make e2e` refuses real runs (scripts/e2e_demo.py has only --stub so far); `make agent-e2e` runs one intent for real
+    # (qa-w7) but has no live result yet. Drop this test when both have one.
     for line in README.splitlines():
         if re.search(r"\bmake (e2e|agent-e2e)\b", line):
             assert "TODO(D8)" in line, f"the target does not work yet: {line[:70]}"

@@ -208,7 +208,8 @@ def _node_problems(n: PlanNode, nodes: dict[str, PlanNode], catalog: dict[str, d
         problems += [f"{k}: {p}" for p in _input_problems(k, value, n, nodes, catalog)]
     problems += _constraint_problems(n, nodes)
     pref = ResourceSpec().provider_pref  # plans carry no resources, so the executor picks from the default list
-    if meta["runtime"] == "gpu" and not set(pref) & set(get_providers()):
+    # under STUB the executor runs a gpu node on LocalDocker, so no GPU provider is needed
+    if meta["runtime"] == "gpu" and config.env("STUB") != "1" and not set(pref) & set(get_providers()):
         problems.append(f"no GPU provider in provider_pref {pref} is configured (nebius needs NEBIUS_PROJECT_ID)")
     return problems
 

@@ -211,12 +211,13 @@ async def _execute_node(
 
     timeout = float(config.env("ORCHAPOD_NODE_TIMEOUT_S"))  # backstop above node-level timeouts
 
-    # cpu and api nodes run on LocalDocker; gpu nodes on a GPU provider
+    # cpu and api nodes run on LocalDocker; gpu nodes on a GPU provider, except under STUB, where no node touches a GPU
     row = NODE_REGISTRY.get(NodeType(dag_node.type), {})
     runtime = row.get("runtime", "gpu")
+    local = runtime in ("cpu", "api") or config.env("STUB") == "1"
     resources = ResourceSpec(**dag_node.resources) if isinstance(dag_node.resources, dict) and dag_node.resources else ResourceSpec()
     try:
-        provider, gpu_spec = await (pick_local_docker if runtime in ("cpu", "api") else pick_provider)(resources)
+        provider, gpu_spec = await (pick_local_docker if local else pick_provider)(resources)
     except Exception as e:
         raise NodeFailed(f"no {runtime} provider: {e}")
 
@@ -238,7 +239,7 @@ async def _execute_node(
         raise NodeFailed(f"provision failed: {e}")
 
     stream = asyncio.create_task(_stream_stdout(provider, pod, node_run, broadcast))
-    bill = None if runtime in ("cpu", "api") else (  # once the pod is gone, inside its shielded teardown
+    bill = None if local else (  # once the pod is gone, inside its shielded teardown
         lambda: _bill_gpu_time(run.id, node_run.id, env["ORCHAPOD_ATTEMPT"], provider, gpu_spec, pod, started, broadcast))
     try:
         node_run.gpu_provider = run.gpu_provider = provider.name

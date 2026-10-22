@@ -67,6 +67,7 @@ async def test_node_containers_get_host_docker_internal_on_linux_too(monkeypatch
     assert {"ORCHAPOD_CONTROL_URL": "http://host.docker.internal:8003",
             "ORCHAPOD_R2_ENDPOINT": "http://host.docker.internal:9000"}.items() <= cli_env.items()
     assert not any("secret-value" in a for a in argv) and cli_env["NEBIUS_API_KEY"] == "secret-value"  # names on argv only
+    assert [argv[i + 1] for i, a in enumerate(argv) if a == "-e"] == list(env)  # every key is named, so each reaches the node
     assert "PATH" in cli_env  # the docker CLI keeps its own env (contexts, DOCKER_HOST)
 
 

@@ -75,8 +75,9 @@ def test_r2_uri_is_downloaded_and_read_as_extensionless_jsonl(mock_orchapod_io, 
 
 def test_hf_dataset_gets_config_and_split(monkeypatch):
     fake = MagicMock(return_value=[{"question": "q", "answer": "a"}])
-    configs = MagicMock(return_value=["main", "socratic"])
-    monkeypatch.setitem(sys.modules, "datasets", SimpleNamespace(load_dataset=fake, get_dataset_config_names=configs))
+    configs, default = MagicMock(return_value=["main", "socratic"]), MagicMock(return_value=None)
+    monkeypatch.setitem(sys.modules, "datasets", SimpleNamespace(load_dataset=fake, get_dataset_config_names=configs,
+                                                                 get_dataset_default_config_name=default))
     monkeypatch.delenv("STUB", raising=False)
     assert dp.load_rows("hf://openai/gsm8k", "qa", "main", "test[:50]") == [{"question": "q", "answer": "a"}]
     fake.assert_called_once_with("openai/gsm8k", name="main", split="test[:50]")
@@ -86,10 +87,10 @@ def test_hf_dataset_gets_config_and_split(monkeypatch):
     configs.return_value = ["b", "a"]
     dp.load_rows("org/multi", "qa")
     fake.assert_called_with("org/multi", name="b", split="train")
-    for names in (["default", "x"], ["only"]):  # the library's own default stands
-        configs.return_value = names
-        dp.load_rows("org/plain", "qa")
-        fake.assert_called_with("org/plain", name=None, split="train")
+    default.return_value = "beta"  # one config flagged default (or named "default", or the only one): the library's stands
+    configs.return_value = ["alpha", "beta"]
+    dp.load_rows("org/flagged", "qa")
+    fake.assert_called_with("org/flagged", name=None, split="train")
 
 
 def test_stub_replaces_hugging_face_with_fixed_rows(run_node, monkeypatch):

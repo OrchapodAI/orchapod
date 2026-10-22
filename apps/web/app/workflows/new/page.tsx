@@ -8,7 +8,7 @@ import { STARTER_YAML } from "@/lib/workflowYaml";
 
 type Mode = "prompt" | "yaml";
 
-const EXAMPLE_PROMPTS = [  // the Agent's canonical intents (docs/agent_knowledge.md): every one plans without errors
+const EXAMPLE_PROMPTS = [  // the Agent's canonical intents (docs/agent_knowledge.md); the docs one is over a visitor's cap
   "Generate synthetic data of movie likes, shares and subscribes",
   "Quantize a model which is an expert in maths",
   "Distill a Nebius docs specialist: fine-tune NVIDIA Nemotron Nano 8B on the Nebius AI Cloud and Token Factory docs",
@@ -67,7 +67,7 @@ export default function NewWorkflowPage() {
         <div style={{ maxWidth: 640, margin: "0 auto" }}>
           <h1 style={{ fontSize: 22, fontWeight: 500, letterSpacing: "-0.02em", marginBottom: 4 }}>New workflow</h1>
           <p className="muted" style={{ fontSize: 13.5, marginBottom: 28 }}>
-            Describe your fine-tuning goal in plain English, or write YAML directly.
+            Describe your goal in plain English, or write YAML directly.
           </p>
 
           {/* Mode tabs */}
@@ -101,7 +101,7 @@ export default function NewWorkflowPage() {
                     onChange={(e) => setPrompt(e.target.value)}
                     rows={5}
                     required
-                    placeholder="e.g. Fine-tune Qwen3-4B on my customer support dataset, evaluate it, and deploy as an API endpoint."
+                    placeholder={`e.g. ${EXAMPLE_PROMPTS[0]}`}
                     style={{ ...inputStyle, resize: "none" }}
                   />
                 </div>

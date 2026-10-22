@@ -206,7 +206,7 @@ def _node_problems(n: PlanNode, nodes: dict[str, PlanNode], catalog: dict[str, d
         problems += [f"{_where(x) or 'inputs: '}{x['msg']}" for x in e.errors()]
     for k, value in n.inputs.items():
         problems += [f"{k}: {p}" for p in _input_problems(k, value, n, nodes, catalog)]
-    problems += _constraint_problems(n, nodes)
+    problems += _constraint_problems(n)
     pref = ResourceSpec().provider_pref  # plans carry no resources, so the executor picks from the default list
     # under STUB the executor runs a gpu node on LocalDocker, so no GPU provider is needed
     if meta["runtime"] == "gpu" and config.env("STUB") != "1" and not set(pref) & set(get_providers()):
@@ -257,7 +257,7 @@ def _model_ref_problems(ref: dict) -> list[str]:
             "endpoint refs come from a vllm-serve model_ref output"]
 
 
-def _constraint_problems(n: PlanNode, nodes: dict[str, PlanNode]) -> list[str]:
+def _constraint_problems(n: PlanNode) -> list[str]:
     """docs/agent_knowledge.md "Constraints every plan must respect"."""
     v = _values(n.model_dump())
     nemotron = sorted(m for m in PRICES["token_factory"] if "nemotron" in m.lower())

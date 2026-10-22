@@ -596,3 +596,10 @@ worktrees:
   - Fixed: data-prep now uses get_dataset_default_config_name (checked importable in the data-prep image, datasets 5.1.0).
   - Minors fixed: LocalDocker argv pin; unused planner param; R20 wording; chat create wording; the hf_config fallback in contracts; /workflows/new placeholder and subtitle.
   - Tests: 113 targeted; web 36; tsc clean.
+- 2026-10-22T08:31Z qa-w9 DONE (39172a7, 9b4dc9b; $0; no live call).
+  - `make e2e API=https://api.<domain> [MAX_COST=3]`: the live golden run (template 4) against the hosted API with X-Orchapod-Admin.
+  - Refusals; 60 min limit; cancels on Ctrl-C/SIGTERM/15 failed polls; scrubbed output.
+  - 274 e2e tests; make check 1095; 72 mutants caught.
+  - Concerns: at the $5 hosted day cap, a run needs ≤ $2.33 spent that UTC day (one attempt per day); the 60 min limit vs the 51.5 min estimate.
+  - Stale for devrel/orchestrator: README:159, test_readme.py:87 comment, CLAUDE.md:26, ORCHESTRATOR.md:207.
+  - Review dispatched (sonnet), including the limit question.

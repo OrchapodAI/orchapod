@@ -25,8 +25,11 @@ export const finished = (status: RunStatus) => status === "succeeded" || canRetr
 /** How long /agent keeps asking for the report after the run ended: the API writes it in the background (backend-w7). */
 export const REPORT_WAIT_MS = 60_000;
 
+/** When a poll first saw the run finished (`was` = what the polls before knew), undefined while it runs: a Retry node starts the wait over. */
+export const seenFinishedAt = (status: RunStatus, was: number | undefined, now: number) => (finished(status) ? was ?? now : undefined);
+
 /** What the report card does after a poll of GET /agent/runs/{id}/report: stop when the report is `ready`, else poll again,
- *  until the run has been finished for REPORT_WAIT_MS ("gone"). `endedAt` = when a poll first saw the run finished (undefined while it runs). */
+ *  until the run has been finished for REPORT_WAIT_MS ("gone"). `endedAt` = seenFinishedAt. */
 export function reportNext(ready: boolean, endedAt: number | undefined, now: number): "done" | "wait" | "gone" {
   return ready ? "done" : endedAt !== undefined && now - endedAt >= REPORT_WAIT_MS ? "gone" : "wait";
 }

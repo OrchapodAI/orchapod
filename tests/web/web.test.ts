@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { yamlValue, buildYamlFromGraph, planYaml } from "../../apps/web/lib/workflowYaml.ts";
 import { api, apiDate, cancelToken, capNote, demoNote, explainError, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
-import { applyCompareEvent, applyRunEvent, canRetry, finished, REPORT_WAIT_MS, reportNext, runShown, splitReport } from "../../apps/web/lib/runEvents.ts";
+import { applyCompareEvent, applyRunEvent, canRetry, finished, REPORT_WAIT_MS, reportNext, runShown, seenFinishedAt, splitReport } from "../../apps/web/lib/runEvents.ts";
 import { defaultInputs, NODE_FORMS } from "../../apps/web/lib/nodeForms.ts";
 import { datasetOf, evalOf, lossPoints, lossSources, modelRefsOf } from "../../apps/web/lib/results.ts";
 
@@ -385,6 +385,22 @@ test("the report card polls until the report is ready, also after the run ended,
   assert.equal(reportNext(false, t0, t0 + REPORT_WAIT_MS), "gone"); // "Report unavailable, see the run page"
   assert.equal(reportNext(true, undefined, t0), "done");
   assert.equal(reportNext(true, t0, t0 + 2 * REPORT_WAIT_MS), "done"); // a report that lands late is still shown
+});
+
+test("a Retry node starts the report's 60 s wait over: finished, running again, finished again", () => {
+  const t0 = 1_000_000;
+  let endedAt = seenFinishedAt("failed", undefined, t0); // a poll sees the run fail
+  assert.equal(endedAt, t0);
+  endedAt = seenFinishedAt("failed", endedAt, t0 + 5_000); // still finished: the first sighting stands
+  assert.equal(endedAt, t0);
+  endedAt = seenFinishedAt("running", endedAt, t0 + 20_000); // Retry node: the run runs again
+  assert.equal(endedAt, undefined);
+  assert.equal(reportNext(false, endedAt, t0 + REPORT_WAIT_MS + 1), "wait"); // past the first bound, but no bound while it runs
+  endedAt = seenFinishedAt("failed", endedAt, t0 + 100_000); // it ends again
+  assert.equal(reportNext(false, endedAt, t0 + 100_000 + REPORT_WAIT_MS - 1), "wait"); // the bound counts from this end
+  assert.equal(reportNext(false, endedAt, t0 + 100_000 + REPORT_WAIT_MS), "gone");
+  for (const s of ["pending", "provisioning_gpu", "running"] as const) assert.equal(seenFinishedAt(s, t0, t0 + 1), undefined, s);
+  for (const s of ["succeeded", "failed", "cancelled"] as const) assert.equal(seenFinishedAt(s, undefined, t0), t0, s);
 });
 
 test("the report's first line, ## <plan>: <status>, is its title; the rest stays Markdown as written", () => {

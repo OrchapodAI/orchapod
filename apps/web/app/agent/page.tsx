@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, capNote, demoNote, explainError, usd } from "@/lib/api";
 import type { AgentPlan, AgentReport, AgentTemplate } from "@/lib/types";
-import { finished, reportNext, splitReport } from "@/lib/runEvents";
+import { reportNext, seenFinishedAt, splitReport } from "@/lib/runEvents";
 import { planYaml } from "@/lib/workflowYaml";
 import { NODE_META } from "@/components/canvas/OrchaNode";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -261,7 +261,7 @@ function ReportCard({ runId }: { runId: string }) {
   useEffect(() => {
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let endedAt: number | undefined; // when a poll first saw the run finished
+    let endedAt: number | undefined; // when a poll first saw the run finished; forgotten when it runs again (Retry node)
     async function poll() {
       let ready = false;
       try {
@@ -270,7 +270,7 @@ function ReportCard({ runId }: { runId: string }) {
         setReport(r);
         setError("");
         ready = r.ready;
-        if (finished(r.status)) endedAt ??= Date.now();
+        endedAt = seenFinishedAt(r.status, endedAt, Date.now());
       } catch (err) {
         if (!live) return;
         setError(explainError(err));

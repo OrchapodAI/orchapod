@@ -108,7 +108,9 @@ Updated: 2026-10-22T07:34Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - DECISION 2026-10-21 (orchestrator ruling): ORCHAPOD_ANON_SCALE stays 0.1; real-estate's reduced template ($0.83 at the corrected L40S price) is admin-only until Hari raises the scale (≥ 0.3) inside the hosting decision.
 - DECISION 2026-10-21: hosted VM never gets VASTAI_API_KEY; backups = 14 rotating slots in the bucket; deploy keeps explicit rsync excludes (.env, nebius/, deploys.log) — platform-w4, review agreed.
 - DECISION 2026-10-21 (Hari): hosting A-M (Nebius cpu-e2 4 vCPU/16 GB, eu-north1), fallbacks A-W then B2; domain orchapod.dev (registrar Hostinger). Defaults until Hari says otherwise: deploy by Hari, day cap $5, anon scale 0.1, teardown Dec 16.
-- OPEN DECISION: intent #1 deploy default (waits on spike 1).
+- DECISION 2026-10-22 (orchestrator): intent #1 deploy = vllm-serve (spike 1: per-token deploy 410; R24).
+- DECISION 2026-10-22 (orchestrator): G1 = template 4 green from the UI on stubs + live intents #2/#3 through the Agent; PLAN's live Lane A bar is superseded by R24/R25.
+- OPEN DECISION (Hari): build a GPU-free Lane A fallback (TF fine-tune of an ungated Qwen → GGUF+LoRA on CPU → Ultra) now, or only if G2 refuses quota (default)?
 
 - DECISION 2026-10-20 (audit triage): Anthropic/OpenAI code leaves the demo path now (P0, stage-one rule); Vast.ai/RunPod/legacy Compute stack (~3,500 lines) is hidden from the demo path (P1) and deleted after G1 if still off-path (P2); other dead weight (Alembic beside create_all, second model registry, static Registry page, zero-caller modules) is P2.
 

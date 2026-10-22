@@ -566,3 +566,10 @@ worktrees:
   - quantize: q4_k_m 0.99 GB from f16 3.09 GB in 75 s on CPU.
   - judge-eval: n 5, judged 5, 1 win / 4 ties / 0 losses, win_rate 0.6, consistency 1.0; exact match base (f16) 0.6 vs tuned (q4_k_m) 0.8; judge nvidia/Nemotron-3-Ultra-550b-a55b, stub false.
   - Smoke-scale result (5 judged): report it as such.
+- 2026-10-22T07:44Z qa-w8 review (sonnet): APPROVED, no Critical/Important. Template 4 is a strict part of make check E2E=1 (full plan via the API) and of the smoke (reduced plan via the gallery). 5 Minors → fix round on hack/qa-w8, plus eval_summary numbers on a real PASS line.
+- 2026-10-22T07:44Z RULING (G1 definition):
+  - PLAN's G1 bar ('Lane A golden path green from the UI, under $3 and under 25 minutes') assumed per-token LoRA serving on Token Factory. Spike 1 (410, R24) and Hari's R25 (golden path = Lane B on Nemotron Nano) put every live golden path on GPU quota (G2).
+  - G1 is claimed as: the golden path (template 4) green from the UI on stubs, plus live intents #2 and #3 through the Agent (runs 84e57f84, 59786797).
+  - The live < $3 bar holds by estimate ($2.66; R14 worst case $2.92). The 25-minute bar is re-measured at the first live Lane B run: the planner's TYPICAL 51.5 min is unmeasured.
+  - Why: no GPU-free golden path exists after R24/R25. Cost if wrong: G1 reads weaker than PLAN's wording.
+  - OPEN DECISION for Hari: a GPU-free Lane A fallback (Token Factory fine-tune of an ungated Qwen → GGUF + GGUF LoRA on CPU → Ultra judge) would meet PLAN's original bar without quota, but its student is not NVIDIA. Default: build it only if G2 (Oct 25) refuses the quota. The quantize lora_adapter and judge-eval tuned_lora paths already exist, so it is about half a day.

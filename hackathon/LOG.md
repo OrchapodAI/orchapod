@@ -484,3 +484,29 @@ worktrees:
   - Minor → QA: smoke untilDone doesn't know 'Report unavailable'.
   - Follow-up folded in: forms for unsloth-train and vllm-serve, so the golden path can be built on the canvas.
   - Fix round 1 → a0b588992b033feb4.
+- 2026-10-22T06:03Z devrel-w6 review (sonnet): Needs fixes.
+  - Two false statements: README:126 says 'two' disabled templates (three); 'golden path' names the Playwright test, which drives template 1 on stubs.
+  - Also README:159 wording and minors (scope 'all on Nebius', two video captures, HF_TOKEN for the Llama templates, the latest green).
+  - Fix round 1 → a7b1e898cb32a8e00. Merge order: qa-w7 first.
+  - qa-w7 was also told: smoke untilDone fails fast on 'Report unavailable'.
+  - FINDING (orchestrator): G1 says 'golden path green from the UI', but since R25 the golden path is template 4, and the UI smoke runs template 1. Template 4 cannot run in the stub stack: unsloth-train needs a GPU provider, and the stub e2e drops NEBIUS_PROJECT_ID. Next wave: STUB runs gpu nodes on LocalDocker; the smoke's golden path becomes template 4.
+- 2026-10-22T06:04Z backend-w8 dispatched (sonnet; worktree backend-w8 @ 6ba382f): under STUB=1, gpu nodes run on LocalDocker ($0) and plan review skips the GPU-provider check. Non-STUB is unchanged; gpu_guard/fits are unchanged. Next: qa-w8 switches the smoke's golden path to template 4.
+- 2026-10-22T06:09Z devrel-w6 fix round 1 done (c842611/b705fee merges of NebiusHackathon, 4598796, ae49e54).
+  - Orchestrator re-check of the 9 items on the branch: 'three' disabled templates; the Playwright test drives the real-estate card on stubs (devpost:24, README:165/203); README:159 wording; 'every model call runs on Nebius'; two console captures; deploy node retired; HF_TOKEN for real estate; green = 90020da.
+  - APPROVED. tests/docs 27; make check green.
+  - Merge waits for qa-w7 (README:159 depends on it).
+- 2026-10-22T06:23Z backend-w8 reported DONE_WITH_CONCERNS (243269b, 1a31a59, 446b8b2, 7bbcfaf; $0).
+  - Under STUB, gpu nodes run on LocalDocker with no wall-time bill; plan review skips the provider check. +6/−4 production lines. tests/api 5× clean; 904 passed. A throwaway STUB run of reduced template 4: 6 nodes succeeded, $0.
+  - Orchestrator review of the +6/−4 diff: APPROVED. Non-STUB paths unchanged; gpu_guard/fits unchanged; startup sweep consistent (gpu_provider = local-docker). New `no_stub` fixture.
+  - DECISION (backend-w8): under STUB no wall-time bill is written at all (a $0 bill would still claim GPU hours in cost_json).
+  - Blocker found: orchapod/unsloth-train:dev cannot build on this Mac (~20 GB CUDA x86_64).
+- 2026-10-22T06:23Z MERGED backend-w8 → a02b571 (tests/api + drills: 236 passed).
+- 2026-10-22T06:23Z ml-w7 dispatched (resumed af8bbc1a5deca633c; worktree ml-w7 @ 81865e3): a slim `stub` first stage in unsloth-train's Dockerfile (CUDA stage stays last = default target), proven by a unique-tag build and a STUB run; the drills docstring fix. Then qa-w8: e2e builds unsloth-train with --target stub, MUST_REGISTER, the smoke's golden path → template 4.
+- 2026-10-22T06:25Z frontend-w6 fix round 1 done (ebee7aa, 11464dd, b1011a9, 282bf06, a5d8ba6).
+  - Palette = the 9 visible registry types; Retry restarts the 60 s report wait (reproduced first, then a test); unsloth-train and vllm-serve forms with registry defaults and contract wording; web 35/35; mutation-checked.
+  - Found and assigned as fix round 2: a canvas drop-offset bug (one line in onDrop) and the starter YAML ending in hidden lm-eval → synth → data-prep.
+  - One scoped re-review after round 2.
+- 2026-10-22T06:29Z ml-w7 DONE (fb1241e, 99a3e76, 7175f98; $0; no Docker leftovers).
+  - The stub stage builds in 6 s (263 MB); a STUB run against the stub MinIO wrote lora_adapter, metrics_json, cost_json, logs.
+  - Orchestrator review of the 10-line Dockerfile + test + docstring + contracts line: APPROVED. MERGED.
+  - qa flag: `docker build --target stub -t orchapod/unsloth-train:dev -f containers/unsloth-train/Dockerfile .`; MUST_REGISTER unsloth-train = ('lora_adapter',).

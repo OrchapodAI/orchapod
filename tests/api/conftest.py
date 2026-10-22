@@ -68,6 +68,13 @@ def no_grants(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_stub(monkeypatch):
+    """STUB=1 in the caller's shell would put gpu nodes on LocalDocker, a real `docker run` wherever a test fakes no provider,
+    and skip plan review's GPU-provider check: a test that wants STUB sets it."""
+    monkeypatch.delenv("STUB", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def no_rate_limits(monkeypatch):
     """Tests post from one address, so the per-IP buckets (services/ratelimit) are endless here;
     tests/api/test_hardening.py puts the real ones back."""

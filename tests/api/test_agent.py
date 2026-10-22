@@ -262,6 +262,35 @@ def test_a_gpu_node_needs_a_configured_provider_it_prefers(monkeypatch):
     assert errors_of(plan) == []
 
 
+def test_stub_reviews_the_docs_specialist_with_no_gpu_provider_and_only_stub(monkeypatch):
+    """STUB runs gpu nodes on LocalDocker (contracts "Run state machine"), so review skips its GPU-provider check."""
+    monkeypatch.setattr(planner, "get_providers", dict)  # the stub e2e drops NEBIUS_PROJECT_ID
+    t = next(t for t in planner.templates() if t["slug"] == "nebius-docs-specialist")
+    plans = [t["plan"], planner.reduced(t)["plan"]]
+    missing = [f"train: no GPU provider in provider_pref {ResourceSpec().provider_pref} is configured "
+               "(nebius needs NEBIUS_PROJECT_ID)"]
+
+    assert [errors_of(p) for p in plans] == [missing] * 2  # without STUB: the error, as before
+    monkeypatch.setenv("STUB", "1")
+    assert [errors_of(p) for p in plans] == [[]] * 2
+
+
+async def test_stub_plans_the_docs_specialist_clean_but_only_the_admin_runs_it(client, monkeypatch):
+    monkeypatch.setenv("STUB", "1")
+    monkeypatch.setattr(planner, "get_providers", dict)
+    monkeypatch.setenv("ORCHAPOD_ADMIN_TOKEN", "s3cret")
+    admin, started = {"X-Orchapod-Admin": "s3cret"}, []
+    monkeypatch.setattr(ex, "launch", lambda run_id, scale: started.append(scale))
+
+    planned = (await client.post("/agent/plan", json={"intent": DOCS}, headers=admin)).json()
+    body = {"intent": DOCS, "plan": planned["plan"]}
+
+    assert planned["errors"] == []
+    assert (await client.post("/agent/run", json=body)).status_code == 403  # gpu_guard: unchanged, STUB or not
+    assert (await client.post("/agent/run", json=body, headers=admin)).status_code == 201
+    assert started == [1.0]
+
+
 async def test_planning_stops_when_the_day_budget_is_spent(client, db, tf):
     db.add(Spend(source="planner", usd=Decimal("1.5")))  # the anonymous day cap: $15 x 0.1
     await db.commit()

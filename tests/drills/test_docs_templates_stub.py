@@ -1,7 +1,8 @@
 """The docs-specialist templates (Lane B on an endpoint, and its CPU variant) run end to end in STUB at reduced scale through
 the API and the executor, each node's own run.py in this process with the real SDK (the drills' harness): no Docker, no
-network. Proves the templates' refs resolve into the inputs each node reads. The Docker stub e2e cannot run them: its plan
-review refuses unsloth-train (a GPU node) without a configured GPU provider."""
+network. Proves the templates' refs resolve into the inputs each node reads. Since backend-w8 the Docker stub e2e can run
+them too: under STUB, plan review skips the GPU-provider check and the executor runs unsloth-train (a GPU node) on
+LocalDocker, from the image built with `--target stub` (containers/unsloth-train/Dockerfile's slim first stage)."""
 
 import pytest
 

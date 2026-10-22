@@ -1,4 +1,5 @@
-"""scripts/e2e_agent.py: the logic around the stub e2e of the canonical intents. The run is `make check E2E=1` (Docker, `make up`)."""
+"""scripts/e2e_agent.py: the logic around the stub e2e of the canonical intents (the run is `make check E2E=1`: Docker, `make up`),
+and the real run of one intent (`make agent-e2e INTENT=2 MAX_COST=0.5`, the Orchestrator's), proved here on a fake API."""
 
 import copy
 import json
@@ -181,7 +182,7 @@ def stack_spy(monkeypatch):
 @pytest.fixture(autouse=True)
 def shell(monkeypatch):
     """The shell is not the developer's: no key unless a test sets one, and demo.LIMIT_S is put back after main() changes it."""
-    for name in ("NEBIUS_API_KEY", "TAVILY_API_KEY", "HF_TOKEN", "VASTAI_API_KEY", "NEBIUS_BASE_URL", "STUB"):
+    for name in ("NEBIUS_API_KEY", "TAVILY_API_KEY", "HF_TOKEN", "VASTAI_API_KEY", "NEBIUS_BASE_URL", "STUB", "E2E_BIND_HOST"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(demo, "LIMIT_S", demo.LIMIT_S)
 
@@ -528,6 +529,19 @@ def test_a_stub_run_still_ends_in_its_pass_line_and_shows_no_report_head(stack_o
     assert f"e2e: PASS intent #2: run r1 succeeded in 0 s (limit {demo.LIMIT_S} s), cost $0, estimate $0.15, " \
            f"report ready ({len(good_report()['markdown'])} chars)\n" in out
     assert "first 5 lines" not in out
+
+
+def test_a_real_plan_for_a_canonical_intent_keeps_the_shape_the_knowledge_file_gives_it(stack_ok, capsys):
+    api = fake_api(plan_for={I2["intent"]: broken_plans()["2"]}, run=live(real_report()))  # intent #2 that also trains
+    assert agent.run_all(api, "2", 0.5) == 1
+    assert agent.INTENTS["2"][2] in capsys.readouterr().out
+
+
+def test_a_free_text_intent_runs_for_real_with_no_canonical_shape(stack_ok, capsys):
+    text = "Make me some movie event data"
+    api = fake_api(templates=[*TEMPLATES, {**I2, "slug": "free", "intent": text}], run=live(real_report(intent=text)))
+    assert agent.run_all(api, text, 0.5) == 0
+    assert f"e2e: PASS free-text intent: run r1 succeeded in 0 s (limit {demo.LIMIT_S} s), cost $0.0823" in capsys.readouterr().out
 
 
 def test_a_real_report_is_judged_on_its_cost_not_on_the_stub_zero():

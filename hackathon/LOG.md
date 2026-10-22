@@ -459,3 +459,9 @@ worktrees:
   - Review dispatched (sonnet, abb46fa15cf21e029). Trial merge clean.
 - 2026-10-22T05:41Z Integration run started on 90020da: make check E2E=1, then make ui-smoke.
 - 2026-10-22T05:43Z Integration on 90020da GREEN: make check E2E=1 (e2e_demo + e2e_agent 3 PASS) and make ui-smoke 5/5.
+- 2026-10-22T05:49Z devrel-w6 reported DONE_WITH_CONCERNS (7e49651..6bf978f on 97b749c; $0).
+  - README, devpost, feedback, video-script, WORKFLOW_SPEC and tests/docs updated to R24/R25 and the Super reporter; README:159 real agent-e2e; tests/docs 27 passed.
+  - DECISIONs it proposes: (1) 'NVIDIA end to end' is scoped to the golden path (templates 4/5); real estate and maths are named as outside it. (2) tests/docs pins Super as the reporter.
+  - Concerns: template 1's rationale still calls per-token deploy 'unverified' (orchestrator at merge); planner's dead tf-deploy warning was already deleted in 90020da.
+  - Review dispatched (sonnet). Trial merge clean.
+- NOTE (orchestrator): never bare `git stash` again; the stash stack is shared with every worktree and agent. Use a WIP commit or a tagged stash.

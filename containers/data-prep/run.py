@@ -55,7 +55,12 @@ def load_rows(uri: str, fmt: str, hf_config: str | None = None, hf_split: str = 
         repo = uri.removeprefix("hf://")
         if os.environ.get("STUB") == "1":
             return stub_rows(fmt)
-        from datasets import load_dataset
+        from datasets import get_dataset_config_names, load_dataset
+        if not hf_config:  # several configs and no "default" (gsm8k: main, socratic) would fail the load: pick one
+            names = get_dataset_config_names(repo)
+            if len(names) > 1 and "default" not in names:
+                hf_config = "main" if "main" in names else names[0]
+                log.warn(f"{repo} needs a config and none was given: using {hf_config!r} of {names}")
         log.info(f"Loading Hugging Face dataset {repo} (config={hf_config}, split={hf_split})")
         return list(load_dataset(repo, name=hf_config, split=hf_split))
     return read_file(Path(uri))

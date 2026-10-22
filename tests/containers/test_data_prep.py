@@ -75,12 +75,21 @@ def test_r2_uri_is_downloaded_and_read_as_extensionless_jsonl(mock_orchapod_io, 
 
 def test_hf_dataset_gets_config_and_split(monkeypatch):
     fake = MagicMock(return_value=[{"question": "q", "answer": "a"}])
-    monkeypatch.setitem(sys.modules, "datasets", SimpleNamespace(load_dataset=fake))
+    configs = MagicMock(return_value=["main", "socratic"])
+    monkeypatch.setitem(sys.modules, "datasets", SimpleNamespace(load_dataset=fake, get_dataset_config_names=configs))
     monkeypatch.delenv("STUB", raising=False)
     assert dp.load_rows("hf://openai/gsm8k", "qa", "main", "test[:50]") == [{"question": "q", "answer": "a"}]
     fake.assert_called_once_with("openai/gsm8k", name="main", split="test[:50]")
-    dp.load_rows("openai/gsm8k", "qa")
-    fake.assert_called_with("openai/gsm8k", name=None, split="train")
+    configs.assert_not_called()  # a given config is used as is
+    dp.load_rows("openai/gsm8k", "qa")  # live run cf49d0f1: a plan without hf_config failed "Config name is missing"
+    fake.assert_called_with("openai/gsm8k", name="main", split="train")
+    configs.return_value = ["b", "a"]
+    dp.load_rows("org/multi", "qa")
+    fake.assert_called_with("org/multi", name="b", split="train")
+    for names in (["default", "x"], ["only"]):  # the library's own default stands
+        configs.return_value = names
+        dp.load_rows("org/plain", "qa")
+        fake.assert_called_with("org/plain", name=None, split="train")
 
 
 def test_stub_replaces_hugging_face_with_fixed_rows(run_node, monkeypatch):

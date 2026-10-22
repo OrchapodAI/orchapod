@@ -390,3 +390,8 @@ worktrees:
   - lora.deploy 410 → unsupported.
   - Open: ml's tf_routes test fixture drops reply headers, so a committed tf-finetune 307 test needs ml.
   - Review dispatched (sonnet, credential gate).
+- 2026-10-22T04:17Z platform-w7 review (sonnet, credential gate): Needs fixes.
+  - Confirmed: Authorization never leaves the origin (probed cross-host, port, scheme, chains); the streaming size cap and bounded retry work; 410 maps in _Lora.deploy only.
+  - Important: the redirect policy was httpx's default — http:// targets followed (presigned weights in the clear) and a loop raises a raw httpx error after 21 hops → walk next_request, https-only, ≤ 3 hops, ProviderError without URLs.
+  - Minors: a fixed message for storage-host errors (an S3 body echoed the signature into a public node error); httpx logger at WARNING; a hard deadline before re-sends; cap 512 MiB; a multi-chunk test.
+  - Fix round 1 → a8310dc13964b1d1a.

@@ -528,3 +528,9 @@ worktrees:
 - 2026-10-22T06:53Z MERGED qa-w7 → 48a99a8 and devrel-w6 → c9818fc. pytest 963 passed; make check green.
 - 2026-10-22T06:53Z LIVE RUN #1 started: `make agent-e2e INTENT=2 MAX_COST=0.5`.
   - Pre-flight: NEBIUS_BASE_URL unset (default), NEBIUS_API_KEY set, TAVILY unset, E2E_BIND_HOST unset; compose stack up.
+- 2026-10-22T07:01Z LIVE RUN #1 PASS (make agent-e2e INTENT=2 MAX_COST=0.5 on e845117).
+  - Super planned 'movie-interactions-synthetic' live: synth_distilabel → data_prep, estimate $0.30 / 9.0 min.
+  - Run 84e57f84-5423-4c3e-9f68-073c73eb2224 succeeded in 446 s, cost $0.0966; 928 rows downloadable, exact schema fields.
+  - Super's report ready (1032 chars), titled '## movie-interactions-synthetic: succeeded'.
+  - Total $0.1007 (run $0.0966 + planner/reporter $0.0041).
+  - G1's 'intent #2 from the agent' holds live through the Agent API the /agent page uses.

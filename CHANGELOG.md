@@ -2,6 +2,13 @@
 
 Dated, user-facing changes made during the Nebius × NVIDIA hackathon submission period (Aug 26 – Oct 30, 2026). Orchapod's first commit is May 4, 2026 (367c605); this file becomes the Devpost "what changed" write-up.
 
+## 2026-10-22
+- First live run: intent #2 through the Orchapod Agent on real Token Factory. Nemotron 3 Super planned it, synthetic data and data prep ran, and Super wrote the report (928 rows, 446 s, $0.10 in all).
+- Nemotron 3 Super writes run reports in the background when a run ends (one call, 30 s, template fallback).
+- The docs-specialist template trains NVIDIA Nemotron Nano 8B (Lane B) and serves base + LoRA from one L40S endpoint ($2.66 estimated); a CPU variant judges a GGUF + GGUF LoRA without an endpoint.
+- Token Factory's per-token LoRA deploy is retired (410): tf-deploy is hidden; fine-tunes are served by vllm-serve.
+- `make agent-e2e INTENT=… MAX_COST=…` runs one intent live with hard caps; stub mode runs GPU nodes locally at $0.
+
 ## 2026-10-21
 - Evaluation: Nemotron 3 Ultra judges base against tuned answers in both orders against a reference answer, reporting win rate, consistency and (for maths) exact match; scraped text is always fenced as untrusted input. Quantized models are served locally with llama.cpp; a llama.cpp bug that garbled f16 answers on Apple silicon is fixed.
 - Intent #3 (quantize a small maths model): GGUF q4_k_m with an f16 baseline on CPU; both answered 50 GSM8K questions in about 18 minutes on a laptop, with exact-match scores within noise of each other.

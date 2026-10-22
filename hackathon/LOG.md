@@ -470,3 +470,10 @@ worktrees:
   - Ruling: the palette equals the registry's visible types, so distill-sft and lm-eval leave it (the registry hides them) — why: hidden = off the demo path, untested on Nebius, already out of the planner — cost if wrong: unhide them in the registry.
   - Review dispatched (sonnet), with the ruling as a finding. Trial merge clean.
 - 2026-10-22T05:50Z 7adad9e template 1's rationale: per-token deploy retired (410), not 'unverified' (devrel concern).
+- 2026-10-22T06:01Z qa-w7 review (sonnet): Needs fixes. No money-safety defect: every refusal runs before the single /agent/run, caps = --max-cost, keys contained.
+  - Important: the demo.LIMIT_S write and the zeroed check_run copy → max_cost/limit parameters.
+  - Minors: a stub main test; a duration refusal; refusals vs budget.gpu_nodes drift; E2E_BIND_HOST in real mode; NEBIUS_BASE_URL dropped; PASS cost excludes planner/reporter.
+  - Rulings:
+    - REAL_LIMIT_S 3600 and a refusal when the estimate exceeds it — why: a cancel at the limit wastes what was spent — cost if wrong: a slow real run waits longer.
+    - The PASS line prints the throwaway DB's day ledger total — why: LOG.md must record the real spend — cost if wrong: none.
+  - Fix round 1 → ae3c65befef5dcb2b, starting with `git merge NebiusHackathon`.

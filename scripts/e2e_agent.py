@@ -32,7 +32,11 @@ NEBIUS_API_KEY, TAVILY_API_KEY and HF_TOKEN, each when set (no VASTAI, RunPod, A
 import argparse
 import json
 import os
+import sqlite3
 import sys
+import tempfile
+from contextlib import closing
+from pathlib import Path
 
 import e2e_demo as demo
 import httpx
@@ -72,6 +76,19 @@ def real_env(max_cost: float, environ=os.environ) -> dict[str, str | None]:
     when set. Anything else in the shell, NEBIUS_BASE_URL included, reaches the API as it does any non-secret setting."""
     return FULL_CAPS | {"ORCHAPOD_MAX_RUN_USD": str(max_cost), "ORCHAPOD_MAX_DAY_USD": str(max_cost), "STUB": None} | {
         k: environ[k] for k in FORWARD if environ.get(k, "").strip()}
+
+
+def spend_line(db: Path) -> str:
+    """What a real run cost in all, read from the throwaway DB the API wrote: Run.cost_usd (the PASS line's cost) plus the
+    control plane's day ledger (the Spend table: the planner's and the report writer's calls), which the run's cost leaves out.
+    This is the figure for hackathon/LOG.md."""
+    try:
+        with closing(sqlite3.connect(db, timeout=10)) as con:
+            run = con.execute("SELECT COALESCE(SUM(cost_usd), 0) FROM run").fetchone()[0]
+            ledger = con.execute("SELECT COALESCE(SUM(usd), 0) FROM spend").fetchone()[0]
+    except sqlite3.Error as e:
+        return f"total spend unknown, the throwaway DB could not be read ({e}): the run's cost leaves out the planner and the reporter"
+    return f"total ${run + ledger:.4f} (run ${run:.4f} + planner/reporter ${ledger:.4f})"
 
 
 def refusals(plan: dict, environ=os.environ) -> list[str]:
@@ -287,7 +304,16 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("refusing to run: NEBIUS_API_KEY is unset (the Agent plans with Nemotron on Token Factory; load .env: set -a; . ./.env; set +a)")
     if os.environ.get("E2E_BIND_HOST"):  # blank counts as unset, as in demo.bind_host
         ap.error("refusing to run: E2E_BIND_HOST is set, but the API of a real run holds your key and listens on 127.0.0.1 only (unset it)")
-    return demo.with_stack(lambda c: run_all(c, intent, cost), real_env(cost))
+    with tempfile.TemporaryDirectory(prefix="orchapod-e2e-db-") as tmp:  # the API's DB is ours to read: its ledger is the spend
+        db = Path(tmp) / "e2e.db"
+
+        def go(c):
+            try:
+                return run_all(c, intent, cost)
+            finally:  # also when interrupted: the API is still up, and its ledger holds the planner's and the reporter's calls
+                demo.say(spend_line(db))
+
+        return demo.with_stack(go, real_env(cost) | {"DATABASE_URL": f"sqlite+aiosqlite:///{db}"})
 
 
 if __name__ == "__main__":

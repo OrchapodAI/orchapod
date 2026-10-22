@@ -5,6 +5,8 @@ import copy
 import json
 import shutil
 import subprocess
+import uuid
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -221,6 +223,7 @@ def test_a_real_run_starts_a_stack_with_the_cap_pinned(stack_spy, monkeypatch):
         monkeypatch.setenv(name, value)
     assert agent.main(REAL) == 0
     [(_, extra)] = stack_spy
+    assert extra.pop("DATABASE_URL").endswith("/e2e.db")  # the throwaway DB whose ledger the run's last line reads
     assert extra == {  # the keys that are set, STUB gone, both caps = --max-cost, full scale
         "NEBIUS_API_KEY": KEY, "HF_TOKEN": "hf-1", "STUB": None,
         "ORCHAPOD_MAX_RUN_USD": "0.5", "ORCHAPOD_MAX_DAY_USD": "0.5", "ORCHAPOD_ANON_SCALE": "1"}
@@ -656,53 +659,118 @@ def test_judge_eval_of_a_real_run_says_stub_false():
     assert any("stub is False in a STUB run" in p for p in agent.check_eval_summary(eval_summary(stub=False), False))
 
 
-# --- no secret is printed or logged -------------------------------------------------------------------------------------------
+# --- the stack main starts, fake at its edges: no secret is printed or logged, and the total spend is read ---------------------
+
+def make_ledger(db, run=None, **ledger):
+    """The throwaway DB as the API leaves it: its own tables (the SQLModel ones), a run that cost `run` if given, and one Spend row
+    per keyword (planner, reporter)."""
+    from sqlmodel import Session, SQLModel, create_engine
+
+    from api.models.db import Run, Spend
+
+    engine = create_engine(f"sqlite:///{db}")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        if run is not None:
+            session.add(Run(user_id=uuid.uuid4(), cost_usd=Decimal(str(run))))
+        session.add_all(Spend(source=source, usd=Decimal(str(usd))) for source, usd in ledger.items())
+        session.commit()
+    engine.dispose()
+
+
+@pytest.fixture
+def fake_stack(stack_ok, monkeypatch):
+    """main -> with_stack -> start_api -> api_env are the real ones; only the uvicorn process and the HTTP transport are fake. The
+    fake Popen keeps start_api's argv and env, logs a startup line like uvicorn, and leaves the ledger (`ledger`: make_ledger's
+    keywords) in the DB the API was told to use. serve(report, status) answers like the API, and writes every request, with its
+    headers and body, to the API's log as an access log would."""
+    stack = SimpleNamespace(spawned=[], api_logs=[], ledger={})
+
+    class Spawned(FakeApi):
+        def __init__(self, argv, **kw):
+            super().__init__()
+            self.argv, self.kw = argv, kw
+            kw["stdout"].write("INFO:     Started server process\n")
+            stack.spawned.append(self)
+            if stack.ledger:
+                make_ledger(Path(kw["env"]["DATABASE_URL"].split(":///", 1)[1]), **stack.ledger)
+
+    def serve(report, status=200):
+        run = live(report)
+
+        def logged(request):
+            with open(stack.spawned[0].kw["stdout"].name, "a") as f:
+                f.write(f"{request.method} {request.url} {dict(request.headers)} {request.content!r}\n")
+            return run(request)
+
+        api = fake_api(status=status, run=logged)  # built before httpx.Client is replaced
+        monkeypatch.setattr(httpx, "Client", lambda **kw: api)
+
+    stack.serve = serve
+    monkeypatch.setattr(demo.subprocess, "Popen", Spawned)
+    monkeypatch.setattr(demo, "wait_healthy", lambda *a: None)
+    monkeypatch.setattr(demo, "stop", lambda proc: stack.api_logs.append(Path(proc.kw["stdout"].name).read_text()))
+    return stack
+
 
 SECRETS = {"NEBIUS_API_KEY": "nb-7Qf2-fake-key", "TAVILY_API_KEY": "tv-9Zk4-fake-key", "HF_TOKEN": "hf-3Lm8-fake-token",
            "VASTAI_API_KEY": "va-1Xc6-fake-key", "NEBIUS_IAM_TOKEN": "iam-5Rt0-fake-token"}
 
 
 @pytest.mark.parametrize("planner_status, exit_code", [(200, 0), (500, 1)])
-def test_a_real_run_never_prints_or_logs_a_key(planner_status, exit_code, stack_ok, monkeypatch, capsys):
-    """main() -> with_stack -> start_api -> api_env are the real ones; only the uvicorn process and the HTTP transport are fake.
-    The API's log holds every request it got (as an access log would), and on a FAIL the stack prints its tail."""
+def test_a_real_run_never_prints_or_logs_a_key(planner_status, exit_code, fake_stack, monkeypatch, capsys):
+    """The API's log holds every request it got, and on a FAIL the stack prints its tail."""
     for name, value in SECRETS.items():
         monkeypatch.setenv(name, value)
-    spawned, api_logs = [], []
-
-    class Spawned(FakeApi):
-        """What start_api asks subprocess.Popen to start: it keeps the argv and env, and logs a startup line like uvicorn."""
-
-        def __init__(self, argv, **kw):
-            super().__init__()
-            self.argv, self.kw = argv, kw
-            kw["stdout"].write("INFO:     Started server process\n")
-            spawned.append(self)
-
-    def log_request(request):  # the API's access log, with the request's headers and body
-        with open(spawned[0].kw["stdout"].name, "a") as f:
-            f.write(f"{request.method} {request.url} {dict(request.headers)} {request.content!r}\n")
-
-    run = live(real_report())
-
-    def logged(request):
-        log_request(request)
-        return run(request)
-
-    api = fake_api(status=planner_status, run=logged)
-    monkeypatch.setattr(demo.subprocess, "Popen", Spawned)
-    monkeypatch.setattr(demo, "wait_healthy", lambda *a: None)
-    monkeypatch.setattr(demo, "stop", lambda proc: api_logs.append(Path(proc.kw["stdout"].name).read_text()))
-    monkeypatch.setattr(httpx, "Client", lambda **kw: api)
+    fake_stack.serve(real_report(), planner_status)
 
     assert agent.main(REAL) == exit_code
     out = capsys.readouterr()
-    everything = out.out + out.err + api_logs[0]
+    everything = out.out + out.err + fake_stack.api_logs[0]
     assert [v for v in SECRETS.values() if v in everything] == []
     # the keys did reach the API (through its env, never its command line), so the check above has something to catch
-    env = spawned[0].kw["env"]
+    env = fake_stack.spawned[0].kw["env"]
     assert (env["NEBIUS_API_KEY"], env["TAVILY_API_KEY"], env["HF_TOKEN"]) == tuple(SECRETS[k] for k in ("NEBIUS_API_KEY", "TAVILY_API_KEY", "HF_TOKEN"))
     assert "VASTAI_API_KEY" not in env and "NEBIUS_IAM_TOKEN" not in env and "STUB" not in env
-    assert not any(v in " ".join(spawned[0].argv) for v in SECRETS.values())
-    assert "POST http://api/agent/plan" in api_logs[0]  # the log has the requests: a key sent in one would be in it
+    assert not any(v in " ".join(fake_stack.spawned[0].argv) for v in SECRETS.values())
+    assert "POST http://api/agent/plan" in fake_stack.api_logs[0]  # the log has the requests: a key sent in one would be in it
     assert ("e2e: PASS" in out.out) == (exit_code == 0) and "STUB=1" not in out.out
+
+
+def test_the_spend_line_adds_the_planner_and_reporter_ledger_to_the_runs_cost(tmp_path):
+    make_ledger(tmp_path / "e2e.db", run=0.0823, planner=0.0031, reporter=0.0004)
+    assert agent.spend_line(tmp_path / "e2e.db") == "total $0.0858 (run $0.0823 + planner/reporter $0.0035)"
+    make_ledger(tmp_path / "refused.db", planner=0.0031)  # a plan refused before /agent/run still cost the planner's call
+    assert agent.spend_line(tmp_path / "refused.db") == "total $0.0031 (run $0.0000 + planner/reporter $0.0031)"
+
+
+def test_the_spend_line_says_so_when_the_db_cannot_be_read(tmp_path):
+    line = agent.spend_line(tmp_path / "never-created.db")
+    assert line.startswith("total spend unknown") and "no such table: run" in line
+
+
+@pytest.mark.parametrize("status, exit_code, ledger, line", [
+    (200, 0, {"run": 0.0823, "planner": 0.0031, "reporter": 0.0004}, "total $0.0858 (run $0.0823 + planner/reporter $0.0035)"),
+    (500, 1, {"planner": 0.0031}, "total $0.0031 (run $0.0000 + planner/reporter $0.0031)"),  # a planner that failed after it billed
+])
+def test_a_real_run_ends_with_its_total_spend_read_from_the_db_it_gave_the_api(status, exit_code, ledger, line, fake_stack, monkeypatch, capsys):
+    monkeypatch.setenv("NEBIUS_API_KEY", KEY)
+    fake_stack.ledger = ledger
+    fake_stack.serve(real_report(), status)
+    assert agent.main(REAL) == exit_code
+    out = capsys.readouterr().out
+    assert f"e2e: {line}\n" in out and out.index("e2e: 1 PASS" if exit_code == 0 else "e2e: 0 PASS") < out.index(f"e2e: {line}")
+
+
+def test_the_total_spend_is_printed_even_when_the_run_is_interrupted(fake_stack, monkeypatch, capsys):
+    monkeypatch.setenv("NEBIUS_API_KEY", KEY)
+    fake_stack.ledger = {"planner": 0.0031}
+    fake_stack.serve(real_report())
+
+    def interrupted(*args):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(agent, "run_all", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        agent.main(REAL)
+    assert "e2e: total $0.0031 (run $0.0000 + planner/reporter $0.0031)" in capsys.readouterr().out

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, capNote, demoNote, explainError, usd } from "@/lib/api";
@@ -40,6 +40,12 @@ export default function AgentPage() {
   const [runId, setRunId] = useState<string | null>(null);
   const [templates, setTemplates] = useState<AgentTemplate[] | null>(null);
   const [templatesError, setTemplatesError] = useState("");
+  const planRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+
+  // A new plan or error renders below the five template cards, off screen at 1024×768 (qa-w10 F5): bring it into view.
+  useEffect(() => { planRef.current?.scrollIntoView({ block: "nearest" }); }, [reply]);
+  useEffect(() => { errorRef.current?.scrollIntoView({ block: "nearest" }); }, [error]);
 
   // The three canonical intents with ready plans (GET /agent/templates).
   useEffect(() => {
@@ -186,7 +192,7 @@ export default function AgentPage() {
           </p>
 
           {reply && (
-            <div className="card" aria-label="Plan" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+            <div ref={planRef} className="card" aria-label="Plan" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
               <div className="row">
                 <span style={{ fontWeight: 600 }}>{reply.plan.name}</span>
                 <span className="pill">{reply.plan.nodes.length} nodes</span>
@@ -235,7 +241,7 @@ export default function AgentPage() {
             </div>
           )}
 
-          {error && <div role="alert"><Callout tone="rose" title={error.title}>{error.message}</Callout></div>}
+          {error && <div ref={errorRef} role="alert"><Callout tone="rose" title={error.title}>{error.message}</Callout></div>}
 
           {runId && (
             <>

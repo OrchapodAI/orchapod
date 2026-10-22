@@ -629,3 +629,6 @@ worktrees:
   - Why: a drop-in fork (same binary/entrypoint/env/health URL, curl present, multi-arch), proven by the probe + integration. Republishing our cached image needs a GHCR token we don't have; other S3 servers need code changes.
   - Cost if wrong: one image line in two compose files. Dev/smoke only; prod uses Nebius Object Storage.
   - Shared minio container recreated on the same volume; data intact (30 live-run objects). Integration green: e2e 4 PASS, ui-smoke 5/5.
+- 2026-10-22T10:11Z Dispatched on 450389e (both resumed):
+  - devrel-w8 (a7b1e898cb32a8e00): README fresh-clone fixes (the pnpm 11 code block, ports, STUB mapping, first-run size, one status note instead of 29 TODOs).
+  - frontend-w7 (a0b588992b033feb4): /agent plan card scrolls into view; remove the 'Coming soon' sidebar links.

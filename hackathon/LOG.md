@@ -621,3 +621,11 @@ worktrees:
 - 2026-10-22T09:35Z make check: pytest 1123 passed; ruff clean (on 79bd19d). qa-w9 worktree removed.
 - 2026-10-22T09:35Z qa-w10 dispatched (fresh qa agent, sonnet): the fresh-clone test, pulled forward from D7.
   - Clone into the scratchpad; follow README Setup literally with no keys; time each step against the 20 min target; list friction points with README lines and the smallest fixes.
+- 2026-10-22T10:10Z qa-w10 DONE (fresh-clone test).
+  - Green in 6 min 38 s on warm caches (clone → make check E2E=1 4 PASS); the app opened and a template ran by ~10.5 min. Cold: ~1.8 GB of downloads (est. 6/8/16 min at 100/50/20 Mbit/s).
+  - P0: minio/minio is no longer pullable anonymously, so a clean Docker fails `make up`.
+  - Others: pnpm 11 in the README code block (README 137-138); port 8001 hard-coded with no how-to (README 134); STUB maps any other sentence to real estate (README 125); the plan card renders off-screen at 1024×768; no first-run size note; 29 TODO markers; 3 'Coming soon' sidebar pages.
+- 2026-10-22T10:10Z DECISION (orchestrator): local MinIO = pgsty/minio pinned by digest (RELEASE.2026-08-04).
+  - Why: a drop-in fork (same binary/entrypoint/env/health URL, curl present, multi-arch), proven by the probe + integration. Republishing our cached image needs a GHCR token we don't have; other S3 servers need code changes.
+  - Cost if wrong: one image line in two compose files. Dev/smoke only; prod uses Nebius Object Storage.
+  - Shared minio container recreated on the same volume; data intact (30 live-run objects). Integration green: e2e 4 PASS, ui-smoke 5/5.

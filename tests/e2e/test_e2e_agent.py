@@ -189,6 +189,15 @@ def shell(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def limit_untouched():
+    """The real limit is a parameter of the run (poll_run's `limit`), not a global that the next run would inherit: no test, and
+    so no run of main(), may leave e2e_demo.LIMIT_S changed. (Runs after monkeypatch has put back what a test set.)"""
+    before = demo.LIMIT_S
+    yield
+    assert demo.LIMIT_S == before
+
+
 @pytest.mark.parametrize("argv, key, message", [
     ([], KEY, REFUSED),
     (["--intent", "2"], KEY, REFUSED),

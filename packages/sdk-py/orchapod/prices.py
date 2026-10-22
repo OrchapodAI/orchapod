@@ -14,7 +14,8 @@ PRICES = {
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B": {"in": 0.06, "out": 0.24},
     },
     # $ per trained token, by base model. Unverified as of 2026-10-22 (spike 1): the API does not return it and the
-    # public price link (nebius.com/token-factory/prices) opens the console's billing page behind a login; absent.
+    # public price link opens the console's billing route (tokenfactory.nebius.com/organization/prices), whose page
+    # as served carries no prices; absent.
     "token_factory_finetune": {},
     # $ per credit: search 1 (basic) or 2 (advanced); extract 1 or 2 per 5 successful URLs.
     "tavily": {"credit": 0.008},

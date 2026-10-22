@@ -228,10 +228,14 @@ class QuantizeInputs(BaseModel):
     precision: GGUFPrecision = Field(default=GGUFPrecision.Q4_K_M, description="GGUF only")
     bits: int = Field(default=4, description="AWQ only")
     keep_f16: bool = Field(default=False, description="Also write the f16 GGUF as gguf_f16, judge-eval's honest baseline")
+    lora_adapter: str | None = Field(default=None, description="r2 PEFT LoRA dir trained on this model (unsloth-train or "
+                                                               "tf-finetune lora_adapter): also written as gguf_lora, which "
+                                                               "judge-eval's tuned_lora serves on top of gguf_file on CPU")
 
 class QuantizeOutputs(BaseModel):
     gguf_file: str | None = None    # method=gguf: the quantized file; metadata {format, precision, base_model, size_bytes}
     gguf_f16: str | None = None     # method=gguf with keep_f16: the f16 file it was quantized from
+    gguf_lora: str | None = None    # with lora_adapter: the adapter as an f32 GGUF LoRA (llama-server --lora)
     awq_model: str | None = None    # method=awq (a GPU job; not built yet)
 
 
@@ -388,7 +392,8 @@ NODE_REGISTRY: dict[NodeType, dict] = {
         "hidden": True,  # the agent never plans it: off the demo path
     },
     NodeType.QUANTIZE: {
-        "description": "Quantize a model to GGUF (for Ollama/llama.cpp) or AWQ (for vLLM).",
+        "description": "Quantize a model to GGUF (for Ollama/llama.cpp) or AWQ (for vLLM); with lora_adapter, also "
+                       "convert that LoRA to a GGUF LoRA (gguf_lora), so judge-eval can serve the tuned model on CPU.",
         "inputs_schema": QuantizeInputs,
         "outputs_schema": QuantizeOutputs,
         "runtime": "cpu",  # GGUF is CPU; AWQ needs GPU — handled inside the container

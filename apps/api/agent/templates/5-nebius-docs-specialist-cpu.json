@@ -2,7 +2,7 @@
   "slug": "nebius-docs-specialist-cpu",
   "title": "Nemotron Nano docs specialist, judged on CPU",
   "intent": "Distill a Nebius docs specialist and judge it on CPU without an endpoint: train Nemotron Nano 8B, then compare base and tuned",
-  "rationale": "The Nebius docs specialist without a GPU endpoint (no L40S quota needed): the same 20 docs pages, grounded Q&A, split and Unsloth LoRA on Nemotron Nano 8B (an H100 Serverless Job), then quantize turns the student into a q4_k_m GGUF and its adapter into a GGUF LoRA, and judge-eval serves both with llama.cpp on CPU: base = the GGUF, tuned = the same GGUF plus the LoRA, so the adapter is the only difference. Nemotron 3 Ultra judges base against tuned on held-out questions with the source passage as reference. It saves the endpoint (about $0.78) but answers slowly on CPU (answers capped at 256 tokens), and its training Job rents an H100, so on the public app only the admin runs it.",
+  "rationale": "The Nebius docs specialist without a GPU endpoint (no L40S quota needed): the same 20 docs pages, grounded Q&A, split and Unsloth LoRA on Nemotron Nano 8B (an H100 Serverless Job), then quantize turns the student into a q4_k_m GGUF and its adapter into a GGUF LoRA, and judge-eval serves both with llama.cpp on CPU: base = the GGUF, tuned = the same GGUF plus the LoRA, so the adapter is the only difference. Nemotron 3 Ultra judges base against tuned on held-out questions with the source passage as reference. It saves the endpoint (about $0.52 by the estimate, up to $0.78) but answers slowly on CPU (answers capped at 256 tokens), and its training Job rents an H100, so on the public app only the admin runs it.",
   "plan": {
     "name": "nebius-docs-specialist-nemotron-nano-8b-cpu",
     "nodes": [

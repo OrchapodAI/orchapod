@@ -212,7 +212,8 @@ def run_one(c: httpx.Client, label: str, intent: str, template: dict | None, num
         problems.append(f"the plan of canonical intent #{number} {INTENTS[number][2]} (docs/agent_knowledge.md), but this one runs {types}")
     problems += errors
     if estimate["usd"] > (CAP_USD if max_cost is None else max_cost):
-        problems.append(f"the estimate ${estimate['usd']} is over " + (f"the ${CAP_USD:g} run cap" if max_cost is None else f"--max-cost ${max_cost:g}"))
+        cap = f"the ${CAP_USD:g} run cap" if max_cost is None else f"--max-cost ${max_cost:g}"
+        problems.append(f"the estimate ${estimate['usd']} is over {cap}")
     if max_cost is not None:
         problems += refusals(plan)
     if not problems:

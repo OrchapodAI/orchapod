@@ -1,0 +1,22 @@
+[
+ {
+  "created_at": 1792639207,
+  "fine_tuned_model_checkpoint": "ft:meta-llama/Llama-3.1-8B-Instruct-2026-10-22:org_placeholder:spike1-0314:IDPlaceholder:ckpt-step-1",
+  "fine_tuning_job_id": "ftjob-cee40df61e074d91a354eabcedaa3243",
+  "id": "ftckpt_b5621f7a-f370-41bd-8188-a4dfbb2d030d",
+  "metrics": {
+   "train_loss": 7.637557506561279,
+   "valid_loss": 5.578760147094727
+  },
+  "object": "fine_tuning.job.checkpoint",
+  "result_files": [
+   "file-341729a76a14558c89f1e966f048d1f6",
+   "file-7314053926a65b598bc180ced378cc64",
+   "file-b648c9db7d5b5cdba6d1d3886b5114e6",
+   "file-af36bfd3208e5d52b03722111562d6ea",
+   "file-ed3dc07bc6ee5799a5be16255a8092b4",
+   "file-4ebf2db813315f73b04002368fb3d8ea"
+  ],
+  "step_number": 1
+ }
+]

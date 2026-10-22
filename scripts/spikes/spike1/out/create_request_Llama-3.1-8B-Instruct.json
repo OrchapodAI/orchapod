@@ -1,0 +1,10 @@
+{
+ "hyperparameters": {
+  "lora": true,
+  "n_epochs": 1
+ },
+ "model": "meta-llama/Llama-3.1-8B-Instruct",
+ "suffix": "spike1-0314",
+ "training_file": "file-01a1619a-bd38-7236-88bb-237f9a8b7137",
+ "validation_file": "file-01a1619a-bf99-796a-89ad-2bbccf700aba"
+}

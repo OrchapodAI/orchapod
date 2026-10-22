@@ -1,0 +1,5 @@
+{
+ "body": "{\"detail\":\"Error code: 422 - {'detail': \\\"Model doesn't exist or you don't have access to it\\\"}\"}",
+ "kind": "bad_request",
+ "status": 422
+}

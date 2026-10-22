@@ -1,0 +1,24 @@
+[
+ {
+  "file": "file-7314053926a65b598bc180ced378cc64",
+  "followed_bytes": 41994968,
+  "followed_status": 200,
+  "key_sent_on_redirect": false,
+  "link_bytes": 41994968,
+  "link_equals_followed": true,
+  "location_host": "storage.eu-west2.nebius.cloud:443",
+  "signed_query": true,
+  "status": 307
+ },
+ {
+  "file": "file-ed3dc07bc6ee5799a5be16255a8092b4",
+  "followed_bytes": 17209920,
+  "followed_status": 200,
+  "key_sent_on_redirect": false,
+  "link_bytes": 17209920,
+  "link_equals_followed": true,
+  "location_host": "storage.eu-west2.nebius.cloud:443",
+  "signed_query": true,
+  "status": 307
+ }
+]

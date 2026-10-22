@@ -1,0 +1,6 @@
+{"t": 1792638912, "status": "running", "trained_steps": 0, "total_steps": null, "trained_tokens": 0, "estimated_finish": null, "job": "ftjob-cee40df61e074d91a354eabcedaa3243"}
+{"t": 1792639221, "status": "running", "trained_steps": 1, "total_steps": 1, "trained_tokens": 0, "estimated_finish": 1792639200, "job": "ftjob-cee40df61e074d91a354eabcedaa3243"}
+{"t": 1792639242, "status": "running", "trained_steps": 1, "total_steps": 1, "trained_tokens": 2599, "estimated_finish": 1792639200, "job": "ftjob-cee40df61e074d91a354eabcedaa3243"}
+{"t": 1792639325, "status": "succeeded", "trained_steps": 1, "total_steps": 1, "trained_tokens": 2599, "estimated_finish": 1792639200, "job": "ftjob-cee40df61e074d91a354eabcedaa3243"}
+{"t": 1792639496, "status": "running", "trained_steps": 0, "total_steps": null, "trained_tokens": 0, "estimated_finish": null, "job": "ftjob-a31d71e5334b463ebf7a29597d0a2447"}
+{"t": 1792639661, "status": "cancelled", "trained_steps": 0, "total_steps": null, "trained_tokens": 0, "estimated_finish": null, "job": "ftjob-a31d71e5334b463ebf7a29597d0a2447"}

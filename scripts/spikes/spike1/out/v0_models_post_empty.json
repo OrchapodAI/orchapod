@@ -1,0 +1,5 @@
+{
+ "body": "{\"detail\":\"LoRA adapter deployment is no longer available\"}",
+ "kind": "bad_request",
+ "status": 410
+}

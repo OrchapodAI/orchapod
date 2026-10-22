@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Iterator
 
 import httpx
 
 from orchapod.prices import PRICES
-from packages.providers.base import ProviderError, http_client, json_of, request, stub_hash
+from packages.providers.base import ProviderError, backoff, http_client, json_of, request, stub_hash
 
 TF_BASE = "https://api.tokenfactory.nebius.com/v1"
 SUPER = "nvidia/nemotron-3-super-120b-a12b"
@@ -25,6 +26,8 @@ ULTRA = "nvidia/Nemotron-3-Ultra-550b-a55b"
 LIGHTNING = "nvidia/Nemotron-3_5-Lightning"
 NANO = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B"
 P = "token_factory"
+FILE_MAX_BYTES = 512 * 1024**2  # ponytail: in memory, peak 2× (spike 1's largest file: 42 MB); stream to disk past it
+FILE_TIMEOUT_S = 600  # a whole file, checked before every send and after every chunk: overrun ≤ one connect + read timeout
 
 
 class TokenFactory:
@@ -38,13 +41,14 @@ class TokenFactory:
         self.http = http_client(_stub) if self.stub or http is None else http  # STUB never touches the network
         self.files, self.fine_tuning, self.lora = _Files(self), _FineTuning(self), _Lora(self)
 
-    def chat(self, messages: list[dict], model: str = SUPER, **kw) -> dict:
+    def chat(self, messages: list[dict], model: str = SUPER, *, create: bool = False, **kw) -> dict:
         """kw: temperature=0.0, max_tokens=1024, json_schema=None, thinking=None, read_timeout=None (seconds for this
         call; None = the client's 120 s), and for a ModelRef target base_url, api_key, base_model; anything else goes
-        into the request body verbatim (top_p, stop, seed, ...). Returns {text, parsed, model, in_tokens, out_tokens,
-        usd, finish_reason}."""
+        into the request body verbatim (top_p, stop, seed, ...). create=True: never re-sent once it may have landed (a
+        timeout, a dropped connection, a 5xx), like a paid create; 429 and connect errors still retry. Returns {text,
+        parsed, model, in_tokens, out_tokens, usd, finish_reason}."""
         url, req, bill = self._prepare(messages, model, **kw)
-        data = json_of(request(self.http, P, "POST", url, **req), P)
+        data = json_of(request(self.http, P, "POST", url, create=create, **req), P)
         usage = data.get("usage") or {}
         in_tokens, out_tokens = usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
         usd = bill(in_tokens, out_tokens)  # first: a bad reply still cost tokens
@@ -143,7 +147,31 @@ class _Files(_Part):
         return self._tf._call("GET", f"/files/{file_id}")
 
     def content(self, file_id: str) -> bytes:
-        return self._tf._call("GET", f"/files/{file_id}/content", raw=True).content
+        """At most FILE_MAX_BYTES within FILE_TIMEOUT_S. A large file answers 307 to a presigned object-storage URL
+        (spike 1), followed over https only, at most base.MAX_HOPS hops, without the key (httpx drops Authorization
+        on a cross-origin hop)."""
+        deadline = time.monotonic() + FILE_TIMEOUT_S
+        for attempt in range(4):
+            resp = self._tf._call("GET", f"/files/{file_id}/content", raw=True, stream=True, follow_redirects=True,
+                                  deadline=deadline)
+            size, chunks = 0, []
+            try:
+                for chunk in resp.iter_bytes():
+                    size += len(chunk)
+                    if size > FILE_MAX_BYTES:
+                        raise ProviderError(P, "bad_output", resp.status_code, f"{file_id} is over {FILE_MAX_BYTES} bytes")
+                    if time.monotonic() > deadline:
+                        raise ProviderError(P, "server", None, f"{file_id} took over {FILE_TIMEOUT_S} s to download")
+                    chunks.append(chunk)
+                return b"".join(chunks)
+            except httpx.DecodingError as e:
+                raise ProviderError(P, "bad_output", resp.status_code, repr(e)) from e
+            except httpx.TransportError as e:  # cut off mid-body: retried like a timeout before the reply (free GET)
+                if attempt == 3 or time.monotonic() > deadline:
+                    raise ProviderError(P, "server", None, repr(e)) from e
+            finally:
+                resp.close()
+            time.sleep(backoff(attempt))
 
 
 class _FineTuning(_Part):
@@ -190,12 +218,13 @@ class _FineTuning(_Part):
 class _Lora(_Part):
     def deploy(self, name: str, base_model: str, source: str) -> str:
         """POST /v0/models with source "<job_id>:<checkpoint_id>"; returns the model id to chat with (may differ
-        from `name`). Unverified until spike 1, so a missing route or a rejected base raises kind `unsupported`."""
+        from `name`). A missing route, a rejected base or the route's retirement (410 for every base, spike 1) raises
+        kind `unsupported`."""
         try:
             model = self._tf._call("POST", "/v0/models", v0=True, create=True,
                                    json={"name": name, "base_model": base_model, "source": source})
         except ProviderError as e:
-            if e.status in (400, 404, 405, 422):
+            if e.status in (400, 404, 405, 410, 422):
                 raise ProviderError(P, "unsupported", e.status,
                                     f"Token Factory has no per-token LoRA deploy for {base_model} ({e.status}): "
                                     f"serve lora_adapter with vllm-serve; Token Factory said: {e.message}") from e

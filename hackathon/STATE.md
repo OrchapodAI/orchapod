@@ -1,9 +1,9 @@
 # STATE — Orchapod × Nebius hackathon
-Updated: 2026-10-21T15:45Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
+Updated: 2026-10-22T04:52Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
-1. Hari — waiting: TAVILY_API_KEY (app.tavily.com; open .env, paste after TAVILY_API_KEY=, save); hosting console steps today (vCPU quota 0→8 in eu-north1; GPU quotas 32→1 + 1; then the VM, bucket, Hostinger A records — docs/HOSTING.md); golden-run topic by D6; ~10 GB of ml-w3 test artifacts in MinIO — delete?; AI-build disclosure; the two stopped vast.ai instances.
-2. Spikes 1 and 2 RUNNING (live, caps $3 and $1; NEBIUS_API_KEY set 2026-10-22); spike 3 waits for TAVILY_API_KEY. Finding already: Token Factory's serverless catalog has no Llama (spike 1 picks a fine-tunable + servable model).
+1. Hari — waiting: TAVILY_API_KEY; for the golden path (Lane B, R25) the Nebius AI Cloud setup — project id (NEBIUS_PROJECT_ID), a `nebius` CLI login on this Mac, the Object Storage bucket — plus the hosting console steps (vCPU quota 0→8 in eu-north1, GPU quotas → 1 + 1, VM, Hostinger A records; docs/HOSTING.md); golden-run topic by D6 (the docs specialist now uses Nemotron Nano); optional: HF_TOKEN + the Token Factory fine-tune rate only for the Llama templates; MinIO test data; AI disclosure; vast.ai instances.
+2. Spikes 1 and 2 DONE (R24, R25). Spike 3 waits for TAVILY_API_KEY. platform-w7 MERGED. In review: backend-w7 (test flakes; Super reporter in the background), ml-w6 (docs template on Nemotron Nano via Lane B, CPU LoRA variant). In progress: qa-w7 (e2e_agent real mode) → first live intent #2 run by the orchestrator, ≤ $0.50.
 3. Wave 5: COMPLETE incl. qa-w6 and backend-w6 (startup sweep of leftover node containers; cancel race fixed; SQLite WAL). Parked: a millisecond double-click cancel can leave a node unmarked.
 4. G1 Oct 24 holds in STUB: e2e_agent 3/3, ui-smoke golden path green. Live G1 waits on the key + spike 1.
 
@@ -13,7 +13,7 @@ Updated: 2026-10-21T15:45Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [x] P0 D1 contracts session → docs/contracts.md v1 merged (299 lines, rulings R1–R15) — DONE
 - [ ] P0 D3+ merge twice a day; nightly real e2e; G2 call D5; freeze D7; submit D9 — TODO
 ### platform
-- [ ] P0 D1 spike 1 (now decisive): 50 rows → TF LoRA fine-tune meta-llama/Meta-Llama-3.1-8B-Instruct → try POST /v0/models deploy → one chat call; ALSO dump the raw job + checkpoint JSON and test whether adapter files can be downloaded — BLOCKED(NEBIUS_API_KEY)
+- [x] P0 D1 spike 1: LoRA deploy retired (410) → Lane A serves via vllm-serve (R24); fine-tune works on meta-llama/Llama-3.1-8B-Instruct (6 min 45 s / 50 rows); R19 confirmed; adapter = PEFT dir — DONE (2026-10-22, ≤ $0.03)
 - [x] P0 D1 TF client: api.tokenfactory.nebius.com, retries, guided JSON, per-call token + $ accounting — DONE (e0fa9a2)
 - [x] P0 D1 fine-tuning client: files, LoRA job, poll status/events, checkpoints, best by val loss — DONE (e0fa9a2)
 - [x] P0 D1 LoRA deploy client: POST /v0/models (unsupported path explicit), poll to active, delete — DONE (e0fa9a2; live behaviour = spike 1)
@@ -109,7 +109,7 @@ Updated: 2026-10-21T15:45Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - DECISION 2026-10-20 (audit triage): Anthropic/OpenAI code leaves the demo path now (P0, stage-one rule); Vast.ai/RunPod/legacy Compute stack (~3,500 lines) is hidden from the demo path (P1) and deleted after G1 if still off-path (P2); other dead weight (Alembic beside create_all, second model registry, static Registry page, zero-caller modules) is P2.
 
 ## Blockers
-- NEBIUS_API_KEY and TAVILY_API_KEY missing → spikes 1–3 and all live checks.
+- TAVILY_API_KEY missing → spike 3, web-research live. (NEBIUS_API_KEY set 2026-10-22, validated.) GPU live runs → AI Cloud project + quota (Hari).
 - RISK (P0, Lane A): Token Factory docs (checked 2026-10-20) say Meta fine-tunes deploy "only via Dedicated endpoints"; the serverless-deploy page is 404; custom weights on Dedicated endpoints are "beta, available on request"; Llama-3.3-70B left TF serverless 2026-08-31 (ml-engineering). Fallbacks in order: (a) /v0/models still works → as planned; (b) adapter download IS documented (checkpoint `result_files` + GET /v1/files/<id>/content, per /post-training/how-to-fine-tune; corrected 2026-10-21) → merge + GGUF on a Nebius CPU VM via llama.cpp (no GPU quota) or vLLM + LoRA on an AI Cloud Serverless Endpoint (needs quota) — untested whether the files load as PEFT; (c) Dedicated-endpoint custom-weights beta via Nebius Support; (d) Lane B serves the tuned model.
 
 ## Human actions
@@ -134,6 +134,7 @@ Updated: 2026-10-21T15:45Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - jsonschema in the shared venv (data-w2; also pinned in requirements-dev.txt) · images to rebuild after data-w2 merges: orchapod/synth-distilabel:dev (5 months stale), orchapod/web-research:dev (new), orchapod/data-prep:dev
 ## Spend to date (per day, per key)
 - 2026-10-20: $1.29 (vast.ai A100 SXM4 80 GB at $1.2485/h, 48 min, spike 4; instance destroyed)
+- 2026-10-22: ≈ $0.04 Token Factory (spike 1 ≤ $0.03 fine-tune of 50 rows; spike 2 $0.0055; key validation $0)
 ## Golden path status (last real run: id, date, cost, result)
 - 2026-10-21T17:53Z: G1 STUB green on 24e234a — e2e_agent 3/3, demo e2e, ui-smoke 5/5 (golden path, public-cap check, Save a copy). Live runs wait on NEBIUS_API_KEY.
 - 2026-10-21: intent #2 STUB e2e PASS (`make check E2E=1` on 1c0b746): run 9214965e succeeded in 4 s, $0, dataset/train_jsonl/eval_jsonl registered, 500 rows downloadable. Live (non-STUB) runs wait on NEBIUS_API_KEY.

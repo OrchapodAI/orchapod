@@ -3,13 +3,23 @@
 from __future__ import annotations
 
 import json
+import time
+from pathlib import Path
 
 import httpx
 import pytest
 
 from orchapod.prices import PRICES
+from packages.providers import tokenfactory
 from packages.providers.base import ProviderError
 from packages.providers.tokenfactory import SUPER, TokenFactory
+
+SPIKE1 = Path(__file__).resolve().parents[2] / "scripts" / "spikes" / "spike1" / "out"  # live replies, 2026-10-22
+
+
+def recorded(name: str):
+    return json.loads((SPIKE1 / f"{name}.json").read_text())
+
 
 MSGS = [{"role": "user", "content": "hi"}]
 LLAMA = "meta-llama/Llama-3.1-8B-Instruct"  # unpriced until spike 1
@@ -90,6 +100,20 @@ def test_create_retried_on_429_and_connect_errors(replay, ft_priced, train, site
                         httpx.Response(200, json=created))
     call(TokenFactory(http=http), train)
     assert len(seen) == 4
+
+
+@pytest.mark.parametrize("first", [lambda: httpx.Response(503, text="busy"), lambda: httpx.ReadTimeout("slow"),
+                                   lambda: httpx.RemoteProtocolError("dropped")], ids=["5xx", "read_timeout", "dropped"])
+def test_chat_create_is_sent_once_when_it_may_have_landed(replay, sleeps, first):
+    http, seen = replay(first())
+    with pytest.raises(ProviderError) as e:
+        TokenFactory(http=http).chat(MSGS, create=True)
+    assert (e.value.kind, len(seen), sleeps) == ("server", 1, [])
+
+
+def test_chat_create_still_retries_429_and_connect_errors(replay, sleeps):
+    http, seen = replay(httpx.Response(429, headers={"Retry-After": "2"}), httpx.ConnectError("refused"), completion())
+    assert TokenFactory(http=http).chat(MSGS, create=True)["text"] == "Hello." and len(seen) == 3
 
 
 def test_any_transport_error_is_retried_then_a_provider_error(replay):
@@ -318,6 +342,136 @@ def test_fine_tuning_routes_and_best_checkpoint(replay, train, ft_priced):
     assert seen[7].url.params["limit"] == "20"
 
 
+def test_content_follows_the_recorded_307_to_object_storage_without_the_key(replay):
+    """Spike 1: the adapter's /content answers 307 to a presigned URL (only its host and a signed query were saved)."""
+    hop = recorded("content_redirects")[0]
+    location = f"https://{hop['location_host']}/tf-files/{hop['file']}?X-Amz-Signature=presigned"
+    http, seen = replay(httpx.Response(hop["status"], headers={"location": location}),
+                        httpx.Response(200, content=b"\x00adapter"))
+    assert TokenFactory(http=http).files.content(hop["file"]) == b"\x00adapter"
+    assert [(r.url.host, r.headers.get("authorization")) for r in seen] == [
+        ("api.tokenfactory.nebius.com", "Bearer tf-key"), ("storage.eu-west2.nebius.cloud", None)]
+
+
+API, STORAGE = "api.tokenfactory.nebius.com", "storage.eu-west2.nebius.cloud"
+REFUSED = "token_factory bad_request 307: refused redirect: https only, at most 3 hops"
+
+
+def redirect(to: str) -> httpx.Response:
+    return httpx.Response(307, headers={"location": to}, stream=httpx.ByteStream(b""))  # unread until closed
+
+
+@pytest.mark.parametrize("target", [f"https://{API}:8443/f", f"http://{API}/f", f"http://{STORAGE}/f"])
+def test_content_hops_only_over_https_and_never_with_the_key(replay, target):
+    http, seen = replay(redirect(target), httpx.Response(200, content=b"x"))
+    if target.startswith("https:"):  # the same host on another port is another origin
+        assert TokenFactory(http=http).files.content("file-a") == b"x"
+        assert seen[1].headers.get("authorization") is None
+    else:
+        with pytest.raises(ProviderError) as e:
+            TokenFactory(http=http).files.content("file-a")
+        assert (str(e.value), len(seen)) == (REFUSED, 1)
+
+
+def test_content_chain_back_to_token_factory_never_regains_the_key(replay):
+    http, seen = replay(redirect(f"https://{STORAGE}/f?X-Amz-Signature=s"), redirect(f"https://{API}/v1/raw/f"),
+                        httpx.Response(200, content=b"x"))
+    assert TokenFactory(http=http).files.content("file-a") == b"x"
+    assert [(r.url.host, r.headers.get("authorization")) for r in seen] == [
+        (API, "Bearer tf-key"), (STORAGE, None), (API, None)]
+
+
+def test_content_redirect_loop_is_refused_after_3_hops(replay):
+    hops = [redirect(f"https://{STORAGE}/f") for _ in range(4)]
+    http, seen = replay(*hops)
+    with pytest.raises(ProviderError) as e:
+        TokenFactory(http=http).files.content("file-a")
+    assert (str(e.value), len(seen)) == (REFUSED, 4)
+    assert all(r.is_closed for r in hops)
+
+
+def test_content_redirect_target_error_body_is_not_echoed(replay):
+    s3 = "<Error><Code>SignatureDoesNotMatch</Code><SignatureProvided>c2ln</SignatureProvided></Error>"
+    http, _ = replay(redirect(f"https://{STORAGE}/f?X-Amz-Signature=c2ln"), httpx.Response(403, text=s3))
+    with pytest.raises(ProviderError) as e:
+        TokenFactory(http=http).files.content("file-a")
+    assert str(e.value) == "token_factory auth 403: the redirect target answered 403"
+
+
+def test_content_deadline_stops_any_further_send(replay, monkeypatch, sleeps):
+    now = [0.0]
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+
+    class Stall(httpx.SyncByteStream):  # a read that times out after the deadline
+        def __iter__(self):
+            now[0] += 700
+            raise httpx.ReadTimeout("stalled")
+
+    http, seen = replay(httpx.Response(200, stream=Stall()))
+    with pytest.raises(ProviderError) as e:
+        TokenFactory(http=http).files.content("file-a")
+    assert (e.value.kind, len(seen), sleeps) == ("server", 1, [])  # no backoff, no second send
+
+    sent = []
+
+    def slow_307(request):  # the deadline passes while Token Factory answers
+        sent.append(request)
+        now[0] += 700
+        return redirect(f"https://{STORAGE}/f")
+
+    with pytest.raises(ProviderError) as e:
+        TokenFactory(http=httpx.Client(transport=httpx.MockTransport(slow_307))).files.content("file-a")
+    assert (str(e.value), len(sent)) == ("token_factory server None: deadline passed before the next send", 1)
+
+
+def test_content_cut_off_mid_body_is_retried_like_any_timeout(replay, sleeps):
+    class Cut(httpx.SyncByteStream):
+        def __iter__(self):
+            yield b"\x00ada"
+            raise httpx.ReadTimeout("stalled")
+
+    http, seen = replay(httpx.Response(200, stream=Cut()), httpx.Response(200, content=b"\x00adapter"))
+    assert TokenFactory(http=http).files.content("file-a") == b"\x00adapter"
+    assert (len(seen), len(sleeps)) == (2, 1)
+    http, seen = replay(*[httpx.Response(200, stream=Cut()) for _ in range(4)])
+    with pytest.raises(ProviderError) as e:
+        TokenFactory(http=http).files.content("file-a")
+    assert (e.value.kind, len(seen)) == ("server", 4)
+
+
+def test_content_is_bounded_in_size_and_time(replay, monkeypatch):
+    monkeypatch.setattr(tokenfactory, "FILE_MAX_BYTES", 4)
+    pulled = []
+
+    class Long(httpx.SyncByteStream):  # aborting mid-stream stops pulling; reading it all, then checking, would not
+        def __iter__(self):
+            for i in range(1000):
+                pulled.append(i)
+                yield b"xx"
+
+    http, _ = replay(httpx.Response(200, content=b"1234"), httpx.Response(200, stream=Long()))
+    tf = TokenFactory(http=http)
+    assert tf.files.content("file-a") == b"1234"
+    with pytest.raises(ProviderError) as e:
+        tf.files.content("file-a")
+    assert (e.value.kind, len(pulled)) == ("bad_output", 3)
+
+    now = [0.0]
+
+    class Slow(httpx.SyncByteStream):  # each chunk lands 6 s after the last: inside the read timeout, past the deadline
+        def __iter__(self):
+            for _ in range(3):
+                now[0] += 6
+                yield b"x"
+
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(tokenfactory, "FILE_TIMEOUT_S", 10)
+    http, seen = replay(httpx.Response(200, stream=Slow()))
+    with pytest.raises(ProviderError) as e:
+        TokenFactory(http=http).files.content("file-a")
+    assert (e.value.kind, len(seen)) == ("server", 1)
+
+
 def test_best_checkpoint_without_valid_loss_is_the_last_step(replay):
     data = [{"id": "c1", "step_number": 1, "metrics": {"train_loss": 1.0}}, {"id": "c2", "step_number": 2, "metrics": {}}]
     http, _ = replay(httpx.Response(200, json={"data": data}))
@@ -346,6 +500,17 @@ def test_lora_deploy_rejected_is_unsupported(replay, status):
     assert e.value.kind == "unsupported" and len(seen) == 1
     assert (f"Token Factory has no per-token LoRA deploy for {LLAMA} ({status}): "
             "serve lora_adapter with vllm-serve") in str(e.value)
+
+
+def test_lora_deploy_retired_410_is_unsupported(replay):
+    """Spike 1: POST /v0/models, sent as tf-deploy sends it, answers 410 for every base (deploy_result.json)."""
+    gone = recorded("deploy_result")
+    http, seen = replay(httpx.Response(gone["status"], text=gone["body"]))
+    with pytest.raises(ProviderError) as e:
+        TokenFactory(http=http).lora.deploy(**recorded("deploy_request"))
+    assert (e.value.kind, e.value.status, len(seen)) == ("unsupported", 410, 1)
+    assert str(e.value) == ("token_factory unsupported 410: Token Factory has no per-token LoRA deploy for "
+                            f"{LLAMA} (410): serve lora_adapter with vllm-serve; Token Factory said: {gone['body']}")
 
 
 # --- STUB=1 ---------------------------------------------------------------

@@ -1,0 +1,60 @@
+{
+ "benchmark_mode": false,
+ "created_at": 1792639485,
+ "error": {
+  "code": "1",
+  "message": "error:1792639507:datasets: Finetuning was cancelled",
+  "param": null
+ },
+ "estimated_finish": null,
+ "finished_at": 1792639633,
+ "from_checkpoint": null,
+ "hyperparameters": {
+  "batch_size": 8,
+  "context_length": 8192,
+  "learning_rate": 1e-05,
+  "lora": true,
+  "lora_alpha": 8,
+  "lora_dropout": 0.0,
+  "lora_r": 8,
+  "max_grad_norm": 1.0,
+  "n_epochs": 1,
+  "packing": true,
+  "warmup_ratio": 0.0,
+  "weight_decay": 0.0
+ },
+ "id": "ftjob-a31d71e5334b463ebf7a29597d0a2447",
+ "integrations": null,
+ "method": {
+  "supervised": {
+   "hyperparameters": {
+    "batch_size": 8,
+    "context_length": 8192,
+    "learning_rate": 1e-05,
+    "lora": true,
+    "lora_alpha": 8,
+    "lora_dropout": 0.0,
+    "lora_r": 8,
+    "max_grad_norm": 1.0,
+    "n_epochs": 1,
+    "packing": true,
+    "warmup_ratio": 0.0,
+    "weight_decay": 0.0
+   }
+  },
+  "type": "supervised"
+ },
+ "model": "meta-llama/Llama-3.1-8B-Instruct",
+ "object": "fine_tuning.job",
+ "organization_id": "",
+ "profile_mode": true,
+ "result_files": [],
+ "seed": 0,
+ "status": "cancelled",
+ "suffix": "spike1-0324",
+ "total_steps": null,
+ "trained_steps": 0,
+ "trained_tokens": 0,
+ "training_file": "file-01a1619a-bd38-7236-88bb-237f9a8b7137",
+ "validation_file": "file-01a1619a-bf99-796a-89ad-2bbccf700aba"
+}

@@ -1,0 +1,47 @@
+[
+ {
+  "created_at": 1792638900,
+  "id": "87e29c66-918d-4d78-9923-872096c9de20",
+  "job_uuid": "ftjob-cee40df61e074d91a354eabcedaa3243",
+  "level": "info",
+  "message": "Job is submitted",
+  "object": "fine_tuning.job.event",
+  "source": "api"
+ },
+ {
+  "created_at": 1792638945,
+  "id": "3191c929-b53e-4e48-8e74-641d90ec38f9",
+  "job_uuid": "ftjob-cee40df61e074d91a354eabcedaa3243",
+  "level": "info",
+  "message": "Dataset 'validation' processed successfully",
+  "object": "fine_tuning.job.event",
+  "source": "datasets"
+ },
+ {
+  "created_at": 1792638945,
+  "id": "efd1e264-c175-4fc1-8c3e-0cbfd86fb6ce",
+  "job_uuid": "ftjob-cee40df61e074d91a354eabcedaa3243",
+  "level": "info",
+  "message": "Dataset 'training' processed successfully",
+  "object": "fine_tuning.job.event",
+  "source": "datasets"
+ },
+ {
+  "created_at": 1792639121,
+  "id": "d2905c36-7bb7-462d-ad1d-30e524793a02",
+  "job_uuid": "ftjob-cee40df61e074d91a354eabcedaa3243",
+  "level": "info",
+  "message": "Training started",
+  "object": "fine_tuning.job.event",
+  "source": "training"
+ },
+ {
+  "created_at": 1792639228,
+  "id": "ebf4d205-e1fa-46a3-b711-eaf8d15c7f84",
+  "job_uuid": "ftjob-cee40df61e074d91a354eabcedaa3243",
+  "level": "info",
+  "message": "Training completed successfully",
+  "object": "fine_tuning.job.event",
+  "source": "training"
+ }
+]

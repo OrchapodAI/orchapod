@@ -370,3 +370,55 @@ worktrees:
   - RULING (reporter model): Nemotron 3 Super writes the run report instead of Lightning (2.1 s vs up to 110 s, already priced); keep the template fallback, bound the call, and stop writing the report inside the GET → backend task after spike 1.
   - Also for backend: live reports don't name the plan (e2e_agent.py:103 would fail in real mode).
   - P2: data-prep's quality filter (opt-in, Lightning) has a 30 s timeout below the 37 s observed.
+- 2026-10-22T03:42Z make check after the spike-2 merge: 1 FLAKY failure. tests/api/test_budget.py::test_concurrent_runs_never_grant_more_than_the_day_cap fails in ~1/3 runs of tests/api (one run neither granted nor refused at assert time); it passes alone and appeared after backend-w5/w6. The gate is unreliable until fixed → backend-w7 dispatched (opus, base 850e9f2): (1) root-cause the flake (prove with 50 consecutive clean runs); (2) the reporter ruling — Super writes the report at run end in the background (bounded call, template fallback, the plan named), not inside the GET; contracts updated.
+- 2026-10-22T03:50Z SPIKE 1 DONE (live; inference $0, fine-tune 2,599 trained tokens at an unpublished rate, ≤ $0.03 at a $10/1M bound; cap $3). Findings:
+  - Token Factory's POST /v0/models → 410 'LoRA adapter deployment is no longer available' (empty body and real job:checkpoint alike), so tf-deploy cannot work for any base.
+  - No fine-tunable model is servable per token once tuned (the two Qwen3 Instruct-2507 bases are on serverless, their tuned sides are not). No Llama on serverless.
+  - Fine-tune OK on meta-llama/Llama-3.1-8B-Instruct (the Meta-Llama-… id → 422): 50 rows in 6 min 45 s.
+  - The jobs list echoes suffix and is newest first (R19 confirmed); a cancelled job bills 0 tokens.
+  - The adapter downloads as a PEFT LoRA dir (r 8, 448 BF16 tensors, 42 MB) without PEFT's base_model.model. prefix (vLLM/llama.cpp accept it by source; unloaded yet).
+  - Nano priced $0.06/$0.24.
+  - Two client bugs: files.content fails on 307 for large files (tf-finetune would fail AFTER a paid job); lora.deploy maps 410 to bad_request.
+  - Cleanup: uploaded files deleted, nothing deployed; the two jobs remain on Token Factory.
+  - Key-leak check: none (exact-key scan + gitleaks). Merged (feedback.md conflict → spike 1's facts).
+  - DECISION (R24): Lane A = Token Factory fine-tune → vllm-serve (base + adapter on a Nebius Serverless Endpoint); tf-deploy retired and hidden; fallback without GPU quota = llama.cpp on CPU (base GGUF + LoRA GGUF), judged locally.
+  - HUMAN: the fine-tune rate (console: tokenfactory.nebius.com/organization/prices, or the Usage charge for the 2,599-token job); a Hugging Face token with the Llama 3.1 licence accepted (HF_TOKEN); AI Cloud project id + nebius CLI login + an Object Storage bucket for vllm-serve (part of the hosting bring-up).
+- 2026-10-22T03:51Z Dispatched on 2b29844 (opus): platform-w7 (files.content 307 → a safe redirect or /files/{id}/link, never Authorization to another host; lora.deploy 410 → unsupported); ml-w6 (tf-deploy hidden; docs template → vllm-serve like real-estate's; model ids per spike 1; a GPU-free Lane A fallback: PEFT adapter → GGUF LoRA (quantize) served by judge-eval's llama-server --lora). backend-w7 still running (flaky budget test; reporter → Super).
+- 2026-10-22T04:04Z DECISION (Hari, chat): 'switch to Nemotron Nano'. The golden path's fine-tuned student is NVIDIA's nvidia/Llama-3.1-Nemotron-Nano-8B-v1, not gated on Hugging Face (checked: gated=False; Meta's Llama 3.1 8B and 3.2 3B are gated=manual). Path: Lane B — unsloth-train on a Nebius Serverless Job (H100) → vllm-serve on an L40S endpoint (keep_alive_min 25, R14) → judge-eval (Ultra); ≈ $2.90/run, admin-only; NVIDIA end to end (Nemotron plans, writes the data, judges, and is the student). Applied to the docs-specialist template (PLAN's golden path); the real-estate template keeps Llama 3B because its canonical intent names it (needs HF_TOKEN only if run live). ml-w6 redirected accordingly. No HF token needed for the golden path; the fine-tune rate only matters for Lane A runs.
+- 2026-10-22T04:06Z platform-w7 reported DONE: 38a91e5 contracts, bde5e7a, f3219c8, 2ea3c65; suite 869; $0.
+  - files.content follows the 307 to storage without the key (spike 1 measured the 307 path on all six files); downloads capped at 2 GiB / 600 s, a truncated body retried.
+  - lora.deploy 410 → unsupported.
+  - Open: ml's tf_routes test fixture drops reply headers, so a committed tf-finetune 307 test needs ml.
+  - Review dispatched (sonnet, credential gate).
+- 2026-10-22T04:17Z platform-w7 review (sonnet, credential gate): Needs fixes.
+  - Confirmed: Authorization never leaves the origin (probed cross-host, port, scheme, chains); the streaming size cap and bounded retry work; 410 maps in _Lora.deploy only.
+  - Important: the redirect policy was httpx's default — http:// targets followed (presigned weights in the clear) and a loop raises a raw httpx error after 21 hops → walk next_request, https-only, ≤ 3 hops, ProviderError without URLs.
+  - Minors: a fixed message for storage-host errors (an S3 body echoed the signature into a public node error); httpx logger at WARNING; a hard deadline before re-sends; cap 512 MiB; a multi-chunk test.
+  - Fix round 1 → a8310dc13964b1d1a.
+- 2026-10-22T04:29Z platform-w7 fix round 1 (271298a contracts, 13323f9 code), verified by the orchestrator rerunning the reviewer's 11-case probe. Refused: plaintext http hops, loops past 3 hops (ProviderError without the URL). Stripped: Authorization on every cross-origin hop. Storage errors give the status only (no S3 body/signature). The size cap aborts mid-stream; no re-send after the deadline; httpx INFO logging silenced. Ledger: platform-w7 fix rounds 1/5, 0 open. Merged; tests/providers 202 passed. DECISION: files.content follows ≤ 3 https hops without the key, bounded at 512 MiB and 600 s. Note for backend-w7: the 0.2 s IAM-CLI test in test_executor also flakes under load.
+- 2026-10-22T04:43Z ml-w6 reported DONE (e5ff9ce..94e29dd on 2b29844; $0).
+  - tf-deploy hidden (plan review refuses it).
+  - Docs template on Lane B with Nemotron Nano 8B: unsloth-train → vllm-serve base + lora_adapter (--enable-lora, unproven live; merged would need a 2nd endpoint ≈ $3.70) → judge-eval; estimate $2.92 full / $2.32 reduced.
+  - CPU fallback: quantize lora_adapter → gguf_lora; judge-eval tuned_lora (llama-server --lora); a 5th template, the docs CPU variant (still trains on the H100 Job).
+  - Real CPU check on SmolLM2-135M with a synthetic LoRA: --lora output identical to merged weights.
+  - The two known flaky tests still flake (backend-w7).
+  - Merge will conflict in docs/contracts.md (R24/R25 on main).
+  - Review dispatched (opus).
+- 2026-10-22T04:48Z backend-w7 reported DONE: 79ee016..ccef0af on 850e9f2; tests/api 50/50 clean; 238 runs under 4× load clean; 867 passed; $0.
+  - Budget flake root cause: the in-memory test DB shares one connection across sessions, so one run's rollback discarded another's uncommitted write; production unaffected; those tests now use a file DB.
+  - IAM flake: no test outcome decided by the wall clock.
+  - Reporter: Super, thinking off, one send with a 30 s read timeout (_SendOnce), template fallback, a `## <plan>: <status>` title, written in the background at run end, the GET never calls the model.
+  - Open: README:75/:83 + devpost:38 still say Lightning (devrel); platform could add chat(resend=False).
+  - Review dispatched (sonnet). Trial merge clean.
+- 2026-10-22T04:52Z qa-w7 dispatched (sonnet; agent ae3c65befef5dcb2b; worktree qa-w7 @ 25bf429): e2e_agent real mode. Pytest only, no real run by qa; refuses GPU plans and missing keys; caps = --max-cost ≤ 3; only NEBIUS/TAVILY/HF keys forwarded. The orchestrator runs intent #2 live after the merge with --max-cost 0.5.
+- 2026-10-22T05:00Z Agent ids (from the transcript): backend-w7 = adaa43fd9d6077de1, ml-w6 = af8bbc1a5deca633c, platform-w7 = a8310dc13964b1d1a, spike1 = ad706527d037b982b, spike2 = a51b615c25103be3d; reviews: platform-w7 a0e217a86432afefb, ml-w6 aaaf899c8ebcf8a94, backend-w7 ad0297b68760c1686.
+- 2026-10-22T05:00Z ml-w6 review (opus): Needs fixes. Spec ✅, with a ⚠️ on spend.
+  - I1: the full docs plan cannot finish under R14. vllm-serve's preflight (25 + 15 min × $1.55/h = $1.03) exceeds the $0.998 left after typical training.
+  - Minors M1–M7 and ponytail -19 lines.
+  - Ruling: keep_alive_min 15 in template 4's full plan (preflight $0.775; reduced stays 10) — why: stays under Hari's $3 cap without asking — cost if wrong: the playground's endpoint lives 15 min, not 25; a re-serve of the stored adapter is about $0.65.
+  - Ruling: unsloth-train gets `merge` (default true); templates 4 and 5 set it false. Lane B's H100 Job then skips the unused 16 GB merge and upload — why: several minutes of H100 at $0.075/min inside a $0.22 margin — cost if wrong: a merged-weights fallback would have to retrain, but it needs a second endpoint ($3.70) anyway.
+  - Ruling (M3): template 5 stays until the freeze as G2's ready fallback; it leaves the gallery at G3 if the live Lane B run succeeds.
+  - M1 (dead tf-deploy code in planner.py) → orchestrator at integration (backend-w7 changes planner.py).
+  - README:21 and video-script:14 → devrel-w6.
+  - G2 runbook (M4): if the endpoint refuses the adapter, a hand-made quantize → judge-eval plan over the failed run's lora_adapter comes first (no retrain), then template 5.
+  - Fix round 1 → af8bbc1a5deca633c, starting with `git merge NebiusHackathon`.

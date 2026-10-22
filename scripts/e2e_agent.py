@@ -55,7 +55,7 @@ FULL_CAPS = {"ORCHAPOD_ANON_SCALE": "1", "ORCHAPOD_MAX_RUN_USD": f"{CAP_USD:g}",
 REAL_LIMIT_S = 3600  # a real run ends within an hour (intent #3 is estimated at 30 minutes: judge-eval answers on a CPU)
 FORWARD = ("NEBIUS_API_KEY", "TAVILY_API_KEY", "HF_TOKEN")  # of e2e_demo.PAID, the only names a real run's API sees, each when set
 NEEDS_KEY = {"web-research": "TAVILY_API_KEY"}  # a node type that cannot run without a key beyond NEBIUS_API_KEY (main checks that)
-REAL_TIMEOUT_S = 600  # a real run's HTTP calls: the live planner (up to 300 s a call, with repairs) and the report writer are model calls
+REAL_TIMEOUT_S = 600  # a real run's HTTP calls: the live planner is a model call (up to 300 s a call, with repairs); the stack's is 30 s
 # number: (the slug of its template (apps/api/agent/templates/1-…, 2-…, 3-…), a rule on the plan's node types in execution order,
 # what the rule says). Other templates may exist (a fourth also fine-tunes), so a plan's shape cannot tell them apart, and the
 # default run covers these three and no others. The rules are docs/agent_knowledge.md "Expected plans": a template edit that

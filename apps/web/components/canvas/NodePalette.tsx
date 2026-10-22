@@ -3,8 +3,9 @@
 import type { NodeType } from "@/lib/types";
 import { NODE_META } from "./OrchaNode";
 
-// The golden path first (R25), then the rest. Not offered: hf-import, file-upload, s3-import, auto-label-cleanlab (no container) and
-// tf-deploy (retired, R24); its NODE_META and form stay so old workflows still render.
+// The golden path first (R25), then the registry's other visible node types: nothing more (tests/web compares the two). Not offered are its
+// hidden ones (off the demo path): hf-import, file-upload, s3-import, auto-label-cleanlab, distill-sft, lm-eval and tf-deploy (retired, R24).
+// Their NODE_META stays (tf-deploy's form too), so an old workflow that has them still renders.
 const PALETTE_ITEMS: { type: NodeType; description: string; runtime: "cpu" | "gpu" | "api" }[] = [
   { type: "web-research",     description: "Tavily search + extract into a passage corpus",       runtime: "cpu" },
   { type: "synth-distilabel", description: "Generate data with Nemotron teacher (Token Factory)", runtime: "cpu" },
@@ -15,8 +16,6 @@ const PALETTE_ITEMS: { type: NodeType; description: string; runtime: "cpu" | "gp
   { type: "tf-finetune",      description: "LoRA fine-tune on Token Factory; serve with vllm-serve", runtime: "api" },
   { type: "quantize",         description: "GGUF q4_k_m, plus a GGUF LoRA for CPU serving",      runtime: "cpu" },
   { type: "hf-download",      description: "Download an HF model to object storage (once, reuse)", runtime: "cpu" },
-  { type: "distill-sft",      description: "Teacher → student knowledge distillation",           runtime: "gpu" },
-  { type: "lm-eval",          description: "lm-evaluation-harness benchmarks",                   runtime: "gpu" },
 ];
 
 const RUNTIME_BADGE = {

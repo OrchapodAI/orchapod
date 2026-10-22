@@ -86,8 +86,6 @@ export function defaultInputs(type: NodeType): Record<string, unknown> {
     case "data-prep":           return { dataset: "", format: "chatml", train_split: 0.9 };
     case "synth-distilabel":    return { pipeline_template: "self-instruct", teacher_model: "nvidia/nemotron-3-super-120b-a12b", n_samples: 1000, temperature: 0.8, max_tokens: 512 };
     case "unsloth-train":       return { model: "nvidia/Llama-3.1-Nemotron-Nano-8B-v1", train_data: "", eval_data: "", lora_r: 16, lora_alpha: 32, max_steps: 500, learning_rate: 0.0002 };
-    case "distill-sft":         return { teacher: "", student_base: "Qwen/Qwen3-1.7B-Instruct", train_data: "", n_synthetic: 5000 };
-    case "lm-eval":            return { models: [], tasks: ["hellaswag", "gsm8k"], judge_eval_set: "" };
     case "vllm-serve":          return { model: "", max_model_len: 8192, keep_alive_min: 30 };
     default:                    return {};
   }

@@ -228,17 +228,15 @@ test("quantize takes lora_adapter and judge-eval tuned_lora, both optional and i
   assert.doesNotMatch(NODE_FORMS["judge-eval"]?.find((f) => f.key === "tuned_model_ref")?.help ?? "", /tf-deploy/);
 });
 
-test("the palette lists the golden path first (R25) and no node the registry hides: tf-deploy is retired (R24)", () => {
+test("the palette is the golden path first (R25), then exactly the node types the registry shows: hidden = off the demo path, tf-deploy retired (R24)", () => {
   const read = (path: string) => readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
   const palette = [...read("apps/web/components/canvas/NodePalette.tsx").matchAll(/\{ type: "([a-z0-9-]+)",/g)].map((m) => m[1]);
-  assert.deepEqual(palette, ["web-research", "synth-distilabel", "data-prep", "unsloth-train", "vllm-serve", "judge-eval",
-    "tf-finetune", "quantize", "hf-download", "distill-sft", "lm-eval"]);
-  // The registry's `"hidden": True` rows, read as text (the web job of CI has no Python); a row is NodeType.X: {…} or NODE_REGISTRY[NodeType.X] = {…}.
-  const hidden = read("packages/workflow_schema/models.py").split(/(?=NodeType\.[A-Z0-9_]+(?:: |\] = )\{)/)
-    .filter((row) => row.includes('"hidden": True')).map((row) => row.match(/^NodeType\.([A-Z0-9_]+)/)![1].toLowerCase().replaceAll("_", "-"));
-  assert.ok(["tf-deploy", "s3-import", "hf-import"].every((t) => hidden.includes(t)), `read the registry's hidden rows: ${hidden}`);
-  // distill-sft and lm-eval are hidden from the planner (off the demo path) but have containers, and the brief keeps them on the palette
-  assert.deepEqual(palette.filter((t) => hidden.includes(t) && !["distill-sft", "lm-eval"].includes(t)), []);
+  // The registry's rows, read as text (the web job of CI has no Python); a row is NodeType.X: {…} or NODE_REGISTRY[NodeType.X] = {…}.
+  const rows = read("packages/workflow_schema/models.py").split(/(?=NodeType\.[A-Z0-9_]+(?:: |\] = )\{)/).filter((r) => r.startsWith("NodeType."));
+  const visible = rows.filter((r) => !r.includes('"hidden": True')).map((r) => r.match(/^NodeType\.([A-Z0-9_]+)/)![1].toLowerCase().replaceAll("_", "-"));
+  const known = [...read("apps/web/components/canvas/OrchaNode.tsx").matchAll(/^ {2}"([a-z0-9-]+)": +\{ label:/gm)].map((m) => m[1]); // NODE_META: what the web app can draw
+  assert.deepEqual(palette.slice(0, 6), ["web-research", "synth-distilabel", "data-prep", "unsloth-train", "vllm-serve", "judge-eval"]);
+  assert.deepEqual([...palette].sort(), visible.filter((t) => known.includes(t)).sort());
 });
 
 test("the template gallery reads GET /agent/templates", async () => {

@@ -4,16 +4,18 @@
 
 It rebuilds and retags the shared `orchapod/<node>:dev` images, like `make check E2E=1`, so only the orchestrator runs it, after
 merges. It starts the API (STUB=1, throwaway DB, full caps: the UI is anonymous) and `next dev` on the first free port from 3100,
-a second API at the public demo's scale (PUBLIC_CAPS) for the public-app tests, builds the node images of the canonical
-intents, and runs tests/ui (Playwright, version pinned in tests/ui/package.json, headless Chromium) against them; Playwright's
-own report counts the passes.
+a second API at the public demo's scale (PUBLIC_CAPS) for the public-app tests, builds the node images of the templates it drives
+(intent #2 and the golden path; unsloth-train from its stub stage), and runs tests/ui (Playwright, version pinned in
+tests/ui/package.json, headless Chromium) against them; Playwright's own report counts the passes.
 
 The tests: /agent intent #2 to a finished report; the template gallery's one-click Run of intent #2 with its dataset card; at
 ORCHAPOD_ANON_SCALE=0.1, a template above the per-run cap keeps Run disabled and says why; on the public-scale API, a canvas edit
-of a workflow that has runs is refused (409), saved as a copy instead, and leaves the original as it was; the golden path (intent #1:
-one click, the run, its eval view, the compare playground).
+of a workflow that has runs is refused (409), saved as a copy instead, and leaves the original as it was; the golden path (template 4,
+R25: one click, the run of its six nodes, its eval view, the compare playground). Intent #1 is covered through the API by
+e2e_agent.py.
 
-A canonical intent whose plan has any error fails the run before anything is built: a missing piece is never a SKIP.
+A canonical intent whose plan has any error, or a missing template, fails the run before anything is built: a missing piece is
+never a SKIP. The golden path is run as its template, as in e2e_agent.py: its plan errors surface when /agent/run refuses it.
 """
 
 import argparse
@@ -33,7 +35,7 @@ ROOT = demo.ROOT
 WEB, UI = ROOT / "apps/web", ROOT / "tests/ui"
 # pnpm 11 runs `pnpm install` before every command unless told not to (the Makefile's PNPM, and why).
 PNPM = ["pnpm", "--config.verify-deps-before-run=false"]
-SPEC_INTENTS = ("1", "2")  # the canonical intents tests/ui drives
+SPEC_INTENTS = ("2", "4")  # what tests/ui drives: canonical intent #2, and template 4, the golden path (R25)
 PLAYWRIGHT_TIMEOUT_S = 570  # tests/ui/playwright.config.ts: globalTimeout 9 min
 # The page's own API runs at full scale, so the golden path can run from the gallery; the template cap test reads
 # GET /agent/templates from a second API at the public demo's scale, and the canvas copy test sends every call of the page there.
@@ -48,7 +50,7 @@ def web_env(api_url: str, environ) -> dict[str, str]:
 
 
 def playwright_env(web_url: str, api_url: str, public_url: str, environ) -> dict[str, str]:
-    """What tests/ui reads: where the app, its API and the public-scale API are, and which templates are the canonical intents."""
+    """What tests/ui reads: where the app, its API and the public-scale API are, and the slugs of the templates it drives."""
     env = {k: v for k, v in environ.items() if k not in demo.PAID}
     return env | {"E2E_WEB_URL": web_url, "E2E_API_URL": api_url, "E2E_PUBLIC_API_URL": public_url,
                   "E2E_SLUGS": json.dumps({n: agent.SLUGS[n] for n in SPEC_INTENTS})}
@@ -61,16 +63,17 @@ def deps_missing() -> list[str]:
 
 
 def ui_node_types(c: httpx.Client) -> set[str]:
-    """The node types of the canonical intents the tests drive, whose images get built. Any plan error raises: a failure."""
+    """The node types of the templates the tests drive, whose images get built. A canonical intent's plan error raises (a failure,
+    never a skip); the golden path is its template, as in e2e_agent.py, so the planner is not asked."""
     templates, types = demo.get_templates(c), set()
     for number in SPEC_INTENTS:
         template = agent.canonical(templates, number)
         if template is None:
-            raise RuntimeError(f"none of the {len(templates)} templates is canonical intent #{number} (slug {agent.SLUGS[number]!r})")
-        reply = demo.call(c, "POST", "/agent/plan", json={"intent": template["intent"]})
-        if reply["errors"]:
-            raise RuntimeError(f"intent #{number}: {'; '.join(reply['errors'])}")
-        types |= {n["type"] for n in reply["plan"]["nodes"]}
+            raise RuntimeError(f"none of the {len(templates)} templates is {agent.name_of(number)} (slug {agent.SLUGS[number]!r})")
+        plan, _, errors = agent.plan_for(c, template["intent"], template, number)
+        if errors:
+            raise RuntimeError(f"{agent.label_of(number)}: {'; '.join(errors)}")
+        types |= {n["type"] for n in plan["nodes"]}
     return types
 
 

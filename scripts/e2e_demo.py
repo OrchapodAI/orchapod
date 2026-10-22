@@ -9,8 +9,8 @@ on E2E_BIND_HOST, because the node containers reach it through the docker0 gatew
 the plan needs (`orchapod/<node>:dev`), creates the workflow from GET /agent/templates, runs it and polls
 GET /runs/{id}/summary. Asserted: the run succeeded in under 5 minutes; data-prep registered dataset, train_jsonl and
 eval_jsonl; cost_usd is 0 with a cost_json on every node; the dataset's download link serves rows with exactly the
-schema's fields. e2e_agent.py (the three canonical intents) and e2e_ui.py (the Playwright smoke) reuse its stack, checks
-and image builds. The real golden run (--max-cost) is written on D3.
+schema's fields. e2e_agent.py (the three canonical intents and the golden path) and e2e_ui.py (the Playwright smoke) reuse its
+stack, checks and image builds. The real golden run (--max-cost) is written on D3.
 """
 
 import argparse
@@ -36,7 +36,11 @@ MUST_REGISTER = {
     "web-research": ("corpus",), "synth-distilabel": ("dataset",), "data-prep": ("dataset", "train_jsonl", "eval_jsonl"),
     "tf-finetune": ("job", "lora_adapter"), "vllm-serve": ("model_ref",), "judge-eval": ("eval_summary",),
     "hf-download": ("hf_model",), "quantize": ("gguf_file",),
+    "unsloth-train": ("lora_adapter",),  # no merged_model: templates 4 and 5 set merge: false
 }
+# The stub stack builds these from a slim stage: unsloth-train's default stage is a 20 GB amd64 CUDA image (ml-w7). A real run never
+# builds a node that rents a GPU, so it never needs a stage that has no torch.
+STUB_TARGETS = {"unsloth-train": "stub"}
 # A stub run can spend nothing: none of these reaches the API, and through it a node.
 PAID = ("VASTAI_API_KEY", "RUNPOD_API_KEY", "NEBIUS_API_KEY", "NEBIUS_IAM_TOKEN", "NEBIUS_PROJECT_ID",
         "ORCHAPOD_ENDPOINT_TOKEN", "TAVILY_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "HF_TOKEN")
@@ -145,7 +149,7 @@ def check_run(summary: dict, max_cost: float | None = None) -> list[str]:
         if (n["usd"] != 0) if max_cost is None else (n["usd"] < 0):
             problems.append(f"node {n['node_id']!r} reports usd {n['usd']}, expected {'0 in STUB' if max_cost is None else 'at least 0'}")
         if "cost_json" not in made[n["node_id"]]:
-            problems.append(f"node {n['node_id']!r} wrote no cost_json, so its $0 was never measured")
+            problems.append(f"node {n['node_id']!r} wrote no cost_json, so its {'$0' if max_cost is None else 'cost'} was never measured")
     return problems
 
 
@@ -236,11 +240,13 @@ def preflight(stack: dict = LOCAL_STACK) -> list[str]:
 
 
 def build_images(node_types: list[str]) -> str | None:
-    """Build orchapod/<node>:dev for each node type (an unchanged image is a cache hit, seconds); the failure, or None."""
+    """Build orchapod/<node>:dev for each node type (an unchanged image is a cache hit, seconds), from its STUB_TARGETS stage if it
+    has one; the failure, or None."""
     for node in dict.fromkeys(node_types):
         if not (ROOT / "containers" / node / "Dockerfile").exists():
             return f"no containers/{node}/Dockerfile for node type {node!r}"
-        cmd = ["docker", "build", "-q", "-t", f"orchapod/{node}:dev", "-f", f"containers/{node}/Dockerfile", "."]
+        target = ["--target", STUB_TARGETS[node]] if node in STUB_TARGETS else []
+        cmd = ["docker", "build", "-q", *target, "-t", f"orchapod/{node}:dev", "-f", f"containers/{node}/Dockerfile", "."]
         say(f"building orchapod/{node}:dev")
         try:
             done = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=600)
@@ -263,7 +269,7 @@ def call(c: httpx.Client, method: str, path: str, **kw):
 
 
 def get_templates(c: httpx.Client) -> list[dict]:
-    """GET /agent/templates: the three canonical intents."""
+    """GET /agent/templates: the three canonical intents, the golden path (template 4) and its CPU variant."""
     return call(c, "GET", "/agent/templates")
 
 

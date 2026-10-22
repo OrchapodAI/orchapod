@@ -5,24 +5,24 @@ const API = process.env.E2E_API_URL ?? "";
 // a second API at the public demo's scale, ORCHAPOD_ANON_SCALE=0.1 (scripts/e2e_ui.py PUBLIC_CAPS): $3 x 0.1 per run
 const PUBLIC_API = process.env.E2E_PUBLIC_API_URL ?? "";
 const PUBLIC_RUN_CAP = 3 * 0.1;
-// canonical intent -> the slug of its template (scripts/e2e_agent.py INTENTS): later templates may fine-tune too
+// template number -> its slug (scripts/e2e_ui.py SPEC_INTENTS): 2 is canonical intent #2, 4 the golden path (R25). Later templates exist
 const SLUGS: Record<string, string> = JSON.parse(process.env.E2E_SLUGS || "{}");
 
 type Template = {
   slug: string; title: string; intent: string; estimate: { usd: number; minutes: number };
   plan: { name: string; nodes: { type: string; inputs?: Record<string, unknown> }[] };
-  reduced?: { estimate: { usd: number } }; fits?: boolean;
+  reduced?: { estimate: { usd: number; minutes: number } }; fits?: boolean;
 };
 
 const usd = (n: number) => `$${n.toFixed(2)}`; // the page's own formats
 const mins = (n: number) => `~${Math.round(n)} min`;
 
-async function template(n: 1 | 2): Promise<Template> {
+async function template(n: 2 | 4): Promise<Template> {
   const r = await fetch(`${API}/agent/templates`);
   if (!r.ok) throw new Error(`GET /agent/templates -> HTTP ${r.status}`);
   const all: Template[] = await r.json();
   const found = all.find((t) => t.slug === SLUGS[n]);
-  if (!found) throw new Error(`none of the ${all.length} templates has the slug ${SLUGS[n]} of canonical intent #${n}`);
+  if (!found) throw new Error(`none of the ${all.length} templates has the slug ${SLUGS[n]} of template ${n}`);
   return found;
 }
 
@@ -82,8 +82,8 @@ test("/agent: intent #2 is planned, run and reported", async ({ page }, testInfo
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
-// The template gallery, the dataset card, the eval view and the compare playground (frontend-w3) and the golden path (ml-w4's
-// vllm-serve): all merged, so a missing piece is a regression and fails.
+// The template gallery, the dataset card, the eval view and the compare playground (frontend-w3) and the golden path (template 4,
+// R25: unsloth-train, vllm-serve): all merged, so a missing piece is a regression and fails.
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** One click on a template card of the gallery (under the chat box on /agent; its button is named "Run template: <title>"). */
@@ -212,18 +212,29 @@ async function checkEvalView(page: Page): Promise<void> {
 async function checkPlayground(page: Page): Promise<void> {
   await tab(page, "compare").click(); // the tab appears with two model refs
   const prompt = page.getByLabel("Prompt");
-  await prompt.fill("What does a Loan Estimate show?");
+  await prompt.fill("How do I fine-tune a model on Token Factory?");
   await prompt.locator("xpath=ancestor::form").getByRole("button", { name: /^compare$/i }).click(); // its form's button, not the tab
   await expect(page.getByText(/^done/)).toHaveCount(2, { timeout: 60_000 }); // both sides streamed to the end
 }
 
-test("golden path: template, run, eval view, compare playground", async ({ page }) => {
+test("golden path: template 4, run, eval view, compare playground", async ({ page }) => {
   const problems = watch(page);
-  const t = await template(1);
+  const t = await template(4);
+  // R25's six, written out here and not read from the template: the eval and compare checks below would pass for another template's run
+  expect(t.plan.nodes.map((n) => n.type)).toEqual(["web-research", "synth-distilabel", "data-prep", "unsloth-train", "vllm-serve", "judge-eval"]);
   await runFromGallery(page, t);
+
+  // the Plan card shows the plan that the one-click Run starts: template 4's name, its six nodes, their types, the reduced estimate
+  const card = page.getByLabel("Plan", { exact: true });
+  await expect(card.getByText(t.plan.name, { exact: true })).toBeVisible();
+  await expect(card.getByText(`${t.plan.nodes.length} nodes`, { exact: true })).toBeVisible();
+  for (const node of t.plan.nodes) await expect(card.getByRole("cell", { name: node.type })).toBeVisible();
+  const shown = (t.reduced ?? t).estimate;
+  await expect(card.getByTitle("Estimated cost and wall time")).toHaveText(`${usd(shown.usd)} · ${mins(shown.minutes)}`);
 
   await untilDone(page, tab(page, "eval"), 180_000); // a failed node shows at once: do not wait out the eval tab
   await checkEvalView(page); // the eval view on the judge-eval node's real STUB result
   await checkPlayground(page); // the playground over POST /compare: one prompt, two models, streamed side by side
+  await untilDone(page, page.getByText(`${t.plan.name}: succeeded`)); // and the report that the run wrote names template 4's plan
   expect(problems).toEqual([]);
 });

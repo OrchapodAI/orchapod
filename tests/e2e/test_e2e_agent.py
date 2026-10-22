@@ -1,9 +1,10 @@
-"""scripts/e2e_agent.py: the logic around the stub e2e of the canonical intents (the run is `make check E2E=1`: Docker, `make up`),
+"""scripts/e2e_agent.py: the logic around the stub e2e of the canonical intents and the golden path (the run is `make check E2E=1`: Docker, `make up`),
 and the real run of one intent (`make agent-e2e INTENT=2 MAX_COST=0.5`, the Orchestrator's), proved here on a fake API."""
 
 import copy
 import json
 import shutil
+import sqlite3
 import subprocess
 import uuid
 from decimal import Decimal
@@ -20,10 +21,9 @@ from tests.e2e.test_e2e_demo import ROW, FakeApi, good_summary, templates_on_dis
 
 SHIPPED = templates_on_disk()
 TEMPLATES = [{**t, "estimate": planner.estimate(t["plan"])[0]} for t in SHIPPED]  # what GET /agent/templates serves
-I1, I2, I3 = (agent.canonical(TEMPLATES, n) for n in "123")
-# data-w4's fourth template: it fine-tunes like #1, and a later template must neither steal an intent nor be run by default
-FOURTH = {**I1, "slug": "nebius-docs-specialist", "title": "Llama 8B tuned as a Nebius docs specialist",
-          "intent": "Distill a Nebius docs specialist: fine-tune Llama 3.1 8B on the Nebius docs"}
+I1, I2, I3, I4 = (agent.canonical(TEMPLATES, n) for n in "1234")  # I4: the golden path
+# a later template (the shipped fifth is the golden path's CPU variant): it must neither steal an intent nor be run by default
+LATER = {**I1, "slug": "a-later-template", "title": "A later template", "intent": "Do what a later template does"}
 
 # What the planner said about template #1 before ml-w4's vllm-serve merged: a missing piece, which now fails the e2e.
 ERRORS_1 = ["serve: unknown input 'lora_adapter'",
@@ -68,30 +68,46 @@ def fake_api(errors_by_intent=None, plan_for=None, status=200, templates=TEMPLAT
 
 # --- which template is which intent ---------------------------------------------------------------------------------------
 
-def test_each_canonical_intent_has_its_own_template_and_extra_templates_are_allowed():
-    chosen = [I1, I2, I3]
-    assert all(chosen) and len({t["slug"] for t in chosen}) == 3, "each canonical intent has its own template"
+def test_each_canonical_intent_and_the_golden_path_has_its_own_template_and_extra_templates_are_allowed():
+    chosen = [I1, I2, I3, I4]
+    assert all(chosen) and len({t["slug"] for t in chosen}) == 4, "each canonical intent and the golden path has its own template"
     assert {t["slug"] for t in chosen} <= {t["slug"] for t in TEMPLATES}  # canonical ⊆ shipped
     assert any(n["type"] == "tf-finetune" for n in I1["plan"]["nodes"])  # the slugs mean what agent_knowledge.md says
     assert any(n["type"] == "quantize" for n in I3["plan"]["nodes"])
+    assert any(n["type"] == "unsloth-train" for n in I4["plan"]["nodes"]) and not any(n["type"] == "quantize" for n in I4["plan"]["nodes"])
     assert I2 is demo.find_intent2(TEMPLATES), "the template e2e_demo runs as intent #2 is canonical intent #2"
-    for order in ([FOURTH, *TEMPLATES], [*TEMPLATES, FOURTH]):  # a fourth template that also fine-tunes steals nothing
-        assert [agent.canonical(order, n) for n in "123"] == chosen
+    for order in ([LATER, *TEMPLATES], [*TEMPLATES, LATER]):  # a later template steals nothing
+        assert [agent.canonical(order, n) for n in "1234"] == chosen
     assert agent.canonical([], "1") is None and agent.canonical([I1, I2], "3") is None
 
 
-def test_the_default_run_covers_the_three_canonical_intents_and_no_other_template(capsys):
+def test_the_default_run_covers_the_three_canonical_intents_and_the_golden_path_and_no_other_template(monkeypatch, capsys):
     errors = {I1["intent"]: ["research: boom"], I2["intent"]: ["synth: boom"], I3["intent"]: ["gsm8k: boom"]}  # none reaches a run
-    api = fake_api(errors, templates=[*TEMPLATES, FOURTH])  # a fourth intent would reach preflight(), which fails the test
-    assert agent.run_all(api, None) == 1
+    monkeypatch.setattr(demo, "preflight", lambda: ["the stack is down"])  # the golden path has no planner to fail: it stops here
+    assert agent.run_all(fake_api(errors, templates=[*TEMPLATES, LATER]), None) == 1
     out = capsys.readouterr().out
-    assert out.count("--- intent #") == 3 and "nebius" not in out.lower()
+    assert out.count("e2e: --- ") == 4 and out.count("e2e: --- intent #") == 3 and out.count("e2e: --- golden path: ") == 1
+    assert "later template" not in out.lower() and "on cpu" not in out.lower()  # neither LATER nor the shipped CPU variant is run
+
+
+def test_the_default_stub_run_ends_in_4_pass(monkeypatch, capsys):
+    ran = []
+
+    def pass_all(c, label, intent, template, number=None, max_cost=None):
+        ran.append((label, number, template["slug"], max_cost))
+        return "PASS"
+
+    monkeypatch.setattr(agent, "run_one", pass_all)
+    assert agent.run_all(fake_api(), None) == 0
+    assert ran == [("intent #1", "1", "real-estate-compliance", None), ("intent #2", "2", "movie-engagement", None),
+                   ("intent #3", "3", "maths-quantize", None), ("golden path", "4", "nebius-docs-specialist", None)]
+    assert "e2e: 4 PASS, 0 FAIL: intent #1 PASS, intent #2 PASS, intent #3 PASS, golden path PASS" in capsys.readouterr().out
 
 
 # --- the shape of each canonical plan (docs/agent_knowledge.md "Expected plans") -----------------------------------------------
 
 def test_every_canonical_plan_has_the_shape_the_knowledge_file_gives_it():
-    for number in "123":
+    for number in "1234":
         slug, rule, what = agent.INTENTS[number]
         types = agent.node_types(agent.canonical(TEMPLATES, number)["plan"])
         assert rule(types), (slug, what, types)
@@ -109,17 +125,30 @@ def broken_plans():
     judge["needs"] = []
     judge_first["nodes"].remove(judge)
     judge_first["nodes"].insert(0, judge)
-    return {"1": no_judge, "2": trains, "3": judge_first}
+    no_serve = copy.deepcopy(I4["plan"])  # the golden path that no longer serves what it judges (its other nodes still run in order)
+    no_serve["nodes"] = [n for n in no_serve["nodes"] if n["type"] != "vllm-serve"]
+    next(n for n in no_serve["nodes"] if n["type"] == "judge-eval")["needs"] = ["prep", "train"]
+    return {"1": no_judge, "2": trains, "3": judge_first, "4": no_serve}
 
 
-@pytest.mark.parametrize("number", ["1", "2", "3"])
-def test_a_template_edit_that_drops_or_misplaces_a_step_fails_the_e2e(number, capsys):
+@pytest.mark.parametrize("number, label", [("1", "intent #1"), ("2", "intent #2"), ("3", "intent #3"), ("4", "golden path")])
+def test_a_template_edit_that_drops_or_misplaces_a_step_fails_the_e2e(number, label, capsys):
     template = agent.canonical(TEMPLATES, number)
     templates = [{**t, "plan": broken_plans()[number]} if t is template else t for t in TEMPLATES]
     assert not agent.INTENTS[number][1](agent.node_types(broken_plans()[number]))
-    assert agent.run_all(fake_api(templates=templates), number) == 1
+    assert agent.run_all(fake_api(templates=templates), number) == 1  # the no_docker fixture fails the test if it got as far as Docker
     out = capsys.readouterr().out
-    assert f"e2e FAIL intent #{number}" in out and agent.INTENTS[number][2] in out
+    assert f"e2e FAIL {label}" in out and agent.INTENTS[number][2] in out
+
+
+def test_a_golden_path_that_serves_before_it_trains_fails_the_e2e(capsys):
+    plan = copy.deepcopy(I4["plan"])
+    serve, train = (next(n for n in plan["nodes"] if n["type"] == t) for t in ("vllm-serve", "unsloth-train"))
+    serve["needs"], train["needs"] = ["prep"], ["serve"]  # the adapter would be served before it exists
+    assert agent.node_types(plan) == ["web-research", "synth-distilabel", "data-prep", "vllm-serve", "unsloth-train", "judge-eval"]
+    templates = [{**t, "plan": plan} if t is I4 else t for t in TEMPLATES]
+    assert agent.run_all(fake_api(templates=templates), "4") == 1
+    assert "e2e FAIL golden path" in capsys.readouterr().out
 
 
 def test_node_types_follow_needs_not_the_listing_order():
@@ -161,10 +190,11 @@ def test_an_api_error_fails_that_intent_not_the_script(capsys):
     assert "POST /agent/plan -> HTTP 500" in capsys.readouterr().out
 
 
-def test_a_missing_canonical_template_fails(capsys):
+@pytest.mark.parametrize("number, what", [("3", "canonical intent #3 (slug 'maths-quantize')"), ("4", "the golden path (slug 'nebius-docs-specialist')")])
+def test_a_missing_canonical_template_fails(number, what, capsys):
     api = httpx.Client(base_url="http://api", transport=httpx.MockTransport(lambda r: httpx.Response(200, json=[I2])))
-    assert agent.run_all(api, "3") == 1
-    assert "none is canonical intent #3" in capsys.readouterr().out
+    assert agent.run_all(api, number) == 1
+    assert f"none is {what}" in capsys.readouterr().out
 
 
 # --- the real run is refused before anything starts ---------------------------------------------------------------------------
@@ -210,6 +240,8 @@ def limit_untouched():
     (["--intent", "  ", "--max-cost", "0.5"], KEY, "without --intent"),  # `make agent-e2e` with INTENT unset passes ""
     (REAL, None, "NEBIUS_API_KEY is unset"),
     (REAL, "   ", "NEBIUS_API_KEY is unset"),
+    (["--intent", "4", "--max-cost", "0.5"], KEY, "the golden path is a stub run"),  # a real run would spend a planner call, then be refused
+    (["--intent", " 4 ", "--max-cost", "0.5"], KEY, "the golden path is a stub run"),
 ])
 def test_a_real_run_is_refused_before_anything_starts(argv, key, message, stack_spy, monkeypatch, capsys):
     if key is not None:
@@ -219,6 +251,10 @@ def test_a_real_run_is_refused_before_anything_starts(argv, key, message, stack_
     err = capsys.readouterr().err
     assert e.value.code == 2 and message in err and stack_spy == [], err
     assert (message == REFUSED) == (REFUSED in err) and KEY not in err, err
+
+
+def test_the_golden_path_alone_is_a_stub_run(stack_spy):
+    assert agent.main(["--stub", "--intent", "4"]) == 0 and len(stack_spy) == 1
 
 
 def test_the_cap_may_be_the_project_cap_itself(stack_spy, monkeypatch):
@@ -271,6 +307,48 @@ def test_a_stub_run_may_listen_on_the_docker_bridge(stack_spy, monkeypatch):
     """Linux: the node containers reach a stub API through docker0; a stub API holds no key."""
     monkeypatch.setenv("E2E_BIND_HOST", "172.17.0.1")
     assert agent.main(["--stub"]) == 0 and len(stack_spy) == 1
+
+
+TOKEN_FACTORY = "https://api.tokenfactory.nebius.com/v1"
+
+
+@pytest.mark.parametrize("base", [
+    "https://api.example.com/v1",
+    "http://api.tokenfactory.nebius.com/v1",  # not https
+    "https://api.tokenfactory.nebius.com/v2",
+    "https://api.tokenfactory.nebius.com.attacker.example/v1",
+    "https://user:s3cret-pw@api.tokenfactory.nebius.com/v1",  # a URL can carry userinfo, so it is never echoed
+])
+def test_a_real_run_is_refused_when_the_key_would_go_to_another_base_url(base, stack_spy, monkeypatch, capsys):
+    """NEBIUS_BASE_URL is where the providers send NEBIUS_API_KEY; the client's pairing rule cannot catch it, since base == NEBIUS_BASE_URL
+    by construction. Exit 2 before the stack, and the value is not printed."""
+    monkeypatch.setenv("NEBIUS_API_KEY", KEY)
+    monkeypatch.setenv("NEBIUS_BASE_URL", base)
+    with pytest.raises(SystemExit) as e:
+        agent.main(REAL)
+    seen = capsys.readouterr()
+    assert e.value.code == 2 and "NEBIUS_BASE_URL" in seen.err and stack_spy == [], seen.err
+    assert not [v for v in (base, "s3cret-pw", "attacker.example", KEY) if v in seen.err + seen.out]
+
+
+@pytest.mark.parametrize("base", ["", "   ", TOKEN_FACTORY, TOKEN_FACTORY + "/", f"  {TOKEN_FACTORY}//  "])  # compared after strip and rstrip("/")
+def test_a_real_run_may_have_a_blank_or_the_token_factory_base_url(base, stack_spy, monkeypatch):
+    monkeypatch.setenv("NEBIUS_API_KEY", KEY)
+    monkeypatch.setenv("NEBIUS_BASE_URL", base)
+    assert agent.main(REAL) == 0 and len(stack_spy) == 1
+
+
+def test_a_stub_run_does_not_care_about_the_base_url(stack_spy, monkeypatch):
+    """A stub run forwards no key, so no base URL can receive one."""
+    monkeypatch.setenv("NEBIUS_BASE_URL", "https://api.example.com/v1")
+    assert agent.main(["--stub"]) == 0 and len(stack_spy) == 1
+
+
+def test_the_hardcoded_token_factory_url_is_the_providers_default():
+    """The script cannot import the providers (their SDK is not on a script's path), so it hardcodes the default; this pins it."""
+    from packages.providers.tokenfactory import TF_BASE
+
+    assert agent.TF_BASE == TF_BASE == TOKEN_FACTORY
 
 
 @pytest.mark.parametrize("argv", [["--stub"], ["--stub", "--intent", "2", "--max-cost", "0.5"]])
@@ -336,6 +414,13 @@ def test_a_real_plan_that_must_not_run_is_refused_in_one_line_before_the_run(nod
     out = capsys.readouterr().out
     assert "e2e FAIL intent #2" in out and f"  - {line}" in out and out.count("\n  - ") == 1, out
     assert ("POST", "/agent/run") not in calls
+
+
+def test_every_stub_target_is_a_node_a_real_run_refuses():
+    """The stub stage has no torch, so a node built from it must never be one a real run could start: a real run refuses it first."""
+    for node in demo.STUB_TARGETS:
+        lines = agent.refusals({"nodes": [{"id": "n", "type": node}]}, {})
+        assert any("rents a GPU" in line for line in lines), f"{node} is built from a stub-only stage but a real run would start it: {lines}"
 
 
 def test_refusals_name_each_node_that_rents_a_gpu_or_lacks_its_key():
@@ -528,17 +613,19 @@ def real_report(**changes):
     return report | changes
 
 
-def live(report, dataset=ROWS_500, not_ready=0, planner_waits=0):
+def live(report, dataset=ROWS_500, not_ready=0, planner_waits=0, files=None):
     """The run-phase routes of a real run, for fake_api(run=...): /agent/run, the report (ready only after `not_ready` polls
     that answer a finished run whose report is still being written), the dataset download. A planner that may take
-    `planner_waits` seconds raises ReadTimeout for a client that gives up sooner."""
-    polls, cancels = [], []
+    `planner_waits` seconds raises ReadTimeout for a client that gives up sooner. `files` (path: text) are served as well; `posted`
+    keeps the bodies of POST /agent/run."""
+    polls, cancels, posted = [], [], []
 
     def handler(request):
         path = request.url.path
         if path == "/agent/plan" and request.extensions["timeout"]["read"] < planner_waits:
             raise httpx.ReadTimeout("the planner is a model call and may take longer than this client waits")
         if path == "/agent/run":
+            posted.append(json.loads(request.content))
             return httpx.Response(201, json={"run_id": "r1", "workflow_id": "w1", "estimate": I2["estimate"], "cancel_token": "tok-real"})
         if path == "/agent/runs/r1/report":
             polls.append(request)
@@ -548,8 +635,10 @@ def live(report, dataset=ROWS_500, not_ready=0, planner_waits=0):
             return httpx.Response(200, json={"id": "r1"})
         if path == DATASET:
             return httpx.Response(200, text=dataset)
+        if path in (files or {}):
+            return httpx.Response(200, text=files[path])
 
-    handler.polls, handler.cancels = polls, cancels
+    handler.polls, handler.cancels, handler.posted = polls, cancels, posted
     return handler
 
 
@@ -570,6 +659,7 @@ def test_a_real_run_that_delivers_within_its_cap_passes_and_shows_five_lines_of_
            f"report ready ({len(MARKDOWN)} chars)" in out
     lines = MARKDOWN.splitlines()
     assert "\n".join(lines[:5]) in out and lines[5] not in out
+    assert "; eval " not in out  # no judge-eval in this plan: nothing to quote
     assert [path for _, path in calls].count("/agent/runs/r1/report") == 3  # polled past the two "ready: false" answers
     assert ("POST", "/runs/r1/cancel") not in calls
 
@@ -753,9 +843,31 @@ def test_the_spend_line_adds_the_planner_and_reporter_ledger_to_the_runs_cost(tm
     assert agent.spend_line(tmp_path / "refused.db") == "total $0.0031 (run $0.0000 + planner/reporter $0.0031)"
 
 
-def test_the_spend_line_says_so_when_the_db_cannot_be_read(tmp_path):
+def test_the_spend_line_says_so_when_the_db_cannot_be_read_and_never_creates_it(tmp_path):
     line = agent.spend_line(tmp_path / "never-created.db")
-    assert line.startswith("total spend unknown") and "no such table: run" in line
+    assert line.startswith("total spend unknown") and "unable to open database file" in line
+    assert not (tmp_path / "never-created.db").exists()  # read-only: looking must not make a DB
+
+
+def test_the_spend_line_says_so_when_the_file_is_no_ledger(tmp_path):
+    other = sqlite3.connect(tmp_path / "other.db")  # a DB with none of the API's tables
+    other.execute("CREATE TABLE unrelated (x)")
+    other.close()
+    assert "no such table: run" in agent.spend_line(tmp_path / "other.db")
+
+
+def test_the_spend_line_reads_a_wal_db_the_api_still_holds_open(tmp_path):
+    """The API puts every SQLite connection in WAL mode (apps/api/database.py) and is up while the line is read: a read-only
+    open must still see what is committed, and must not wait on a transaction in flight."""
+    db = tmp_path / "e2e.db"
+    make_ledger(db, run=0.0823, planner=0.0031, reporter=0.0004)
+    api = sqlite3.connect(db)
+    try:
+        assert api.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+        api.execute("INSERT INTO spend (source, usd, created_at) VALUES ('reporter', 9, '2026-10-22 00:00:00')")  # not committed yet
+        assert agent.spend_line(db) == "total $0.0858 (run $0.0823 + planner/reporter $0.0035)"
+    finally:
+        api.close()
 
 
 @pytest.mark.parametrize("status, exit_code, ledger, line", [
@@ -783,3 +895,144 @@ def test_the_total_spend_is_printed_even_when_the_run_is_interrupted(fake_stack,
     with pytest.raises(KeyboardInterrupt):
         agent.main(REAL)
     assert "e2e: total $0.0031 (run $0.0000 + planner/reporter $0.0031)" in capsys.readouterr().out
+
+
+# --- the golden path (R25): template 4 run as it is -----------------------------------------------------------------------------
+
+GOLDEN_NODES = {"research": "web-research", "synth": "synth-distilabel", "prep": "data-prep", "train": "unsloth-train",
+                "serve": "vllm-serve", "evaluate": "judge-eval"}  # template 4's six, written out: what the golden path is
+GOLDEN_FILES = [("research", "corpus"), ("synth", "dataset"), ("prep", "dataset"), ("prep", "train_jsonl"), ("prep", "eval_jsonl"),
+                ("prep", "test_jsonl"), ("train", "lora_adapter"), ("serve", "model_ref"), ("serve", "base_model_ref"),
+                ("evaluate", "eval_summary"), *((node, "cost_json") for node in GOLDEN_NODES)]
+STUB_ENDPOINT = {"id": "serve-endpoint_url", "node_id": "serve", "name": "endpoint_url", "kind": "endpoint", "uri": "http://stub.invalid",
+                 "download_url": None, "meta": {"endpoint_id": "stub-serve", "keep_alive_min": 15, "expires_at": "2026-10-22T09:00:00+00:00"}}
+CHAT_ROWS = "\n".join([json.dumps({"messages": [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]})] * 3) + "\n"
+GOLDEN_TEXTS = {"/d/prep/dataset": CHAT_ROWS, "/d/evaluate/eval_summary": json.dumps(eval_summary())}
+
+
+def golden_report(without=(), **changes):
+    """A succeeded STUB run of template 4 as the API reports it: six nodes at $0, their artifacts, and vllm-serve's stub endpoint."""
+    base = report_with([f for f in GOLDEN_FILES if f not in without], GOLDEN_NODES)
+    report = {**base, "run_id": "r1", "status": "succeeded", "cost_usd": 0.0, "error": None, "intent": I4["intent"], "estimate": I4["estimate"],
+              "ready": True, "markdown": f"## {I4['plan']['name']}: succeeded\n\n**Cost:** $0.0000 of ${I4['estimate']['usd']:.2f} estimated."}
+    report["artifacts"] = [*base["artifacts"], STUB_ENDPOINT]
+    return report | changes
+
+
+def test_the_golden_path_runs_its_template_as_it_is_and_passes(stack_ok, capsys):
+    calls = []
+    run = live(golden_report(), files=GOLDEN_TEXTS)
+    assert agent.run_all(fake_api(run=run, calls=calls), "4") == 0
+    assert ("POST", "/agent/plan") not in calls  # no planner matching: the template is the plan
+    assert run.posted == [{"intent": I4["intent"], "plan": I4["plan"]}]  # straight to /agent/run, no /agent/plan
+    out = capsys.readouterr().out
+    assert f"e2e: PASS golden path: run r1 succeeded in 0 s (limit {demo.LIMIT_S} s), cost $0, estimate ${I4['estimate']['usd']}, " \
+           f"report ready ({len(golden_report()['markdown'])} chars)" in out
+    assert "e2e: 1 PASS, 0 FAIL: golden path PASS" in out and "report, first 5 lines" not in out
+    assert "; eval " not in out  # a stub's judge numbers are fake: only a real run quotes them
+
+
+def with_endpoint_id(endpoint_id):
+    report = golden_report()
+    report["artifacts"] = [a | {"meta": {**a["meta"], "endpoint_id": endpoint_id}} if a["name"] == "endpoint_url" else a for a in report["artifacts"]]
+    return report
+
+
+def without_endpoint():
+    report = golden_report()
+    report["artifacts"] = [a for a in report["artifacts"] if a["name"] != "endpoint_url"]
+    return report
+
+
+@pytest.mark.parametrize("report, texts, text", [
+    pytest.param(with_endpoint_id("endpoint-e00real"), GOLDEN_TEXTS, "vllm-serve 'serve' registered no stub-* endpoint", id="a real endpoint id"),
+    pytest.param(without_endpoint(), GOLDEN_TEXTS, "vllm-serve 'serve' registered no stub-* endpoint", id="no endpoint"),
+    pytest.param(golden_report(without=[("train", "lora_adapter")]), GOLDEN_TEXTS, "unsloth-train 'train' did not register lora_adapter", id="no adapter"),
+    pytest.param(golden_report(without=[("evaluate", "cost_json")]), GOLDEN_TEXTS, "node 'evaluate' wrote no cost_json", id="no cost_json"),
+    pytest.param(golden_report(cost_usd=0.02), GOLDEN_TEXTS, "cost_usd is 0.02, expected 0 in STUB", id="it cost money"),
+    pytest.param(golden_report(), GOLDEN_TEXTS | {"/d/evaluate/eval_summary": json.dumps(eval_summary(stub=False))}, "stub is False in a STUB run", id="a summary that is not a stub's"),
+    pytest.param(golden_report(), GOLDEN_TEXTS | {"/d/prep/dataset": "\n"}, "the downloaded dataset has no rows", id="an empty dataset"),
+])
+def test_the_golden_path_is_strict(report, texts, text, stack_ok, capsys):
+    assert agent.run_all(fake_api(run=live(report, files=texts)), "4") == 1
+    out = capsys.readouterr().out
+    assert "e2e FAIL golden path (run r1 after 0 s)" in out and text in out and "PASS golden path" not in out, out
+
+
+def test_a_plan_the_run_route_refuses_fails_the_golden_path_with_its_errors(stack_ok, capsys):
+    inner = live(golden_report(), files=GOLDEN_TEXTS)
+
+    def refuse(request):
+        if request.url.path == "/agent/run":
+            return httpx.Response(422, json={"detail": "the plan has errors", "errors": ["serve: unknown input 'lora_adapter'"]})
+        return inner(request)
+
+    assert agent.run_all(fake_api(run=refuse), "4") == 1
+    out = capsys.readouterr().out
+    assert "e2e FAIL golden path" in out and "POST /agent/run -> HTTP 422" in out and "unknown input 'lora_adapter'" in out
+
+
+def stub_endpoint_plan():
+    """Just what check_outputs reads: a data-prep node for the dataset and a vllm-serve node."""
+    return {"nodes": [{"id": "prep", "type": "data-prep", "inputs": {}}, {"id": "serve", "type": "vllm-serve", "inputs": {}}]}
+
+
+@pytest.mark.parametrize("endpoint_id, owner, max_cost, problems", [
+    ("stub-serve", "serve", None, []),
+    ("endpoint-e00real", "serve", None, ["vllm-serve 'serve' registered no stub-* endpoint (endpoint_url: ['endpoint-e00real'])"]),
+    (None, "serve", None, ["vllm-serve 'serve' registered no stub-* endpoint (endpoint_url: none)"]),
+    ("stub-serve", "prep", None, ["vllm-serve 'serve' registered no stub-* endpoint (endpoint_url: none)"]),  # another node's does not count
+    ("endpoint-e00real", "serve", 0.5, []),  # a real run's vllm-serve is refused before it starts; its endpoint is a real one if it ever ran
+])
+def test_check_outputs_wants_a_stub_endpoint_of_a_stub_runs_vllm_serve(endpoint_id, owner, max_cost, problems):
+    report = report_with([("prep", "dataset")], {"prep": "data-prep", "serve": "vllm-serve"})
+    if endpoint_id:
+        report["artifacts"].append(STUB_ENDPOINT | {"node_id": owner, "meta": {"endpoint_id": endpoint_id}})
+    found = agent.check_outputs(download_client({"/d/prep/dataset": CHAT_ROWS}), report, stub_endpoint_plan(), max_cost)
+    assert [p for p in found if "stub-* endpoint" in p] == problems
+
+
+# --- a real run with a judge quotes its numbers --------------------------------------------------------------------------------
+
+JUDGED = eval_summary(stub=False, n=20, judged=20, win_rate=None, exact_match={"base": 0.35, "tuned": 0.4})  # a real exact-match run's
+MATHS_TEXTS = {"/d/gsm8k/dataset": CHAT_ROWS, "/d/evaluate/eval_summary": json.dumps(JUDGED)}
+
+
+def test_check_outputs_hands_back_the_eval_summaries_it_read():
+    """The summary is read once, for the contract check and for the PASS line of a real run."""
+    files = [("gsm8k", "dataset"), ("quantize", "gguf_file"), ("quantize", "gguf_f16"), ("evaluate", "eval_summary")]
+    nodes = {"download": "hf-download", "quantize": "quantize", "gsm8k": "data-prep", "evaluate": "judge-eval"}
+    evals = []
+    assert agent.check_outputs(download_client(MATHS_TEXTS), report_with(files, nodes), I3["plan"], 0.5, evals) == []
+    assert evals == [("evaluate", JUDGED)]
+    assert agent.check_outputs(download_client(MATHS_TEXTS | {"/d/evaluate/eval_summary": "<html>"}), report_with(files, nodes), I3["plan"], 0.5, evals)
+    assert evals == [("evaluate", JUDGED)]  # a summary that is not JSON is a problem, not a number
+
+
+def maths_report(**changes):
+    """A succeeded real run of intent #3, which ends in a judge: four nodes, $0.0175, the judge's summary among the artifacts."""
+    nodes = {"download": "hf-download", "quantize": "quantize", "gsm8k": "data-prep", "evaluate": "judge-eval"}
+    files = [("download", "hf_model"), ("quantize", "gguf_file"), ("quantize", "gguf_f16"), ("gsm8k", "dataset"), ("gsm8k", "train_jsonl"),
+             ("gsm8k", "eval_jsonl"), ("evaluate", "eval_summary"), *((node, "cost_json") for node in nodes)]
+    base = report_with(files, nodes)
+    base["nodes"] = [n | {"usd": 0.0175 if n["node_id"] == "evaluate" else 0.0} for n in base["nodes"]]
+    return {**base, "run_id": "r1", "status": "succeeded", "cost_usd": 0.0175, "error": None, "intent": I3["intent"],
+            "estimate": I3["estimate"], "ready": True,
+            "markdown": f"## {I3['plan']['name']}: succeeded\n\n**Cost:** $0.0175 of $0.10 estimated."} | changes
+
+
+def test_a_real_run_with_a_judge_quotes_the_judges_numbers_on_its_pass_line(stack_ok, capsys):
+    assert agent.run_all(fake_api(run=live(maths_report(), files=MATHS_TEXTS)), "3", 0.5) == 0
+    pass_line = next(ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("e2e: PASS intent #3"))
+    assert pass_line.endswith('; eval evaluate: n 20, judged 20, win_rate null, exact_match {"base": 0.35, "tuned": 0.4}'), pass_line
+    assert "cost $0.0175, estimate $0.096, report ready (" in pass_line  # still the stub's line, with the numbers after it
+
+
+def test_a_pairwise_judge_is_quoted_by_its_win_rate(stack_ok, capsys):
+    pairwise = eval_summary(stub=False, n=30, judged=28, win_rate=0.625, exact_match=None)
+    plan_wants_no_exact_match = {**I3, "plan": {**I3["plan"], "nodes": [
+        n | {"inputs": {k: v for k, v in n["inputs"].items() if k != "exact_match"}} if n["type"] == "judge-eval" else n
+        for n in I3["plan"]["nodes"]]}}
+    api = fake_api(templates=[plan_wants_no_exact_match, *TEMPLATES[1:]], run=live(maths_report(), files=MATHS_TEXTS | {"/d/evaluate/eval_summary": json.dumps(pairwise)}))
+    assert agent.run_all(api, "3", 0.5) == 0
+    assert "; eval evaluate: n 30, judged 28, win_rate 0.625, exact_match null" in capsys.readouterr().out

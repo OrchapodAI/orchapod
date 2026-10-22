@@ -23,6 +23,10 @@ export interface RunModelRef extends ModelRef {
   expires_at?: string; // vllm-serve endpoints are deleted at expiry
 }
 
+/** How a side is named: its label ("base", "tuned"), then its model or endpoint name after `sep` only when that differs. vllm-serve serves
+ *  a LoRA adapter as "tuned", so "tuned · tuned" said one word twice (the result panes apply the same rule). */
+export const refName = (label: string, model?: string, sep = " · ") => (model && model !== label ? label + sep + model : label);
+
 /** Models the playground can compare: the eval's base and tuned first, then every model_ref / base_model_ref artifact. */
 export function modelRefsOf(s: RunSummary): RunModelRef[] {
   const stats = evalOf(s)?.stats;

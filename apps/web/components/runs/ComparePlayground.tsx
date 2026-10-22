@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api, apiDate, explainError } from "@/lib/api";
-import type { RunModelRef } from "@/lib/results";
+import { refName, type RunModelRef } from "@/lib/results";
 import { applyCompareEvent, type CompareSide } from "@/lib/runEvents";
 import { Callout } from "@/components/Callout";
 
@@ -46,7 +46,7 @@ export function ComparePlayground({ refs, stub }: { refs: RunModelRef[]; stub: b
               <span className="muted">Model {side ? "B" : "A"}</span>
               <select className="op-input op-input-sm" value={k} disabled={busy}
                 onChange={(e) => { setPick((p) => p.map((v, i) => (i === side ? Number(e.target.value) : v))); setSides([]); }}>
-                {refs.map((r, i) => <option key={i} value={i}>{r.label} · {r.model}</option>)}
+                {refs.map((r, i) => <option key={i} value={i}>{refName(r.label, r.model)}</option>)}
               </select>
               {refs[k].expires_at && <Expiry at={refs[k].expires_at} />}
             </label>
@@ -73,7 +73,9 @@ export function ComparePlayground({ refs, stub }: { refs: RunModelRef[]; stub: b
             <div key={i} className="card col" style={{ padding: 14, gap: 8 }} aria-busy={busy && !s.done}>
               <div className="row" style={{ minWidth: 0 }}>
                 <b style={{ fontSize: 13 }}>{refs[pick[i]].label}</b>
-                <span className="muted mono" style={{ fontSize: 11.5, overflow: "hidden", textOverflow: "ellipsis" }}>{refs[pick[i]].model}</span>
+                {refs[pick[i]].model !== refs[pick[i]].label && (
+                  <span className="muted mono" style={{ fontSize: 11.5, overflow: "hidden", textOverflow: "ellipsis" }}>{refs[pick[i]].model}</span>
+                )}
               </div>
               <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 13, lineHeight: 1.6, minHeight: 60 }}>{s.text}</div>
               <div className="muted tnum" style={{ fontSize: 12 }}>

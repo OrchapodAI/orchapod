@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { api, explainError } from "@/lib/api";
+import { refName } from "@/lib/results";
 import type { EvalSummary, Verdict } from "@/lib/types";
 import { Callout } from "@/components/Callout";
 
@@ -70,7 +71,7 @@ export function EvalView({ stats, samplesUrl }: { stats: Omit<EvalSummary, "samp
           )}
         </div>
         <div className="muted mono" style={{ fontSize: 11.5, marginTop: 10, lineHeight: 1.7, wordBreak: "break-all" }}>
-          base {stats.base?.model} · tuned {stats.tuned?.model}<br />
+          {refName("base", stats.base?.model, " ")} · {refName("tuned", stats.tuned?.model, " ")}<br />
           judge {stats.judge_model} · temperature {stats.decoding?.temperature} · max {stats.decoding?.max_tokens} tokens ·
           {" "}{stats.judged} of {stats.n} rows judged
         </div>

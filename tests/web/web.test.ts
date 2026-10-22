@@ -7,7 +7,7 @@ import { yamlValue, buildYamlFromGraph, planYaml, STARTER_YAML } from "../../app
 import { api, apiDate, cancelToken, capNote, demoNote, explainError, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
 import { applyCompareEvent, applyRunEvent, canRetry, finished, REPORT_WAIT_MS, reportNext, runShown, seenFinishedAt, splitReport } from "../../apps/web/lib/runEvents.ts";
 import { defaultInputs, NODE_FORMS } from "../../apps/web/lib/nodeForms.ts";
-import { datasetOf, evalOf, lossPoints, lossSources, modelRefsOf } from "../../apps/web/lib/results.ts";
+import { datasetOf, evalOf, lossPoints, lossSources, modelRefsOf, refName } from "../../apps/web/lib/results.ts";
 
 const node = (id: string, node_type: string, inputs: Record<string, unknown>) =>
   ({ id, position: { x: 0, y: 0 }, data: { label: id, node_type, inputs, resources: {} } }) as never;
@@ -370,6 +370,18 @@ test("the playground offers the run's ModelRefs: base and tuned first, deduped, 
   const local = { base_url: "http://127.0.0.1:8081/v1", model: "q4", api_key_env: "", base_model: null };
   assert.deepEqual(modelRefsOf(summary([nodeRun("judge", "judge-eval")], [art("judge", "eval_summary"),
     art("judge", "metrics_json", { win_rate: 1, base: local, tuned: { ...local, model: "f16" } })])), []);
+});
+
+test("a side is named by its label and by its model only when that differs: the served adapter \"tuned\" is not \"tuned · tuned\"", () => {
+  const ep = (model: string) => ({ base_url: "http://stub.invalid/v1", model, api_key_env: "ORCHAPOD_ENDPOINT_TOKEN", base_model: "meta-llama/Llama-3.2-3B-Instruct" });
+  // the seeded golden run's refs: the base by its Hugging Face id, the adapter served as "tuned"
+  const run = summary([nodeRun("judge", "judge-eval")], [art("judge", "eval_summary"),
+    art("judge", "metrics_json", { win_rate: 0.5, base: ep("meta-llama/Llama-3.2-3B-Instruct"), tuned: ep("tuned") })]);
+  assert.deepEqual(modelRefsOf(run).map((r) => refName(r.label, r.model)), ["base · meta-llama/Llama-3.2-3B-Instruct", "tuned"]);
+  assert.equal(refName("tuned", "orchapod-r1"), "tuned · orchapod-r1"); // a name that says more is kept
+  assert.equal(refName("deploy.model_ref", "tuned"), "deploy.model_ref · tuned");
+  assert.equal(refName("tuned", undefined), "tuned"); // the eval line's stats may lack a model
+  assert.equal(refName("base", "meta-llama/Llama-3.2-3B-Instruct", " "), "base meta-llama/Llama-3.2-3B-Instruct"); // the eval line's separator
 });
 
 test("no token reaches the browser: nothing reads meta.api_key, sends an Authorization header, asks for an HF token or calls /inference/extend", () => {

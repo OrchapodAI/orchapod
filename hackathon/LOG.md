@@ -573,3 +573,8 @@ worktrees:
   - The live < $3 bar holds by estimate ($2.66; R14 worst case $2.92). The 25-minute bar is re-measured at the first live Lane B run: the planner's TYPICAL 51.5 min is unmeasured.
   - Why: no GPU-free golden path exists after R24/R25. Cost if wrong: G1 reads weaker than PLAN's wording.
   - OPEN DECISION for Hari: a GPU-free Lane A fallback (Token Factory fine-tune of an ungated Qwen → GGUF + GGUF LoRA on CPU → Ultra judge) would meet PLAN's original bar without quota, but its student is not NVIDIA. Default: build it only if G2 (Oct 25) refuses the quota. The quantize lora_adapter and judge-eval tuned_lora paths already exist, so it is about half a day.
+- 2026-10-22T07:56Z qa-w8 minor round done (ff45ff0, fde7833, 5803ac1, a814563, 4c11b75).
+  - A stub-target pin; docstrings; --intent 4 refused in a real run; 'straight to /agent/run'; the smoke asserts template 4's Plan card (name, 6 nodes, types, the reduced estimate); a real PASS line prints eval numbers.
+  - 188 e2e tests; make check 1009.
+  - Orchestrator check of the diff: OK. MERGED qa-w8 → 3b7bf07. Integration (E2E + ui-smoke) running.
+- 2026-10-22T07:56Z devrel-w7 dispatched (resumed a7b1e898cb32a8e00; worktree devrel-w7 @ 3b7bf07): live runs #1/#3 facts, golden path on template 4, feedback item on planner robustness.

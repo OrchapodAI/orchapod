@@ -495,3 +495,10 @@ worktrees:
   - Orchestrator re-check of the 9 items on the branch: 'three' disabled templates; the Playwright test drives the real-estate card on stubs (devpost:24, README:165/203); README:159 wording; 'every model call runs on Nebius'; two console captures; deploy node retired; HF_TOKEN for real estate; green = 90020da.
   - APPROVED. tests/docs 27; make check green.
   - Merge waits for qa-w7 (README:159 depends on it).
+- 2026-10-22T06:23Z backend-w8 reported DONE_WITH_CONCERNS (243269b, 1a31a59, 446b8b2, 7bbcfaf; $0).
+  - Under STUB, gpu nodes run on LocalDocker with no wall-time bill; plan review skips the provider check. +6/−4 production lines. tests/api 5× clean; 904 passed. A throwaway STUB run of reduced template 4: 6 nodes succeeded, $0.
+  - Orchestrator review of the +6/−4 diff: APPROVED. Non-STUB paths unchanged; gpu_guard/fits unchanged; startup sweep consistent (gpu_provider = local-docker). New `no_stub` fixture.
+  - DECISION (backend-w8): under STUB no wall-time bill is written at all (a $0 bill would still claim GPU hours in cost_json).
+  - Blocker found: orchapod/unsloth-train:dev cannot build on this Mac (~20 GB CUDA x86_64).
+- 2026-10-22T06:23Z MERGED backend-w8 → a02b571 (tests/api + drills: 236 passed).
+- 2026-10-22T06:23Z ml-w7 dispatched (resumed af8bbc1a5deca633c; worktree ml-w7 @ 81865e3): a slim `stub` first stage in unsloth-train's Dockerfile (CUDA stage stays last = default target), proven by a unique-tag build and a STUB run; the drills docstring fix. Then qa-w8: e2e builds unsloth-train with --target stub, MUST_REGISTER, the smoke's golden path → template 4.

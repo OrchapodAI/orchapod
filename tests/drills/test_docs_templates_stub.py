@@ -1,13 +1,12 @@
 """The docs-specialist templates (Lane B on an endpoint, and its CPU variant) run end to end in STUB at reduced scale through
 the API and the executor, each node's own run.py in this process with the real SDK (the drills' harness): no Docker, no
-network. Proves the templates' refs resolve into the inputs each node reads, which `make check E2E=1` covers only for the
-three canonical intents."""
+network. Proves the templates' refs resolve into the inputs each node reads. The Docker stub e2e cannot run them: its plan
+review refuses unsloth-train (a GPU node) without a configured GPU provider."""
 
 import pytest
 
 from api.agent import planner
 from api.routes import internal
-from orchapod import cost
 from tests.containers.conftest import load_container
 from tests.drills.test_failure_drills import ADMIN, BUCKET, bucket, drill, env  # noqa: F401 (fixtures)
 
@@ -19,7 +18,6 @@ async def test_a_docs_template_runs_end_to_end_in_stub(drill, monkeypatch, tmp_p
     monkeypatch.setenv("STUB", "1")
     for node, workspace in (("unsloth-train", "WORK"), ("quantize", "WORKSPACE_DIR")):  # /workspace in their images
         monkeypatch.setattr(load_container(node), workspace, tmp_path / node)
-    monkeypatch.setattr(load_container("quantize"), "cost", cost, raising=False)  # the harness swaps it; CPU work is free
     armed = []  # vllm-serve registers its stub endpoint; the expiry timer would outlive the test
     monkeypatch.setattr(internal, "_arm", lambda artifact, run_id: armed.append(artifact.meta["endpoint_id"]))
     t = next(t for t in planner.templates() if t["slug"] == slug)

@@ -29,7 +29,7 @@ def node(mock_orchapod_io, monkeypatch, tmp_path):
     def subprocess_run(cmd):
         argv.append(cmd)
         out = cmd[cmd.index("--outfile") + 1] if "--outfile" in cmd else cmd[-2]
-        Path(out).write_bytes(b"GGUF" + b"\0" * (46 if "lora" in cmd[1] else 296 if "--outfile" in cmd else 96))
+        Path(out).write_bytes(b"GGUF" + b"\0" * (46 if cmd[1].endswith("convert_lora_to_gguf.py") else 296 if "--outfile" in cmd else 96))
         return type("Done", (), {"returncode": codes.pop(0) if codes else 0})
 
     monkeypatch.setattr(q.subprocess, "run", subprocess_run)

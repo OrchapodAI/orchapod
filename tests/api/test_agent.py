@@ -90,7 +90,7 @@ def answer(plan, rationale="r"):
 
 # --- templates and STUB ----------------------------------------------------------
 
-async def test_templates_are_the_three_canonical_intents_and_the_docs_specialist(client):
+async def test_templates_are_the_three_canonical_intents_and_the_two_docs_specialists(client):
     templates = (await client.get("/agent/templates")).json()
 
     assert [t["intent"] for t in templates] == INTENTS + [DOCS, DOCS_CPU]
@@ -408,19 +408,19 @@ def test_estimates_never_go_negative_and_count_page_extraction():
 
 
 def test_tf_finetune_is_priced_from_its_trained_tokens_once_the_base_has_a_price(monkeypatch):
-    docs = planner.templates()[0]  # synth 300 rows -> data-prep train_split 0.8 -> tf-finetune 2 epochs on Llama 3.2 3B
-    est, warnings = planner.estimate(docs["plan"])
+    estate = planner.templates()[0]  # synth 300 rows -> data-prep train_split 0.8 -> tf-finetune 2 epochs on Llama 3.2 3B
+    est, warnings = planner.estimate(estate["plan"])
     assert est["by_node"]["finetune"]["usd"] == 0.5  # TYPICAL until spike 1 fills the price ...
     assert "finetune: no fine-tune price for meta-llama/Llama-3.2-3B-Instruct yet (spike 1); the estimate assumes $0.50" in warnings
 
     monkeypatch.setitem(PRICES["token_factory_finetune"], "meta-llama/Llama-3.2-3B-Instruct", 0.4e-6)  # $0.40 per 1M
-    est, warnings = planner.estimate(docs["plan"])
+    est, warnings = planner.estimate(estate["plan"])
     assert est["by_node"]["finetune"]["usd"] == pytest.approx(300 * 0.8 * 250 * 2 * 0.4e-6)  # rows x tokens x epochs x $
     assert not [w for w in warnings if w.startswith("finetune:")]
-    small = planner.reduced(docs)["estimate"]  # 40 rows, 1 epoch
+    small = planner.reduced(estate)["estimate"]  # 40 rows, 1 epoch
     assert small["by_node"]["finetune"]["usd"] == pytest.approx(40 * 0.8 * 250 * 0.4e-6)
 
-    plan = copy.deepcopy(docs["plan"])
+    plan = copy.deepcopy(estate["plan"])
     plan["nodes"][3]["inputs"]["hyperparameters"] = {"n_epochs": 3}  # wins over n_epochs, as in the node
     assert planner.estimate(plan)[0]["by_node"]["finetune"]["usd"] == pytest.approx(300 * 0.8 * 250 * 3 * 0.4e-6)
     hf = {"name": "p", "nodes": [node("prep", "data-prep", dataset="hf://x"),

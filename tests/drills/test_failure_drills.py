@@ -93,7 +93,8 @@ class Nodes:
             if body is None:
                 module = load_container(node_type)
                 for name, sdk in (("io", io), ("log", log), ("cost", cost)):
-                    m.setattr(module, name, sdk)  # a module first loaded under tests/containers' mocks still holds them
+                    # a module first loaded under tests/containers' mocks still holds them; quantize has no cost
+                    m.setattr(module, name, sdk, raising=False)
                 body = module.main
             try:
                 body()

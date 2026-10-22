@@ -422,3 +422,10 @@ worktrees:
   - README:21 and video-script:14 → devrel-w6.
   - G2 runbook (M4): if the endpoint refuses the adapter, a hand-made quantize → judge-eval plan over the failed run's lora_adapter comes first (no retrain), then template 5.
   - Fix round 1 → af8bbc1a5deca633c, starting with `git merge NebiusHackathon`.
+- 2026-10-22T05:08Z backend-w7 review (sonnet): APPROVED.
+  - Budget flake: StaticPool test DB + a48b1e5's rollback, confirmed; production (Postgres pool, SQLite file via NullPool) unaffected.
+  - IAM flake: clock removed. 10 × tests/api, 214 passed each.
+  - Minors: (1) plan name unsanitised in the report title; (2) no test pins single-flight or log-and-retry; (3) _SendOnce emulates base.request(create=True); (4) devrel docs + tests/docs pin 'Lightning'; (5) populate_existing comment; (6) test_hardening's 0.2 s health timer, a twin wall-clock flake.
+  - Ruling: the GET's restart catch-up (it starts the writer for an ended run with no report) is accepted — why: off the request path, single-flight, in the day ledger — cost if wrong: one ~$0.002 Super call per ended run that lost its report.
+  - Ruling: orchestrator added TokenFactory.chat(create=True) (21e3806, 2 lines + 2 tests + contract line in platform's lane) so _SendOnce goes — why: the flag already exists in base.request for paid creates; two lines beat a second agent round — cost if wrong: platform reviews it at its next task.
+  - Fix round 1 → adaa43fd9d6077de1: merge NebiusHackathon, chat(create=True), title normalised to one line ≤ 80, single-flight + retry tests, minor 5, minor 6.

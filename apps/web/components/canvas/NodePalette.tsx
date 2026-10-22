@@ -3,9 +3,8 @@
 import type { NodeType } from "@/lib/types";
 import { NODE_META } from "./OrchaNode";
 
-// The golden path first (R25), then the registry's other visible node types: nothing more (tests/web compares the two). Not offered are its
-// hidden ones (off the demo path): hf-import, file-upload, s3-import, auto-label-cleanlab, distill-sft, lm-eval and tf-deploy (retired, R24).
-// Their NODE_META stays (tf-deploy's form too), so an old workflow that has them still renders.
+// The golden path first (R25), then the registry's other visible node types, and nothing else (tests/web compares the two). The registry's
+// hidden ones are off the demo path (tf-deploy is retired, R24): their NODE_META stays (tf-deploy's form too), so an old workflow still renders.
 const PALETTE_ITEMS: { type: NodeType; description: string; runtime: "cpu" | "gpu" | "api" }[] = [
   { type: "web-research",     description: "Tavily search + extract into a passage corpus",       runtime: "cpu" },
   { type: "synth-distilabel", description: "Generate data with Nemotron teacher (Token Factory)", runtime: "cpu" },

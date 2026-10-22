@@ -364,7 +364,7 @@ def poll_run(c: httpx.Client, run_id: str, path: str, done=lambda reply: reply["
         elif warned is None or now - warned >= 60:
             warned = now
             say(f"poll failed at {seconds:.0f} s ({' '.join(f'{type(failure).__name__}: {failure}'.split())}); asking again until the limit")
-        finished = failure is None and done(reply)
+        finished = reply is not None and done(reply)  # after a failed poll, the last good reply is not done: or we would have stopped
         if finished or seconds >= limit:
             break
         time.sleep(2)

@@ -127,7 +127,7 @@ class AgentRun(SQLModel, table=True):
     intent:     str
     plan:       dict = Field(sa_column=Column(JSON))
     estimate:   dict = Field(sa_column=Column(JSON))
-    report_md:  Optional[str] = None          # written on the first GET after a terminal status; retry clears it
+    report_md:  Optional[str] = None          # written in the background once the run ends; retry clears it
     created_at: datetime = Field(default_factory=utcnow)
 
 

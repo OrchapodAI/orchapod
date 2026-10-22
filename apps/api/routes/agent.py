@@ -6,12 +6,14 @@ The Orchapod Agent (docs/contracts.md "Agent API"): intent → plan → validate
 Routes:
   POST /agent/plan              — Nemotron 3 Super drafts a plan; validation errors go back for up to 2 repairs
   POST /agent/run               — validates again, then Workflow (opens on the canvas) + Run, launched at once
-  GET  /agent/runs/{id}/report  — the run summary, plus a report cached on the first GET after a terminal status
+  GET  /agent/runs/{id}/report  — the run summary, plus the report written in the background once the run ends
   GET  /agent/templates         — the three canonical intents; they double as the STUB plans
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import uuid
 from typing import Annotated, Any
 
@@ -33,6 +35,7 @@ from api.services import budget, ratelimit
 from api.services.redact import without_secrets
 
 router = APIRouter()
+log = logging.getLogger("api.agent")
 
 Session = Annotated[AsyncSession, Depends(get_session)]
 Scale = Annotated[float, Depends(budget.scale)]  # 1 for X-Orchapod-Admin, else ORCHAPOD_ANON_SCALE (R7)
@@ -82,27 +85,52 @@ async def run(body: RunRequest, db: Session, scale: Scale):
 
 @router.get("/runs/{run_id}/report")
 async def report(run_id: uuid.UUID, db: Session, scale: Scale):
-    """→ {<GET /runs/{id}/summary fields>, intent, estimate, ready, markdown}; ready = terminal and written."""
-    agent_run = await db.get(AgentRun, run_id)
+    """→ {<GET /runs/{id}/summary fields>, intent, estimate, ready, markdown}; ready = terminal and written. It never waits
+    on Nemotron: the report is written in the background once the run ends, and a poll reads it."""
+    agent_run = await db.get(AgentRun, run_id, populate_existing=True)  # the writer stores it from its own session
     if not agent_run:
         raise HTTPException(status_code=404, detail="Not a run the agent started")
-    finished_at = (await db.get(Run, run_id)).finished_at  # the attempt this report would describe
     summary = jsonable_encoder(await run_summary(run_id, db))
     terminal = summary["status"] in {s.value for s in TERMINAL}
-    markdown = agent_run.report_md
-    if terminal and markdown is None:
-        written = await planner.write_report(agent_run, summary, db, scale)
-        # kept only if no retry restarted the run meanwhile (retry clears report_md and finished_at), and only once
-        # if two first GETs race; ponytail: both of those GETs still call Lightning (< $0.001, in the ledger)
-        await db.execute(update(AgentRun).where(
-            AgentRun.run_id == run_id, AgentRun.report_md.is_(None),
-            select(Run.id).where(Run.id == run_id, Run.finished_at == finished_at).exists(),
-        ).values(report_md=written).execution_options(synchronize_session=False))
-        await db.commit()
-        markdown = await db.scalar(select(AgentRun.report_md).where(AgentRun.run_id == run_id))
-    ready = terminal and markdown is not None
+    if terminal and agent_run.report_md is None:
+        # the executor asked for it as the run ended; this covers a run that ended elsewhere (a cancel before it started,
+        # the startup sweep) or whose writer an API restart lost
+        report_later(run_id, scale)
+    ready = terminal and agent_run.report_md is not None
     return {**summary, "intent": agent_run.intent, "estimate": agent_run.estimate, "ready": ready,
-            "markdown": markdown if ready else None}
+            "markdown": agent_run.report_md if ready else None}
+
+
+# run_id → the task writing its report; one per run. ponytail: in-process, which the one API worker allows.
+_reporting: dict[uuid.UUID, asyncio.Task] = {}
+
+
+def report_later(run_id: uuid.UUID, scale: float) -> None:
+    """Write the report of an agent run that has ended, once, in the background, and cache it in agent_run.report_md
+    (R8). The executor calls it as a run ends, and the GET for an ended run without one; anything else is left alone."""
+    if (task := _reporting.get(run_id)) and not task.done():
+        return
+    task = asyncio.create_task(_write_report(run_id, scale))
+    _reporting[run_id] = task
+    task.add_done_callback(lambda t: _reporting.pop(run_id) if _reporting.get(run_id) is t else None)
+
+
+async def _write_report(run_id: uuid.UUID, scale: float) -> None:
+    from api import database
+    try:
+        async with database.AsyncSessionLocal() as db:
+            agent_run, run = await db.get(AgentRun, run_id), await db.get(Run, run_id)
+            if agent_run and run and agent_run.report_md is None and run.status in TERMINAL:
+                finished_at = run.finished_at  # the attempt this report describes
+                written = await planner.write_report(agent_run, jsonable_encoder(await run_summary(run_id, db)), db, scale)
+                # kept only if no retry restarted the run meanwhile (retry clears report_md and finished_at)
+                await db.execute(update(AgentRun).where(
+                    AgentRun.run_id == run_id, AgentRun.report_md.is_(None),
+                    select(Run.id).where(Run.id == run_id, Run.finished_at == finished_at).exists(),
+                ).values(report_md=written).execution_options(synchronize_session=False))
+            await db.commit()  # a read alone ends with it too: close() would roll back, and tests share one connection
+    except Exception:
+        log.exception("the report of run %s was not written", run_id)  # the next poll of an ended run tries again
 
 
 @router.get("/templates")

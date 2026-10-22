@@ -837,13 +837,17 @@ async def test_an_error_between_nodes_still_leaves_one_failed_node(db, provider)
 # --- run control API ---------------------------------------------------------
 
 @pytest.fixture
-def launched(db, monkeypatch):
-    """Executor tasks started by the routes; they get their own sessions on the test database."""
+async def launched(db, monkeypatch):
+    """Executor tasks started by the routes; they get their own sessions on the test database. The report writers their
+    ends start (routes/agent.report_later) finish before that database goes."""
+    from api.routes import agent
     monkeypatch.setattr("api.database.AsyncSessionLocal",
                         async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False))
     tasks, real = [], ex.launch
     monkeypatch.setattr(ex, "launch", lambda run_id, scale: tasks.append(real(run_id, scale)) or tasks[-1])
-    return tasks
+    yield tasks
+    while agent._reporting:
+        await asyncio.wait(set(agent._reporting.values()))
 
 
 @pytest.fixture

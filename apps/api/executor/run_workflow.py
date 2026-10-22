@@ -103,13 +103,17 @@ def _release(run_id: uuid.UUID) -> None:
 
 async def _run_in_own_session(run_id: uuid.UUID, scale: float) -> None:
     from api import database
+    from api.routes.agent import report_later
     from api.services.events import event_bus
 
-    async with database.AsyncSessionLocal() as db:
-        try:
-            await run_workflow(run_id, db, event_bus.publish, scale)
-        except Exception:
-            log.exception("run %s crashed", run_id)
+    try:
+        async with database.AsyncSessionLocal() as db:
+            try:
+                await run_workflow(run_id, db, event_bus.publish, scale)
+            except Exception:
+                log.exception("run %s crashed", run_id)
+    finally:
+        report_later(run_id, scale)  # an agent run's report, once it has ended (cancelled too)
 
 
 async def run_workflow(run_id: uuid.UUID, db: AsyncSession, broadcast: Broadcast, scale: float) -> None:

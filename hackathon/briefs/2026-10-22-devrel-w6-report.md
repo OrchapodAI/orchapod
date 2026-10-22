@@ -101,3 +101,35 @@ Before this report the diff was 7 files, +45 −40, all in docs and tests/docs.
 ## For the Orchestrator to record
 - DECISION 2026-10-22 (devrel-w6): every submission doc scopes the "NVIDIA end to end" claim to the golden path (templates 4 and 5). Real estate (Lane A, Llama 3.2 3B) and maths (Qwen2.5-Math) are named as outside it.
 - DECISION 2026-10-22 (devrel-w6): tests/docs pins Super as the reporter. The deterministic-template line must say "Nemotron 3 Super writes", and the README's Reporter row must be Super's id.
+
+## Fix round 1 (review of 2026-10-22T06:03Z)
+**Commits.**
+- c842611 and b705fee merge NebiusHackathon, first ba4b01e and then 10d4462, because the tip moved during the first merge. Both carry the trailer; neither was a rebase or a force.
+- 4598796 holds the fixes.
+- One more commit adds this section.
+
+**Proof.**
+- `pytest tests/docs -q`: 27 passed.
+- `make check` at 4598796: exit 0. ruff gave `All checks passed!`, pytest `900 passed, 2 warnings`, and the web tests `tests 30, pass 30, fail 0`. It ended with `SKIP stub e2e`.
+- `git merge-tree --write-tree` exited 0 against NebiusHackathon 10d4462 and against hack/qa-w7.
+
+**Fixes.**
+1. **README:126.** Run is disabled on three fine-tune templates at scale 0.1, and only the movie and maths templates fit. The source is apps/api/routes/agent.py:144–146: the reduced estimate must fit the run cap × scale, and a visitor's plan must have no GPU node.
+2. **The UI smoke is not the golden path.** smoke.spec.ts:220–222 runs `template(1)`. The docs now say the test "drives the real-estate template card, on stubs, through the run to the eval view and the compare playground".
+   - README:165 and :203.
+   - devpost:24, whose 50-word sentence is now three, and devpost:77.
+3. **README:159.**
+   - It now says "Load `.env` and run `make up` first".
+   - It now says "It refuses plans that rent a GPU; the golden run is `make e2e`, which still refuses to run".
+4. **README:193.** It says "our spend rules" instead of naming R14, and the long sentence is split.
+5. **README:37 and devpost:38.** They now say "so every model call runs on Nebius". The CPU variant serves the student with llama.cpp on the API host. The README's bold title no longer says "all on Nebius".
+6. **video-script.** Shot 6 (:25) asks for two captures: the Job while it trains, then the Endpoint inside its keep-alive. In the screenshot table, `nebius-console.png` is now two rows: `nebius-job.png` (:70) and `nebius-endpoint.png` (:71).
+7. **README:202 and devpost:76.** Each now adds "(the deploy node was retired after spike 1)".
+8. **README:106.** A live run of the real-estate template needs `HF_TOKEN`, from an account that accepted Meta's Llama licence, because Meta's bases are gated. The Nemotron Nano golden path needs none.
+9. **README:165 and :121.** Both cite the latest stub green: 90020da, 2026-10-22, e2e 3/3 and ui-smoke 5/5 (LOG.md:461). Setup's record at :121 moved from 3b80954 too, so the README cites one green.
+
+**Resolved upstream meanwhile.** Two concerns from the first report are fixed on NebiusHackathon:
+- 7adad9e fixed template 1's rationale.
+- 90020da deleted the planner's tf-deploy paths.
+
+**DECISION amended.** The "NVIDIA end to end" scope stays templates 4 and 5. "Every model call runs on Nebius" holds for template 4 only, because template 5 answers with llama.cpp on the API host.

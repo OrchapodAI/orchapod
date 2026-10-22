@@ -603,3 +603,12 @@ worktrees:
   - Concerns: at the $5 hosted day cap, a run needs ≤ $2.33 spent that UTC day (one attempt per day); the 60 min limit vs the 51.5 min estimate.
   - Stale for devrel/orchestrator: README:159, test_readme.py:87 comment, CLAUDE.md:26, ORCHESTRATOR.md:207.
   - Review dispatched (sonnet), including the limit question.
+- 2026-10-22T08:48Z qa-w9 review (sonnet): Needs fixes. Spec met; token and money safety hold (the admin header goes on the POST only, no POST retry, cancel by cancel_token).
+  - I1: the 60 min limit can cancel a healthy run.
+  - I2: 15 failed polls (~30 s) → cancel burns the day's one attempt.
+  - I3: evidence() can turn a PASS into exit 1.
+  - M1–M4: a non-printable token echoed by httpx; the POST window; cancel feedback; checklist fixes.
+  - Rulings:
+    - LIVE_LIMIT_S 7200 for the golden run (REAL_LIMIT_S 3600 stays) — why: server-side stops bound every paid resource; a false cancel costs the day — cost if wrong: an operator waits longer.
+    - Poll failures are tolerated until the limit, never a cancel — why: when the API is down a cancel fails anyway; caps bound spend.
+  - Fix round → ae3c65befef5dcb2b.

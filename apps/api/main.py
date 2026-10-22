@@ -48,7 +48,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Orchapod API",
-    description="Control plane for the Orchapod.ai LLM fine-tuning platform.",
+    description="Control plane of Orchapod: one sentence to a tuned, evaluated model on Nebius Token Factory and AI Cloud.",
     version="0.1.0",
     lifespan=lifespan,
 )

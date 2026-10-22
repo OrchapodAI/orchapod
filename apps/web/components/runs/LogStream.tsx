@@ -24,10 +24,11 @@ interface Props {
 }
 
 export function LogStream({ lines, activeNodeId, connected }: Props) {
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  useEffect(() => {  // scroll the log box only: scrollIntoView also moved the page, pulling a reader back on every line
+    const box = boxRef.current;
+    if (box) box.scrollTop = box.scrollHeight;
   }, [lines.length]);
 
   const filtered = activeNodeId
@@ -47,7 +48,7 @@ export function LogStream({ lines, activeNodeId, connected }: Props) {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-0.5 font-mono text-xs bg-[#FAFBFC]">
+      <div ref={boxRef} className="flex-1 overflow-y-auto p-4 space-y-0.5 font-mono text-xs bg-[#FAFBFC]">
         {filtered.length === 0 ? (
           <p className="text-[#97A0AF] italic">Waiting for logs…</p>
         ) : (
@@ -63,7 +64,6 @@ export function LogStream({ lines, activeNodeId, connected }: Props) {
             </div>
           ))
         )}
-        <div ref={bottomRef} />
       </div>
     </div>
   );

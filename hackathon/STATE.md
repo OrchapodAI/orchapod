@@ -2,8 +2,8 @@
 Updated: 2026-10-21T15:45Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
-1. Hari — decisions waiting (details in LOG "Ruling:" lines since 2026-10-21T02:50Z): NEBIUS_API_KEY + TAVILY_API_KEY into .env (unblocks spikes 1–3 and every live run); hosting (hackathon/briefs/2026-10-22-hosting-proposal.md, reply line inside; option + domain by Oct 24); golden-run topic by D6 (docs specialist vs real estate; both templates exist); ~10 GB of ml-w3 test artifacts in the local MinIO — delete?; AI-build disclosure; the two stopped vast.ai instances.
-2. Spikes 1–3 (hackathon/briefs/2026-10-22-spikes.md; worktrees spike1–3) — dispatch the moment a key lands; spike 1 decides tf-deploy vs vllm-serve for the golden path.
+1. Hari — waiting: TAVILY_API_KEY (app.tavily.com; open .env, paste after TAVILY_API_KEY=, save); hosting console steps today (vCPU quota 0→8 in eu-north1; GPU quotas 32→1 + 1; then the VM, bucket, Hostinger A records — docs/HOSTING.md); golden-run topic by D6; ~10 GB of ml-w3 test artifacts in MinIO — delete?; AI-build disclosure; the two stopped vast.ai instances.
+2. Spikes 1 and 2 RUNNING (live, caps $3 and $1; NEBIUS_API_KEY set 2026-10-22); spike 3 waits for TAVILY_API_KEY. Finding already: Token Factory's serverless catalog has no Llama (spike 1 picks a fine-tunable + servable model).
 3. Wave 5: COMPLETE incl. qa-w6 and backend-w6 (startup sweep of leftover node containers; cancel race fixed; SQLite WAL). Parked: a millisecond double-click cancel can leave a node unmarked.
 4. G1 Oct 24 holds in STUB: e2e_agent 3/3, ui-smoke golden path green. Live G1 waits on the key + spike 1.
 

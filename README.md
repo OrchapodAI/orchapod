@@ -146,7 +146,7 @@ On Linux, add `--host 0.0.0.0` to the uvicorn line (it then listens on every int
 for n in synth-distilabel data-prep; do docker build -t orchapod/$n:dev -f containers/$n/Dockerfile .; done
 ```
 
-The other templates need `hf-download quantize data-prep judge-eval` (maths), `web-research synth-distilabel data-prep tf-finetune vllm-serve judge-eval` (real-estate) `web-research synth-distilabel data-prep unsloth-train vllm-serve judge-eval` (Nebius docs) and `web-research synth-distilabel data-prep unsloth-train quantize judge-eval` (Nebius docs, judged on CPU). `unsloth-train` (Lane B) is an amd64 CUDA image of about 20 GB; build it only for GPU runs.
+The other templates need `hf-download quantize data-prep judge-eval` (maths), `web-research synth-distilabel data-prep tf-finetune vllm-serve judge-eval` (real-estate), `web-research synth-distilabel data-prep unsloth-train vllm-serve judge-eval` (Nebius docs) and `web-research synth-distilabel data-prep unsloth-train quantize judge-eval` (Nebius docs, judged on CPU). `unsloth-train` (Lane B) is an amd64 CUDA image of about 20 GB; build it only for GPU runs.
 
 **GPU nodes (Lane B)** also need a Nebius AI Cloud project with billing and GPU quota, `ORCHAPOD_ENDPOINT_TOKEN` for `vllm-serve`, a public https `ORCHAPOD_CONTROL_URL` and Nebius Object Storage (an https `ORCHAPOD_R2_ENDPOINT`, since Nebius cannot reach a local MinIO); `.env.example` lists every variable and where to get it.
 

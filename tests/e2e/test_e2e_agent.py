@@ -537,6 +537,16 @@ def test_a_real_run_waits_for_a_slow_planner(stack_ok):
     assert agent.run_all(api, "2", 0.5) == 0
 
 
+@pytest.mark.parametrize("minutes, refused", [(60, False), (61, True)])
+def test_a_real_run_is_refused_when_its_estimate_outlasts_the_hour_it_waits(minutes, refused, stack_ok, capsys):
+    templates = [{**t, "estimate": {**t["estimate"], "minutes": minutes}} if t["slug"] == I2["slug"] else t for t in TEMPLATES]
+    calls = []
+    assert agent.run_all(fake_api(templates=templates, run=live(real_report()), calls=calls), "2", 0.5) == (1 if refused else 0)
+    out = capsys.readouterr().out
+    assert ("the estimate takes 61 min, over the 60 min a real run waits" in out) is refused
+    assert (("POST", "/agent/run") in calls) is not refused  # refused before the run: nothing is spent on a run that cannot be waited for
+
+
 FAILED_RUN = real_report(status="failed", error="exit 1: boom", cost_usd=0.0123,
                          nodes=[{"node_id": "synth", "type": "synth-distilabel", "status": "failed", "usd": 0.0123, "error": "exit 1: boom"}])
 

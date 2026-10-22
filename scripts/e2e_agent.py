@@ -211,6 +211,8 @@ def run_one(c: httpx.Client, label: str, intent: str, template: dict | None, num
         problems.append(f"the estimate ${estimate['usd']} is over {cap}")
     if max_cost is not None:
         problems += refusals(plan)
+        if estimate["minutes"] * 60 > REAL_LIMIT_S:  # a run the poll would cancel before it could end
+            problems.append(f"the estimate takes {estimate['minutes']:g} min, over the {REAL_LIMIT_S / 60:g} min a real run waits")
     if not problems:
         demo.say(f"plan {plan['name']!r}: {[n['id'] for n in plan['nodes']]}, estimate ${estimate['usd']} / {estimate['minutes']} min")
         if stack := demo.preflight():

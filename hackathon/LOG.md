@@ -371,3 +371,15 @@ worktrees:
   - Also for backend: live reports don't name the plan (e2e_agent.py:103 would fail in real mode).
   - P2: data-prep's quality filter (opt-in, Lightning) has a 30 s timeout below the 37 s observed.
 - 2026-10-22T03:42Z make check after the spike-2 merge: 1 FLAKY failure. tests/api/test_budget.py::test_concurrent_runs_never_grant_more_than_the_day_cap fails in ~1/3 runs of tests/api (one run neither granted nor refused at assert time); it passes alone and appeared after backend-w5/w6. The gate is unreliable until fixed → backend-w7 dispatched (opus, base 850e9f2): (1) root-cause the flake (prove with 50 consecutive clean runs); (2) the reporter ruling — Super writes the report at run end in the background (bounded call, template fallback, the plan named), not inside the GET; contracts updated.
+- 2026-10-22T03:50Z SPIKE 1 DONE (live; inference $0, fine-tune 2,599 trained tokens at an unpublished rate, ≤ $0.03 at a $10/1M bound; cap $3). Findings:
+  - Token Factory's POST /v0/models → 410 'LoRA adapter deployment is no longer available' (empty body and real job:checkpoint alike), so tf-deploy cannot work for any base.
+  - No fine-tunable model is servable per token once tuned (the two Qwen3 Instruct-2507 bases are on serverless, their tuned sides are not). No Llama on serverless.
+  - Fine-tune OK on meta-llama/Llama-3.1-8B-Instruct (the Meta-Llama-… id → 422): 50 rows in 6 min 45 s.
+  - The jobs list echoes suffix and is newest first (R19 confirmed); a cancelled job bills 0 tokens.
+  - The adapter downloads as a PEFT LoRA dir (r 8, 448 BF16 tensors, 42 MB) without PEFT's base_model.model. prefix (vLLM/llama.cpp accept it by source; unloaded yet).
+  - Nano priced $0.06/$0.24.
+  - Two client bugs: files.content fails on 307 for large files (tf-finetune would fail AFTER a paid job); lora.deploy maps 410 to bad_request.
+  - Cleanup: uploaded files deleted, nothing deployed; the two jobs remain on Token Factory.
+  - Key-leak check: none (exact-key scan + gitleaks). Merged (feedback.md conflict → spike 1's facts).
+  - DECISION (R24): Lane A = Token Factory fine-tune → vllm-serve (base + adapter on a Nebius Serverless Endpoint); tf-deploy retired and hidden; fallback without GPU quota = llama.cpp on CPU (base GGUF + LoRA GGUF), judged locally.
+  - HUMAN: the fine-tune rate (console: tokenfactory.nebius.com/organization/prices, or the Usage charge for the 2,599-token job); a Hugging Face token with the Llama 3.1 licence accepted (HF_TOKEN); AI Cloud project id + nebius CLI login + an Object Storage bucket for vllm-serve (part of the hosting bring-up).

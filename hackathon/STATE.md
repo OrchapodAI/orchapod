@@ -2,8 +2,8 @@
 Updated: 2026-10-21T15:45Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
-1. Hari — waiting: TAVILY_API_KEY (app.tavily.com; open .env, paste after TAVILY_API_KEY=, save); hosting console steps today (vCPU quota 0→8 in eu-north1; GPU quotas 32→1 + 1; then the VM, bucket, Hostinger A records — docs/HOSTING.md); golden-run topic by D6; ~10 GB of ml-w3 test artifacts in MinIO — delete?; AI-build disclosure; the two stopped vast.ai instances.
-2. Spikes 1 and 2 RUNNING (live, caps $3 and $1; NEBIUS_API_KEY set 2026-10-22); spike 3 waits for TAVILY_API_KEY. Finding already: Token Factory's serverless catalog has no Llama (spike 1 picks a fine-tunable + servable model).
+1. Hari — waiting: TAVILY_API_KEY; the Token Factory fine-tune rate (console: tokenfactory.nebius.com/organization/prices, or the charge for spike 1's 2,599-token job) — tf-finetune is fail-closed until then; a Hugging Face token with the Llama 3.1 licence accepted (HF_TOKEN in .env); hosting console steps (vCPU quota 0→8 in eu-north1, GPU quotas → 1 + 1, AI Cloud project id, nebius CLI login, bucket, VM, Hostinger A records — docs/HOSTING.md); golden-run topic by D6; MinIO test data; AI disclosure; vast.ai instances.
+2. Spikes 1 and 2 DONE (R24: Lane A serves via vllm-serve; tf-deploy retired). Spike 3 waits for TAVILY_API_KEY. Next: platform-w7 (client: files.content 307, lora 410 → unsupported), ml-w6 (docs template → vllm-serve; CPU LoRA fallback via llama.cpp).
 3. Wave 5: COMPLETE incl. qa-w6 and backend-w6 (startup sweep of leftover node containers; cancel race fixed; SQLite WAL). Parked: a millisecond double-click cancel can leave a node unmarked.
 4. G1 Oct 24 holds in STUB: e2e_agent 3/3, ui-smoke golden path green. Live G1 waits on the key + spike 1.
 
@@ -13,7 +13,7 @@ Updated: 2026-10-21T15:45Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [x] P0 D1 contracts session → docs/contracts.md v1 merged (299 lines, rulings R1–R15) — DONE
 - [ ] P0 D3+ merge twice a day; nightly real e2e; G2 call D5; freeze D7; submit D9 — TODO
 ### platform
-- [ ] P0 D1 spike 1 (now decisive): 50 rows → TF LoRA fine-tune meta-llama/Meta-Llama-3.1-8B-Instruct → try POST /v0/models deploy → one chat call; ALSO dump the raw job + checkpoint JSON and test whether adapter files can be downloaded — BLOCKED(NEBIUS_API_KEY)
+- [x] P0 D1 spike 1: LoRA deploy retired (410) → Lane A serves via vllm-serve (R24); fine-tune works on meta-llama/Llama-3.1-8B-Instruct (6 min 45 s / 50 rows); R19 confirmed; adapter = PEFT dir — DONE (2026-10-22, ≤ $0.03)
 - [x] P0 D1 TF client: api.tokenfactory.nebius.com, retries, guided JSON, per-call token + $ accounting — DONE (e0fa9a2)
 - [x] P0 D1 fine-tuning client: files, LoRA job, poll status/events, checkpoints, best by val loss — DONE (e0fa9a2)
 - [x] P0 D1 LoRA deploy client: POST /v0/models (unsupported path explicit), poll to active, delete — DONE (e0fa9a2; live behaviour = spike 1)

@@ -612,3 +612,4 @@ worktrees:
     - LIVE_LIMIT_S 7200 for the golden run (REAL_LIMIT_S 3600 stays) — why: server-side stops bound every paid resource; a false cancel costs the day — cost if wrong: an operator waits longer.
     - Poll failures are tolerated until the limit, never a cancel — why: when the API is down a cancel fails anyway; caps bound spend.
   - Fix round → ae3c65befef5dcb2b.
+- 2026-10-22T09:18Z qa-w9 fix round done (c68d669, 3d9e671, c30f3ff, dbd51c9, 4f050f9; $0): LIVE_LIMIT_S 7200; poll failures tolerated to the limit, cancels only at the limit/Ctrl-C/SIGTERM; evidence never flips a PASS; printable-token refusal; POST window; cancel feedback; checklist. 301 e2e tests; make check 1122; 99 mutants caught. Scoped re-review dispatched (sonnet).

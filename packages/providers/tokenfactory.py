@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Iterator
 
@@ -25,6 +26,8 @@ ULTRA = "nvidia/Nemotron-3-Ultra-550b-a55b"
 LIGHTNING = "nvidia/Nemotron-3_5-Lightning"
 NANO = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B"
 P = "token_factory"
+FILE_MAX_BYTES = 2 * 1024**3  # ponytail: held in memory (spike 1's largest result file: 42 MB); stream to disk past it
+FILE_TIMEOUT_S = 600  # a whole file; each read still has the client's 120 s
 
 
 class TokenFactory:
@@ -143,7 +146,25 @@ class _Files(_Part):
         return self._tf._call("GET", f"/files/{file_id}")
 
     def content(self, file_id: str) -> bytes:
-        return self._tf._call("GET", f"/files/{file_id}/content", raw=True).content
+        """At most FILE_MAX_BYTES within FILE_TIMEOUT_S. A large file answers 307 to a presigned object-storage URL
+        (spike 1), followed without the key: httpx drops Authorization on a cross-origin hop."""
+        deadline, size, chunks = time.monotonic() + FILE_TIMEOUT_S, 0, []
+        resp = self._tf._call("GET", f"/files/{file_id}/content", raw=True, stream=True, follow_redirects=True)
+        try:  # ponytail: a body cut off mid-download is not retried here; retry-node fetches it again (R19 adopts)
+            for chunk in resp.iter_bytes():
+                size += len(chunk)
+                if size > FILE_MAX_BYTES:
+                    raise ProviderError(P, "bad_output", resp.status_code, f"{file_id} is over {FILE_MAX_BYTES} bytes")
+                if time.monotonic() > deadline:
+                    raise ProviderError(P, "server", None, f"{file_id} took over {FILE_TIMEOUT_S} s to download")
+                chunks.append(chunk)
+        except httpx.DecodingError as e:
+            raise ProviderError(P, "bad_output", resp.status_code, repr(e)) from e
+        except httpx.HTTPError as e:
+            raise ProviderError(P, "server", None, repr(e)) from e
+        finally:
+            resp.close()
+        return b"".join(chunks)
 
 
 class _FineTuning(_Part):

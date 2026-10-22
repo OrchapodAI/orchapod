@@ -138,14 +138,15 @@ def _kind(status: int) -> str:
 
 
 def request(http: httpx.Client, provider: str, method: str, url: str, *, create: bool = False,
-            stream: bool = False, **kwargs) -> httpx.Response:
+            stream: bool = False, follow_redirects: bool = False, **kwargs) -> httpx.Response:
     """Send with up to 3 retries on 429 (Retry-After, capped at 60 s), 500/502/503/504, timeouts and connection
     errors, backing off 1, 2, 4 s plus up to 1 s of jitter. A create retries only on 429 and connect errors, so a
-    lost response never starts a second paid job. stream=True returns the open response (the caller closes it)."""
+    lost response never starts a second paid job. stream=True returns the open response (the caller closes it).
+    A 3xx is an error unless follow_redirects=True (httpx drops Authorization on a cross-origin hop)."""
     for attempt in range(4):
         wait = None
         try:
-            resp = http.send(http.build_request(method, url, **kwargs), stream=stream)
+            resp = http.send(http.build_request(method, url, **kwargs), stream=stream, follow_redirects=follow_redirects)
             if resp.is_success:
                 return resp
             resp.read()

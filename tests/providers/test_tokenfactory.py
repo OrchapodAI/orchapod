@@ -3,13 +3,23 @@
 from __future__ import annotations
 
 import json
+import time
+from pathlib import Path
 
 import httpx
 import pytest
 
 from orchapod.prices import PRICES
+from packages.providers import tokenfactory
 from packages.providers.base import ProviderError
 from packages.providers.tokenfactory import SUPER, TokenFactory
+
+SPIKE1 = Path(__file__).resolve().parents[2] / "scripts" / "spikes" / "spike1" / "out"  # live replies, 2026-10-22
+
+
+def recorded(name: str):
+    return json.loads((SPIKE1 / f"{name}.json").read_text())
+
 
 MSGS = [{"role": "user", "content": "hi"}]
 LLAMA = "meta-llama/Llama-3.1-8B-Instruct"  # unpriced until spike 1
@@ -316,6 +326,42 @@ def test_fine_tuning_routes_and_best_checkpoint(replay, train, ft_priced):
     assert json.loads(seen[1].content) == {"model": LLAMA, "training_file": "file-1", "hyperparameters": hp,
                                            "suffix": "1234abcd-ft"}
     assert seen[7].url.params["limit"] == "20"
+
+
+def test_content_follows_the_recorded_307_to_object_storage_without_the_key(replay):
+    """Spike 1: the adapter's /content answers 307 to a presigned URL (only its host and a signed query were saved)."""
+    hop = recorded("content_redirects")[0]
+    location = f"https://{hop['location_host']}/tf-files/{hop['file']}?X-Amz-Signature=presigned"
+    http, seen = replay(httpx.Response(hop["status"], headers={"location": location}),
+                        httpx.Response(200, content=b"\x00adapter"))
+    assert TokenFactory(http=http).files.content(hop["file"]) == b"\x00adapter"
+    assert [(r.url.host, r.headers.get("authorization")) for r in seen] == [
+        ("api.tokenfactory.nebius.com", "Bearer tf-key"), ("storage.eu-west2.nebius.cloud", None)]
+
+
+def test_content_is_bounded_in_size_and_time(replay, monkeypatch):
+    monkeypatch.setattr(tokenfactory, "FILE_MAX_BYTES", 4)
+    http, _ = replay(httpx.Response(200, content=b"1234"), httpx.Response(200, content=b"12345"))
+    tf = TokenFactory(http=http)
+    assert tf.files.content("file-a") == b"1234"
+    with pytest.raises(ProviderError) as e:
+        tf.files.content("file-a")
+    assert e.value.kind == "bad_output"
+
+    now = [0.0]
+
+    class Slow(httpx.SyncByteStream):  # each chunk lands 6 s after the last: inside the read timeout, past the deadline
+        def __iter__(self):
+            for _ in range(3):
+                now[0] += 6
+                yield b"x"
+
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(tokenfactory, "FILE_TIMEOUT_S", 10)
+    http, seen = replay(httpx.Response(200, stream=Slow()))
+    with pytest.raises(ProviderError) as e:
+        TokenFactory(http=http).files.content("file-a")
+    assert (e.value.kind, len(seen)) == ("server", 1)
 
 
 def test_best_checkpoint_without_valid_loss_is_the_last_step(replay):

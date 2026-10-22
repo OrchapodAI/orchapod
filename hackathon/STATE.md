@@ -1,11 +1,11 @@
 # STATE — Orchapod × Nebius hackathon
-Updated: 2026-10-22T07:34Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
+Updated: 2026-10-22T07:58Z by orchestrator · Phase: P1 · G1 MET 2026-10-22 · Next gate: G2 Oct 25 (GPU quota) · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
 1. Hari — waiting: TAVILY_API_KEY; for the golden path (Lane B, R25) the Nebius AI Cloud setup — project id (NEBIUS_PROJECT_ID), a `nebius` CLI login on this Mac, the Object Storage bucket — plus the hosting console steps (vCPU quota 0→8 in eu-north1, GPU quotas → 1 + 1, VM, Hostinger A records; docs/HOSTING.md); golden-run topic by D6 (the docs specialist now uses Nemotron Nano); optional: HF_TOKEN + the Token Factory fine-tune rate only for the Llama templates; MinIO test data; AI disclosure; vast.ai instances. Optional for G1 evidence: a live click-through of intent #2 on http://localhost:3000/agent (README 'Setup', ORCHAPOD_ANON_SCALE=1); my attempt to start the local servers was blocked by the permission classifier.
-2. Spikes 1 and 2 DONE (R24, R25). Spike 3 waits for TAVILY_API_KEY. MERGED: platform-w7, ml-w6 (docs template Lane B on Nemotron Nano, $2.66; CPU variant), backend-w7 (Super reporter, flakes fixed). In review: qa-w7 (e2e_agent real mode) → first live intent #2 run (≤ $0.50). In progress: devrel-w6, frontend-w6.
+2. Spikes 1 and 2 DONE (R24, R25). Spike 3 waits for TAVILY_API_KEY. Merged today: platform-w7, ml-w6, backend-w7, frontend-w6, qa-w7, devrel-w6, backend-w8, ml-w7, qa-w8. In progress: devrel-w7 (live-run facts in README/Devpost).
 3. Wave 5: COMPLETE incl. qa-w6 and backend-w6 (startup sweep of leftover node containers; cancel race fixed; SQLite WAL). Parked: a millisecond double-click cancel can leave a node unmarked.
-4. G1 Oct 24: intent #2 from the agent is LIVE-green (run 84e57f84, $0.10). The golden path is STUB-green on template 1; qa-w8 moves the smoke's golden path to template 4 (R25). The live golden run waits on GPU quota + the hosted API (Hari).
+4. G1 MET (2026-10-22, as ruled): template 4 green from the UI on stubs (ui-smoke 5/5, e2e 4 PASS on 3b7bf07) + live intents #2 (84e57f84, $0.10) and #3 (59786797, $0.02, Ultra judged live). Next: G2 Oct 25 — GPU quota + hosted API for the live golden run (Hari's console steps).
 
 ## Board (status ∈ TODO | IN_PROGRESS(<agent>, <branch>) | REVIEW | DONE | BLOCKED(<why>))
 ### orchestrator
@@ -142,6 +142,7 @@ Updated: 2026-10-22T07:34Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - 2026-10-20: $1.29 (vast.ai A100 SXM4 80 GB at $1.2485/h, 48 min, spike 4; instance destroyed)
 - 2026-10-22: ≈ $0.16 Token Factory (spike 1 ≤ $0.03 fine-tune of 50 rows; spike 2 $0.0055; live runs $0.1007 + $0.0034 + $0.0175; key validation $0)
 ## Golden path status (last real run: id, date, cost, result)
+- 2026-10-22T07:58Z: STUB golden path = template 4 (R25) green: e2e_agent golden path PASS (run 298cf7be, full plan) + ui-smoke golden test (template 4 card, reduced plan) on 3b7bf07.
 - 2026-10-22T07:34Z: LIVE intent #3 through the Agent API PASS — run 59786797 (Super's plan quantize-math-expert; CPU quantize; Nemotron 3 Ultra judged live), 255 s, $0.0175 total. The earlier attempt cf49d0f1 failed on a missing HF config ($0.0034) → data-prep fix 782be76.
 - 2026-10-22T07:01Z: LIVE intent #2 through the Agent API PASS — run 84e57f84 (Super's plan movie-interactions-synthetic: synth → prep), 446 s, $0.0966 run + $0.0041 planner/reporter = $0.1007, 928 rows, Super's report. First live run.
 - 2026-10-22T05:43Z: G1 STUB green on 90020da (ml-w6 + backend-w7 merged): e2e_agent 3/3, demo e2e, ui-smoke 5/5. Live intent #2 next (qa-w7 real mode in review).

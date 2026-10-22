@@ -578,3 +578,8 @@ worktrees:
   - 188 e2e tests; make check 1009.
   - Orchestrator check of the diff: OK. MERGED qa-w8 → 3b7bf07. Integration (E2E + ui-smoke) running.
 - 2026-10-22T07:56Z devrel-w7 dispatched (resumed a7b1e898cb32a8e00; worktree devrel-w7 @ 3b7bf07): live runs #1/#3 facts, golden path on template 4, feedback item on planner robustness.
+- 2026-10-22T07:58Z Integration on 3b7bf07 GREEN.
+  - make check E2E=1: e2e_demo PASS; e2e_agent 4 PASS (intents 1–3 + golden path template 4: run 298cf7be, 8 s, $0, estimate $2.6627).
+  - make ui-smoke 5/5 (golden path: template 4, run, eval view, compare playground, 11.0 s).
+  - acf5e7f (env by name) is exercised by every stub node container.
+- 2026-10-22T07:58Z G1 MET (as ruled): the golden path (template 4) green from the UI on stubs, plus live intents #2 (84e57f84, $0.10) and #3 (59786797, $0.02) through the Agent.

@@ -8,6 +8,10 @@ Dated, user-facing changes made during the Nebius × NVIDIA hackathon submission
 - The docs-specialist template trains NVIDIA Nemotron Nano 8B (Lane B) and serves base + LoRA from one L40S endpoint ($2.66 estimated); a CPU variant judges a GGUF + GGUF LoRA without an endpoint.
 - Token Factory's per-token LoRA deploy is retired (410): tf-deploy is hidden; fine-tunes are served by vllm-serve.
 - `make agent-e2e INTENT=… MAX_COST=…` runs one intent live with hard caps; stub mode runs GPU nodes locally at $0.
+- Second live run: intent #3 (a 3.1 GB maths model quantized to 0.99 GB on CPU in 75 s; Nemotron 3 Ultra judged q4_k_m against f16 live: 1 win, 4 ties on 5 questions; $0.02). A first attempt showed that Super's live plan can omit a dataset config; data-prep now picks one.
+- The golden path (template 4, Nemotron Nano docs specialist) runs end to end in stub mode, through the Agent API and from the web app's template card to the eval view and the compare playground.
+- The web app's node palette shows only the nodes on the demo path, in golden-path order, with forms for training and serving; a report that never arrives is reported after 60 s.
+- Node containers receive keys by name only, so no key appears on a command line.
 
 ## 2026-10-21
 - Evaluation: Nemotron 3 Ultra judges base against tuned answers in both orders against a reference answer, reporting win rate, consistency and (for maths) exact match; scraped text is always fenced as untrusted input. Quantized models are served locally with llama.cpp; a llama.cpp bug that garbled f16 answers on Apple silicon is fixed.

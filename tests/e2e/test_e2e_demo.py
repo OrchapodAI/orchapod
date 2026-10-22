@@ -302,6 +302,23 @@ def test_extra_env_lands_last_but_the_stub_basics_stay(tmp_path):
     assert env["ORCHAPOD_ANON_SCALE"] == "1" and env["STUB"] == "1" and env["ORCHAPOD_KILL_SWITCH"] == "0"
 
 
+def test_a_none_in_extra_removes_the_name_so_a_real_run_has_no_stub(tmp_path):
+    """A real run's API must not inherit a shell's STUB=1 or a base URL that would receive the key, and must get its own keys."""
+    shell = {"PATH": "/usr/bin", "STUB": "1", "NEBIUS_BASE_URL": "https://elsewhere.example/v1", "NEBIUS_API_KEY": "from-the-shell"}
+    env = e2e.api_env(8123, tmp_path / "e2e.db", shell, {"STUB": None, "NEBIUS_BASE_URL": None, "NEBIUS_API_KEY": "k"})
+    assert "STUB" not in env and "NEBIUS_BASE_URL" not in env
+    assert env["NEBIUS_API_KEY"] == "k" and env["ORCHAPOD_KILL_SWITCH"] == "0" and env["PATH"] == "/usr/bin"
+
+
+@pytest.mark.parametrize("extra, stub", [(None, True), ({"ORCHAPOD_ANON_SCALE": "1"}, True), ({"STUB": None}, False)])
+def test_with_stack_says_stub_only_when_the_api_runs_on_stub(extra, stub, monkeypatch, capsys):
+    monkeypatch.setattr(e2e, "start_api", lambda tmp, extra=None: (FakeApi(), "http://127.0.0.1:1"))
+    monkeypatch.setattr(e2e, "wait_healthy", lambda *a: None)
+    monkeypatch.setattr(e2e, "stop", lambda proc: None)
+    assert e2e.with_stack(lambda c: 0, extra) == 0
+    assert ("STUB=1" in capsys.readouterr().out) is stub
+
+
 RUNNING = {"status": "running", "nodes": [{"node_id": "a", "status": "running"}]}
 
 

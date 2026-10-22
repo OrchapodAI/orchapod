@@ -60,17 +60,19 @@ def fail(msg) -> int:
 # Pure logic (unit-tested in tests/e2e)
 # ---------------------------------------------------------------------------
 
-def api_env(port: int, db: Path, environ, extra: dict[str, str] | None = None) -> dict[str, str]:
-    """The API's env: stub, no paid key, the compose stack, its own DB and port, the kill switch off; `extra` (budget
-    knobs such as ORCHAPOD_ANON_SCALE) lands last."""
+def api_env(port: int, db: Path, environ, extra: dict[str, str | None] | None = None) -> dict[str, str]:
+    """The API's env: STUB=1, no paid key, the compose stack, its own DB and port, the kill switch off. `extra` lands last:
+    budget knobs such as ORCHAPOD_ANON_SCALE, and for a real run (e2e_agent.py --max-cost) the few keys it forwards; a None
+    in it removes the name, which is how a real run drops STUB."""
     env = {k: v for k, v in environ.items() if k not in PAID}
-    return env | LOCAL_STACK | {
+    env |= LOCAL_STACK | {
         "STUB": "1",
         "ORCHAPOD_KILL_SWITCH": "0",
         "DATABASE_URL": f"sqlite+aiosqlite:///{db}",
         "ORCHAPOD_CONTROL_URL": f"http://127.0.0.1:{port}",  # LocalDocker rewrites it to host.docker.internal
         "PYTHONPATH": os.pathsep.join([str(ROOT), str(ROOT / "apps"), str(ROOT / "packages/sdk-py")]),
     } | (extra or {})
+    return {k: v for k, v in env.items() if v is not None}
 
 
 def bind_host() -> str:
@@ -168,7 +170,7 @@ def tail(path: Path, n: int = 15) -> str:
     return "\n".join(path.read_text(errors="replace").splitlines()[-n:])
 
 
-def start_api(tmp: Path, extra: dict[str, str] | None = None) -> tuple[subprocess.Popen, str]:
+def start_api(tmp: Path, extra: dict[str, str | None] | None = None) -> tuple[subprocess.Popen, str]:
     """The API on its own port and database; the URL is 127.0.0.1 whichever address it listens on (bind_host)."""
     with listen_on_free_port(host=bind_host()) as sock:
         port = sock.getsockname()[1]
@@ -336,9 +338,9 @@ def run(c: httpx.Client) -> int:
     return 0
 
 
-def with_stack(fn, extra_env: dict[str, str] | None = None) -> int:
-    """fn(client) -> exit code, run against a fresh stub API (own port, own DB). The API stops however this ends:
-    a failure, Ctrl-C, SIGTERM; a start that fails is reported like any other failure."""
+def with_stack(fn, extra_env: dict[str, str | None] | None = None) -> int:
+    """fn(client) -> exit code, run against a fresh API (own port, own DB; STUB=1 unless extra_env sets STUB to None, see
+    api_env). The API stops however this ends: a failure, Ctrl-C, SIGTERM; a start that fails is reported like any other failure."""
     old = signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))  # unwind through the finally that stops the API
     started = time.monotonic()
     try:
@@ -347,7 +349,8 @@ def with_stack(fn, extra_env: dict[str, str] | None = None) -> int:
             try:
                 proc, base = start_api(Path(tmp), extra_env)
                 wait_healthy(proc, base, Path(tmp) / "api.log")
-                say(f"API up on {base}, listening on {bind_host()} (STUB=1, throwaway DB)")
+                stub = "STUB=1" if (extra_env or {}).get("STUB", "1") else "STUB unset"  # a real run's extra_env sets STUB to None
+                say(f"API up on {base}, listening on {bind_host()} ({stub}, throwaway DB)")
                 with httpx.Client(base_url=base, timeout=30) as client:
                     code = fn(client)
             except (RuntimeError, httpx.HTTPError) as e:

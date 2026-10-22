@@ -542,3 +542,11 @@ worktrees:
   - The permission classifier denied starting the long-running server ('Unauthorized Persistence'). Not worked around; launch configs removed.
   - The live Agent API run (84e57f84) is the G1 evidence; a /agent click-through waits for Hari (locally) or the hosted demo.
 - 2026-10-22T07:04Z Orchestrator fix (platform lane): LocalDocker passes node env by name (-e K) with the values in the docker CLI's env. No key on a command line (qa-w7 finding). Test + a real `docker run -e NAME` probe. Platform reviews it and chat(create=True) at its next task.
+- 2026-10-22T07:27Z qa-w8 DONE (7b6ba6d..00c0fb6 on 6f66473; $0).
+  - make check E2E=1 → 4 PASS (golden path = template 4 full plan, run 60719547, 26 s, $0, estimate $2.6627).
+  - make ui-smoke 5/5 incl. 'golden path: template 4, run, eval view, compare playground'.
+  - pytest e2e+harness 181; make check 1002; 38 mutants caught.
+  - Item 5 done: non-default NEBIUS_BASE_URL refused; real wording; mode=ro.
+  - Stale docs for devrel: README 10/31/121/143/158/159/165, NODE_CONTRACT.md:89, devpost:24, CHANGELOG:22.
+  - Concerns: the smoke runs the reduced plan; --target stub in every mode (safe by refusal order); template 5 uncovered.
+  - Review dispatched (sonnet). Trial merge clean.

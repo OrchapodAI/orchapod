@@ -42,10 +42,12 @@ export default function AgentPage() {
   const [templatesError, setTemplatesError] = useState("");
   const planRef = useRef<HTMLDivElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
+  const runRef = useRef<HTMLDivElement>(null);
 
-  // A new plan or error renders below the five template cards, off screen at 1024×768 (qa-w10 F5): bring it into view.
+  // A new plan, error or run view renders below the five template cards, off screen at 1024×768 (qa-w10 F5): bring it into view.
   useEffect(() => { planRef.current?.scrollIntoView({ block: "nearest" }); }, [reply]);
   useEffect(() => { errorRef.current?.scrollIntoView({ block: "nearest" }); }, [error]);
+  useEffect(() => { runRef.current?.scrollIntoView({ block: "nearest" }); }, [runId]);
 
   // The three canonical intents with ready plans (GET /agent/templates).
   useEffect(() => {
@@ -245,7 +247,7 @@ export default function AgentPage() {
 
           {runId && (
             <>
-              <div className="card" style={{ height: 560, overflow: "hidden" }}>
+              <div ref={runRef} className="card" style={{ height: 560, overflow: "hidden" }}>
                 <RunView id={runId} embedded />
               </div>
               <ReportCard key={runId} runId={runId} />

@@ -410,3 +410,4 @@ worktrees:
   - Reporter: Super, thinking off, one send with a 30 s read timeout (_SendOnce), template fallback, a `## <plan>: <status>` title, written in the background at run end, the GET never calls the model.
   - Open: README:75/:83 + devpost:38 still say Lightning (devrel); platform could add chat(resend=False).
   - Review dispatched (sonnet). Trial merge clean.
+- 2026-10-22T04:52Z qa-w7 dispatched (sonnet; agent ae3c65befef5dcb2b; worktree qa-w7 @ 25bf429): e2e_agent real mode. Pytest only, no real run by qa; refuses GPU plans and missing keys; caps = --max-cost ≤ 3; only NEBIUS/TAVILY/HF keys forwarded. The orchestrator runs intent #2 live after the merge with --max-cost 0.5.

@@ -639,3 +639,6 @@ worktrees:
 - 2026-10-22T10:19Z frontend-w7 round 1 done (2ea3305 sidebar: Datasets, Cost & GPUs, Settings removed with their pages; 548b1f3 the plan card/error scroll into view; web 37).
   - Round 2 sent: the run view scrolls into view; page title 'Orchapod'; compare labels 'base'/'tuned'.
 - 2026-10-22T10:19Z make check on 9267767 (tip): exit 0.
+- 2026-10-22T10:30Z frontend-w7 round 2 done (b56829f run-view scroll, 75af5c3 title 'Orchapod', ba68f54 base/tuned labels with a refName test, 6771f4b). MERGED.
+  - Orchestrator follow-up: LogStream scrolls its own box (it pulled the page on every line); /docs describes Orchapod.
+  - ui-smoke 5/5; web 38; tsc clean; tests/api 223. Worktree removed.

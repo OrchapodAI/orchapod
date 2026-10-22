@@ -302,6 +302,21 @@ def test_a_good_report_passes():
     assert agent.check_report(good_report(), "Generate synthetic data", I2["plan"]) == []
 
 
+LONG_NAME = "Synthetic movie engagement events\nfor a streaming service:   likes, shares and subscribes over the last thirty days"  # 115 chars
+LONG_TITLE = "Synthetic movie engagement events for a streaming service: likes, shares and sub"  # how the report writes it: 80 chars
+
+
+def test_check_report_looks_for_the_plan_name_as_the_report_titles_it():
+    """backend-w7: the title is `## <name>: <status>` with the name's whitespace runs (newlines too) collapsed to one space and the
+    name cut at 80 characters, so a live planner's long or multi-line name never appears in the report as the plan has it."""
+    plan, ask = {**I2["plan"], "name": LONG_NAME}, I2["intent"]
+    assert len(LONG_TITLE) == 80 and LONG_NAME not in LONG_TITLE
+    assert agent.check_report(good_report(LONG_TITLE, ask), ask, plan) == []
+    problems = agent.check_report(good_report("another-plan", ask), ask, plan)
+    assert [p for p in problems if "never names the plan" in p] == [f"the report never names the plan {LONG_TITLE!r}"]
+    assert any("never names the plan" in p for p in agent.check_report(good_report(LONG_TITLE[:79], ask), ask, plan))  # not the 80 written
+
+
 def test_check_report_says_what_is_missing():
     plan = I2["plan"]
     ask = "Generate synthetic data"

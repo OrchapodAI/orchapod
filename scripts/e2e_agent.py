@@ -146,10 +146,11 @@ def check_report(report: dict, intent: str, plan: dict, max_cost: float | None =
     if report["intent"] != intent:
         problems.append(f"the report is for the intent {report['intent']!r}, not the one asked")
     text = (report["markdown"] or "").strip()
+    title = " ".join(plan["name"].split())[:80]  # as the report titles it (backend-w7): whitespace collapsed, cut at 80 characters
     if not report["ready"] or not text:
         problems.append("the run ended but the report is not ready (ready, markdown)")
-    elif plan["name"] not in text:
-        problems.append(f"the report never names the plan {plan['name']!r}")
+    elif title not in text:
+        problems.append(f"the report never names the plan {title!r}")
     return problems
 
 

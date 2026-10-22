@@ -39,9 +39,9 @@ function watch(page: Page): string[] {
 
 /** Waits for `done`, or for the page to say that the run failed; a failure fails the test at once, with its node error in the screenshot. */
 async function untilDone(page: Page, done: Locator, timeout = 240_000): Promise<void> {
-  const failed = page.getByText(/Run failed|Couldn't start the run|Couldn't load the report/);
+  const failed = page.getByText(/Run failed|Couldn't start the run|Couldn't load the report|Report unavailable/);
   await expect(done.or(failed)).toBeVisible({ timeout });
-  await expect(failed, "the run failed: see the screenshot").toHaveCount(0, { timeout: 2_000 });
+  await expect(failed, "the run failed, or its report never arrived (\"Report unavailable\"): see the screenshot").toHaveCount(0, { timeout: 2_000 });
 }
 
 /** A tab of the run page. Its buttons share a row with "logs"; the node column has buttons too, named like "evaluate". */

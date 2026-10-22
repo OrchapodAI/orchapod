@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import functools
 import json
@@ -19,18 +20,23 @@ from sqlmodel import select
 
 from api.agent import planner
 from api.executor import run_workflow as ex
+from api.routes import agent as agent_routes
 from api.models.db import AgentRun, Artifact, ArtifactKind, NodeRun, NodeStatus, Run, RunStatus, Spend, Workflow, utcnow
 from api.services import budget
 from orchapod.prices import PRICES
-from packages.providers.tokenfactory import LIGHTNING, SUPER, TokenFactory
+from packages.providers.tokenfactory import SUPER, TokenFactory
 from packages.workflow_schema.models import NODE_REGISTRY, ResourceSpec, SynthDistilabelInputs
+from tests.api.test_executor import launched, provider  # noqa: F401 (fixtures)
 
 INTENTS = [  # the /agent page's examples (apps/web/app/agent/page.tsx)
     "Fine-tune Llama 3B on US real-estate compliance: Fair Housing Act, RESPA, TILA/TRID, state licensing",
     "Generate synthetic data of movie likes, shares and subscribes",
     "Quantize a model which is an expert in maths",
 ]
-DOCS = "Distill a Nebius docs specialist: fine-tune Llama 3.1 8B on the Nebius AI Cloud and Token Factory docs"  # golden path
+DOCS = ("Distill a Nebius docs specialist: fine-tune NVIDIA Nemotron Nano 8B on the Nebius AI Cloud and Token Factory "
+        "docs")  # golden path
+DOCS_CPU = ("Distill a Nebius docs specialist and judge it on CPU without an endpoint: train Nemotron Nano 8B, then compare "
+            "base and tuned")  # its variant without a GPU endpoint
 GOOD = {"name": "qa-data", "nodes": [  # valid with the nodes on this branch's base
     {"id": "synth", "type": "synth-distilabel", "needs": [], "inputs": {"pipeline_template": "self-instruct", "n_samples": 100}},
     {"id": "prep", "type": "data-prep", "needs": ["synth"], "inputs": {"dataset": "${{ nodes.synth.outputs.dataset }}"}},
@@ -63,6 +69,8 @@ def tf(monkeypatch):
     def handler(request):
         fake.requests.append(json.loads(request.content))
         status, content = fake.replies.pop(0)
+        if isinstance(content, Exception):  # no reply: a timeout, a dropped connection
+            raise content
         if isinstance(content, dict):  # a raw reply body, e.g. a malformed one
             return httpx.Response(status, json=content)
         if status != 200:
@@ -87,10 +95,10 @@ def answer(plan, rationale="r"):
 
 # --- templates and STUB ----------------------------------------------------------
 
-async def test_templates_are_the_three_canonical_intents_and_the_docs_specialist(client):
+async def test_templates_are_the_three_canonical_intents_and_the_two_docs_specialists(client):
     templates = (await client.get("/agent/templates")).json()
 
-    assert [t["intent"] for t in templates] == INTENTS + [DOCS]
+    assert [t["intent"] for t in templates] == INTENTS + [DOCS, DOCS_CPU]
     for t in templates:
         assert {"slug", "title", "intent", "plan", "estimate"} <= set(t)
         assert set(t["estimate"]["by_node"]) == {n["id"] for n in t["plan"]["nodes"]}
@@ -110,13 +118,14 @@ async def test_run_it_yourself_clones_each_template_at_reduced_scale(client, mon
         assert set(t["reduced_inputs"]) <= {n["id"] for n in t["plan"]["nodes"]}
         assert 0 < small["estimate"]["usd"] < t["estimate"]["usd"]
     # gpu-l40s-a at $1.55/h for vllm-serve's ~5 min start + keep_alive_min (real-estate was $0.83 before the start was
-    # billed); the docs specialist is mostly tf-finetune's typical $0.50 until spike 1 prices it
-    assert [round(t["reduced"]["estimate"]["usd"], 2) for t in templates] == [0.96, 0.03, 0.02, 0.55]
+    # billed); the docs specialist (Lane B) is mostly unsloth-train's typical 25 min of H100 ($1.88) plus that endpoint,
+    # and its CPU variant the same training with no endpoint
+    assert [round(t["reduced"]["estimate"]["usd"], 2) for t in templates] == [0.96, 0.03, 0.02, 2.32, 1.93]
     # fits: the reduced plan's estimate within the caller's run cap ($3 x ORCHAPOD_ANON_SCALE 0.1 when anonymous)
-    assert [t["fits"] for t in templates] == [False, True, True, False]  # real-estate and docs: admin-only by default
+    assert [t["fits"] for t in templates] == [False, True, True, False, False]  # GPU templates: admin-only by default
     monkeypatch.setenv("ORCHAPOD_ADMIN_TOKEN", "s3cret")
     admin = (await client.get("/agent/templates", headers={"X-Orchapod-Admin": "s3cret"})).json()
-    assert [t["fits"] for t in admin] == [True, True, True, True]
+    assert [t["fits"] for t in admin] == [True] * 5
 
     launched = []  # intent #2 at reduced scale runs for an anonymous caller ($3 x 0.1 run cap)
     monkeypatch.setattr(ex, "launch", lambda run_id, scale: launched.append(scale))
@@ -130,14 +139,39 @@ def test_intent_2_runs_on_the_nodes_that_exist():
     assert planner.review(planner.templates()[1]["plan"])[:2] == ([], [])
 
 
-def test_the_docs_specialist_validates_at_both_scales_on_10_to_20_docs_pages():
+def test_the_docs_specialist_validates_at_both_scales_on_10_to_20_docs_pages(monkeypatch):
+    monkeypatch.setattr(planner, "get_providers", lambda: {"nebius": object()})  # unsloth-train needs a GPU provider
     t = planner.templates()[3]
     for plan in (t["plan"], planner.reduced(t)["plan"]):
-        assert planner.review(plan)[0] == []  # warnings only: the fine-tune price and tf-deploy wait on spike 1
+        assert planner.review(plan)[0] == []
+    # Lane B (R25): NVIDIA's student, served beside its adapter on one endpoint kept 15 min (R14), no 16 GB merge
+    nodes = {n["id"]: n for n in t["plan"]["nodes"]}
+    assert [n["type"] for n in t["plan"]["nodes"]] == ["web-research", "synth-distilabel", "data-prep", "unsloth-train",
+                                                       "vllm-serve", "judge-eval"]
+    assert nodes["train"]["inputs"]["model"] == nodes["serve"]["inputs"]["model"] == "nvidia/Llama-3.1-Nemotron-Nano-8B-v1"
+    assert (nodes["serve"]["inputs"]["keep_alive_min"], nodes["serve"]["inputs"]["lora_adapter"]) == (
+        15, "${{ nodes.train.outputs.lora_adapter }}")
+    assert nodes["train"]["inputs"]["merge"] is False  # vllm-serve reads the adapter, not merged_model
+    assert planner.estimate(t["plan"])[0]["usd"] == pytest.approx(2.6627, abs=1e-4)  # 25 min of H100 + 20 of L40S, R14
     seeds = t["plan"]["nodes"][0]["inputs"]["seed_urls"]
     assert 10 <= len(set(seeds)) == len(seeds) <= 20
     assert all(re.fullmatch(r"https://docs\.(tokenfactory\.)?nebius\.com(/[a-z0-9-]+)+", u) for u in seeds), seeds
     assert re.findall(r"https://docs\.[\w./-]*[\w-]", planner._knowledge()) == seeds  # the live planner's list, same order
+
+
+def test_the_cpu_variant_judges_the_students_gguf_with_and_without_its_lora(monkeypatch):
+    """R24's fallback on Lane B: no endpoint; base = the student's GGUF, tuned = the same GGUF plus its GGUF LoRA."""
+    monkeypatch.setattr(planner, "get_providers", lambda: {"nebius": object()})
+    docs, cpu = planner.templates()[3:5]
+    for plan in (cpu["plan"], planner.reduced(cpu)["plan"]):
+        assert planner.review(plan)[0] == []
+    assert cpu["plan"]["nodes"][:4] == docs["plan"]["nodes"][:4]  # the same data and training as the GPU template
+    quantize, evaluate = cpu["plan"]["nodes"][4:]
+    assert (quantize["type"], quantize["inputs"]["model"], quantize["inputs"]["lora_adapter"]) == (
+        "quantize", "nvidia/Llama-3.1-Nemotron-Nano-8B-v1", "${{ nodes.train.outputs.lora_adapter }}")
+    gguf = "${{ nodes.quantize.outputs.gguf_file }}"
+    assert (evaluate["inputs"]["base_model_ref"], evaluate["inputs"]["tuned_model_ref"], evaluate["inputs"]["tuned_lora"]) == (
+        gguf, gguf, "${{ nodes.quantize.outputs.gguf_lora }}")
 
 
 async def test_stub_plans_with_the_closest_template_and_calls_nothing(client, monkeypatch):
@@ -146,7 +180,7 @@ async def test_stub_plans_with_the_closest_template_and_calls_nothing(client, mo
     monkeypatch.setattr(budget, "control_plane", None)  # a model call would crash
     templates = planner.templates()
 
-    for intent, t in zip(INTENTS + [DOCS], templates, strict=True):  # each intent maps to its own template
+    for intent, t in zip(INTENTS + [DOCS, DOCS_CPU], templates, strict=True):  # each intent maps to its own template
         r = await client.post("/agent/plan", json={"intent": intent})
         assert r.status_code == 200
         assert set(r.json()) == {"plan", "rationale", "estimate", "warnings", "errors"}
@@ -161,6 +195,7 @@ async def test_stub_plans_with_the_closest_template_and_calls_nothing(client, mo
     ("Distill an expert in the Nebius documentation", "nebius-docs-specialist"),
     ("Distill an expert in Nebius", "nebius-docs-specialist"),
     ("A model which is an expert in US real-estate compliance", "real-estate-compliance"),
+    ("Nebius docs specialist judged on CPU", "nebius-docs-specialist-cpu"),
 ])
 async def test_stub_matching_ignores_stopwords(client, monkeypatch, intent, slug):
     monkeypatch.setenv("STUB", "1")
@@ -199,6 +234,7 @@ async def test_nemotron_super_plans_and_repairs_validation_errors(client, db, tf
     assert "- data-prep (cpu" in system and "lm-eval" not in system  # NODE_REGISTRY, hidden rows left out
     assert "synth: teacher_model" in repair["messages"][-1]["content"]
     assert [c["read_timeout"] for c in tf.calls] == [300, 300]  # a slow plan is never re-sent and billed twice
+    assert not any(c.get("create") for c in tf.calls)  # planning retries; only the report is sent once
     assert await budget.spent_today(db) == pytest.approx(2 * (5000 * 0.30 + 800 * 0.90) / 1e6)  # day ledger (R6)
 
 
@@ -247,6 +283,7 @@ def test_review_checks_structure_refs_and_input_schemas():
         node("Bad", "data-prep", dataset="hf://x"),
         node("h", "synth-distilabel", ["a"], teacher_model="gpt-4o", seed_prompts=["${{ nodes.a.outputs.dataset }}"]),
         node("t", "unsloth-train", train_data="r2://b/train"),
+        node("i", "tf-deploy", job="j"),
     ]})
 
     for expected in [
@@ -257,6 +294,7 @@ def test_review_checks_structure_refs_and_input_schemas():
         "e: unknown input 'colour'",
         "e: dataset: a ref must be exactly one ${{ nodes.<id>.outputs.<name> }}",
         "f: unknown node type 'lm-eval'",  # hidden: the agent never plans it
+        "i: unknown node type 'tf-deploy'",  # hidden: Token Factory retired per-token LoRA deploy (410, spike 1)
         "g: unknown node type 'nope'",
         "Bad: id must be snake_case ([a-z][a-z0-9_]*)",
         "h: seed_prompts: refs resolve only at the top level of inputs",
@@ -293,10 +331,6 @@ class _Finetune(BaseModel):
     train_data: str
 
 
-class _Deploy(BaseModel):
-    job: dict | str
-
-
 class _Judge(BaseModel):
     test_data: str
     base_model_ref: dict | str
@@ -305,7 +339,7 @@ class _Judge(BaseModel):
 
 
 def test_review_enforces_the_knowledge_constraints(monkeypatch):
-    for t, schema in (("tf-finetune", _Finetune), ("tf-deploy", _Deploy), ("judge-eval", _Judge)):
+    for t, schema in (("tf-finetune", _Finetune), ("judge-eval", _Judge)):
         monkeypatch.setitem(NODE_REGISTRY, t, {"description": t, "inputs_schema": schema, "outputs_schema": _Out,
                                                "runtime": "api"})
     tf_ref = {"base_url": TF_BASE, "model": "meta-llama/Llama-3.1-8B-Instruct", "api_key_env": "NEBIUS_API_KEY",
@@ -314,32 +348,25 @@ def test_review_enforces_the_knowledge_constraints(monkeypatch):
         node("nemo", "tf-finetune", model="nvidia/Llama-3.1-Nemotron-Nano-8B-v1", train_data="r2://b/t"),
         node("small", "tf-finetune", model="meta-llama/Llama-3.2-3B-Instruct", train_data="r2://b/t"),
         node("big", "tf-finetune", train_data="r2://b/t"),
-        node("dep_small", "tf-deploy", ["small"], job="${{ nodes.small.outputs.job }}"),
-        node("dep_big", "tf-deploy", ["big"], job="${{ nodes.big.outputs.job }}"),
         node("judge", "judge-eval", test_data="r2://b/test", judge_model="meta-llama/Llama-3.3-70B-Instruct",
              base_model_ref={**tf_ref, "base_url": "https://attacker.example/v1"},
              tuned_model_ref={**tf_ref, "api_key_env": "ORCHAPOD_ENDPOINT_TOKEN", "base_url": "https://e.example/v1"}),
         node("fair", "judge-eval", test_data="r2://b/test", base_model_ref=tf_ref, tuned_model_ref="meta-llama/x"),
-        node("inline", "tf-deploy", job={"job_id": "j", "model": ["not", "a", "string"]}),
     ]}
 
     errors, warnings, _ = planner.review(plan)
 
-    assert [e.split(":")[0] for e in errors] == ["nemo", "dep_small", "judge", "judge", "judge", "inline"]
+    assert [e.split(":")[0] for e in errors] == ["nemo", "judge", "judge", "judge"]
     assert errors[0].startswith("nemo: Token Factory does not fine-tune nvidia/Llama-3.1-Nemotron-Nano-8B-v1")
-    assert errors[1] == ("dep_small: Token Factory has no per-token LoRA deploy for meta-llama/Llama-3.2-3B-Instruct: "
-                         "serve the tf-finetune lora_adapter with vllm-serve")
-    assert errors[2].startswith("judge: base_model_ref: refused ModelRef")
-    assert errors[3].startswith("judge: tuned_model_ref: refused ModelRef")
-    assert errors[4].startswith("judge: judge_model must be a Nemotron model on Token Factory")
-    assert any(w.startswith("dep_big: per-token LoRA deploy is unverified") for w in warnings)
+    assert errors[1].startswith("judge: base_model_ref: refused ModelRef")
+    assert errors[2].startswith("judge: tuned_model_ref: refused ModelRef")
+    assert errors[3].startswith("judge: judge_model must be a Nemotron model on Token Factory")
     assert any(w.startswith("big: no fine-tune price") for w in warnings)
 
 
 MODEL_REF_CASES = [  # (value of judge-eval's base_model_ref, its needs, refused?)
     ("${{ nodes.serve.outputs.model_ref }}", ["serve"], False),
     ("${{ nodes.serve.outputs.base_model_ref }}", ["serve"], False),
-    ("${{ nodes.dep.outputs.model_ref }}", ["dep"], False),
     ("${{ nodes.quant.outputs.gguf_file }}", ["quant"], False),
     ("${{ nodes.quant.outputs.gguf_f16 }}", ["quant"], False),
     ("meta-llama/Llama-3.1-8B-Instruct", [], False),
@@ -355,12 +382,11 @@ MODEL_REF_CASES = [  # (value of judge-eval's base_model_ref, its needs, refused
 
 @pytest.mark.parametrize("value, needs, refused", MODEL_REF_CASES)
 def test_review_checks_where_a_model_ref_comes_from(value, needs, refused, monkeypatch):
-    for t, schema in (("vllm-serve", _Model), ("quantize", _Model), ("tf-deploy", _Deploy), ("judge-eval", _Judge)):
+    for t, schema in (("vllm-serve", _Model), ("quantize", _Model), ("judge-eval", _Judge)):
         monkeypatch.setitem(NODE_REGISTRY, t, {"description": t, "inputs_schema": schema, "outputs_schema": _Out,
                                                "runtime": "api"})
     plan = {"name": "p", "nodes": [
         node("prep", "data-prep", dataset="hf://x"), node("serve", "vllm-serve"), node("quant", "quantize"),
-        node("dep", "tf-deploy", job="j"),
         node("judge", "judge-eval", needs, test_data="r2://b/t", base_model_ref=value, tuned_model_ref="meta-llama/x"),
     ]}
     judge = [e for e in errors_of(plan) if e.startswith("judge: ")]  # (the fake types are not NodeTypes here)
@@ -376,24 +402,24 @@ def test_estimates_never_go_negative_and_count_page_extraction():
 
 
 def test_tf_finetune_is_priced_from_its_trained_tokens_once_the_base_has_a_price(monkeypatch):
-    docs = planner.templates()[3]  # synth 300 rows -> data-prep train_split 0.8 -> tf-finetune 2 epochs on Llama 3.1 8B
-    est, warnings = planner.estimate(docs["plan"])
+    estate = planner.templates()[0]  # synth 300 rows -> data-prep train_split 0.8 -> tf-finetune 2 epochs on Llama 3.2 3B
+    est, warnings = planner.estimate(estate["plan"])
     assert est["by_node"]["finetune"]["usd"] == 0.5  # TYPICAL until spike 1 fills the price ...
-    assert "finetune: no fine-tune price for meta-llama/Llama-3.1-8B-Instruct yet (spike 1); the estimate assumes $0.50" in warnings
+    assert "finetune: no fine-tune price for meta-llama/Llama-3.2-3B-Instruct yet (spike 1); the estimate assumes $0.50" in warnings
 
-    monkeypatch.setitem(PRICES["token_factory_finetune"], "meta-llama/Llama-3.1-8B-Instruct", 0.4e-6)  # $0.40 per 1M
-    est, warnings = planner.estimate(docs["plan"])
+    monkeypatch.setitem(PRICES["token_factory_finetune"], "meta-llama/Llama-3.2-3B-Instruct", 0.4e-6)  # $0.40 per 1M
+    est, warnings = planner.estimate(estate["plan"])
     assert est["by_node"]["finetune"]["usd"] == pytest.approx(300 * 0.8 * 250 * 2 * 0.4e-6)  # rows x tokens x epochs x $
     assert not [w for w in warnings if w.startswith("finetune:")]
-    small = planner.reduced(docs)["estimate"]  # 40 rows, 1 epoch
+    small = planner.reduced(estate)["estimate"]  # 40 rows, 1 epoch
     assert small["by_node"]["finetune"]["usd"] == pytest.approx(40 * 0.8 * 250 * 0.4e-6)
-    assert small["usd"] <= budget.run_cap(0.1)  # ... which decides `fits` on the public app
 
-    plan = copy.deepcopy(docs["plan"])
+    plan = copy.deepcopy(estate["plan"])
     plan["nodes"][3]["inputs"]["hyperparameters"] = {"n_epochs": 3}  # wins over n_epochs, as in the node
     assert planner.estimate(plan)[0]["by_node"]["finetune"]["usd"] == pytest.approx(300 * 0.8 * 250 * 3 * 0.4e-6)
     hf = {"name": "p", "nodes": [node("prep", "data-prep", dataset="hf://x"),
-                                 node("ft", "tf-finetune", ["prep"], train_data="${{ nodes.prep.outputs.train_jsonl }}")]}
+                                 node("ft", "tf-finetune", ["prep"], model="meta-llama/Llama-3.2-3B-Instruct",
+                                      train_data="${{ nodes.prep.outputs.train_jsonl }}")]}
     est, warnings = planner.estimate(hf)
     assert (est["by_node"]["ft"]["usd"], warnings) == (0.5, [
         "ft: the rows of train_data are unknown (not from synth-distilabel); the estimate assumes $0.50"])
@@ -461,7 +487,28 @@ async def agent_run(db, status):
     return run
 
 
-async def test_report_waits_for_a_terminal_run_then_lightning_writes_it_once(client, db, tf):
+@pytest.fixture
+async def reports(db, monkeypatch):
+    """The background report writer (routes/agent.report_later) on the test database; `await reports()` waits for it, as
+    the teardown does."""
+    monkeypatch.setattr("api.database.AsyncSessionLocal",
+                        async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False))
+
+    async def settle():
+        while agent_routes._reporting:
+            await asyncio.wait(set(agent_routes._reporting.values()))
+    yield settle
+    await settle()
+
+
+async def polled(client, reports, run_id) -> dict:
+    """The report as a poller sees it: a GET of the ended run starts the writer if none runs, a later GET reads it."""
+    await client.get(f"/agent/runs/{run_id}/report")
+    await reports()
+    return (await client.get(f"/agent/runs/{run_id}/report")).json()
+
+
+async def test_super_writes_the_report_in_the_background_once_the_run_ends(client, db, tf, reports):
     run = await agent_run(db, RunStatus.RUNNING)
     r = (await client.get(f"/agent/runs/{run.id}/report")).json()
     assert (r["ready"], r["markdown"], r["intent"], r["status"]) == (False, None, "Q&A data", "running")
@@ -470,48 +517,115 @@ async def test_report_waits_for_a_terminal_run_then_lightning_writes_it_once(cli
     run.status = RunStatus.SUCCEEDED
     await db.commit()
     tf.replies = [(200, "## What ran\nsynth, then prep")]
+    assert (await client.get(f"/agent/runs/{run.id}/report")).json()["ready"] is False  # the GET never waits on Nemotron
+    await reports()
     r = (await client.get(f"/agent/runs/{run.id}/report")).json()
 
-    assert (r["ready"], r["markdown"]) == (True, "## What ran\nsynth, then prep")
-    assert tf.requests[0]["model"] == LIGHTNING and "Q&A data" in tf.requests[0]["messages"][1]["content"]
-    assert (await client.get(f"/agent/runs/{run.id}/report")).json()["markdown"] == r["markdown"]
+    assert (r["ready"], r["markdown"]) == (True, "## qa-data: succeeded\n\n## What ran\nsynth, then prep")  # names the plan
+    sent = tf.requests[0]
+    assert (sent["model"], sent["chat_template_kwargs"]) == (SUPER, {"enable_thinking": False})
+    assert "Q&A data" in sent["messages"][1]["content"] and (tf.calls[0]["read_timeout"], tf.calls[0]["create"]) == (30, True)
+    assert (await polled(client, reports, run.id))["markdown"] == r["markdown"]
     assert len(tf.requests) == 1  # cached in the DB (R8)
     ledger = (await db.scalars(select(Spend).where(Spend.source == "reporter"))).all()
-    assert [float(x.usd) for x in ledger] == [pytest.approx((5000 * 0.06 + 800 * 0.24) / 1e6)]  # day ledger (R6)
+    assert [float(x.usd) for x in ledger] == [pytest.approx((5000 * 0.30 + 800 * 0.90) / 1e6)]  # day ledger (R6)
     assert (await client.get(f"/agent/runs/{uuid.uuid4()}/report")).status_code == 404
 
 
-async def test_report_falls_back_to_the_template(client, db, monkeypatch, tf):
+async def test_the_report_is_written_as_the_run_ends(client, db, provider, launched, reports, monkeypatch):
+    monkeypatch.setenv("STUB", "1")
+    provider.script = {"synth": {"outputs": {"dataset": "r2://b/d"}}}
+    r = await client.post("/agent/run", json={"intent": "Q&A data", "plan": GOOD})
+    await asyncio.wait_for(launched[-1], 5)
+    await reports()
+
+    stored = await db.get(AgentRun, uuid.UUID(r.json()["run_id"]))
+    await db.refresh(stored)
+    assert stored.report_md.startswith("## qa-data: succeeded")  # before any GET asked for it
+
+
+async def test_the_report_call_is_sent_once_then_the_template_stands_in(client, db, tf, reports):
+    """create=True: a call that may have landed is never re-sent (each send may bill; Lightning once took 4 x 120 s)."""
+    for reply in ((None, httpx.ReadTimeout("no reply in 30 s")), (503, "busy")):
+        run = await agent_run(db, RunStatus.SUCCEEDED)
+        tf.replies, tf.requests = [reply, (200, "## a re-sent report")], []
+        md = (await polled(client, reports, run.id))["markdown"]
+        assert md.startswith("## qa-data: succeeded\n\n**Intent:** Q&A data") and len(tf.requests) == 1, reply
+
+
+async def test_a_report_is_written_once_however_often_it_is_asked_for(client, db, tf, reports):
+    run = await agent_run(db, RunStatus.SUCCEEDED)
+    tf.replies = [(200, "## What ran\nsynth, then prep")]
+    agent_routes.report_later(run.id, 1.0)
+    agent_routes.report_later(run.id, 1.0)  # the executor's ask and a poll at once
+    await reports()
+    assert len(tf.requests) == 1 and (await client.get(f"/agent/runs/{run.id}/report")).json()["ready"]
+
+
+async def test_a_report_that_was_not_written_is_tried_again_on_the_next_poll(client, db, tf, reports, monkeypatch, caplog):
+    run, real, calls = await agent_run(db, RunStatus.SUCCEEDED), planner.write_report, []
+
+    async def fails_once(*args):
+        calls.append(1)
+        if len(calls) == 1:
+            raise ConnectionError("database gone")
+        return await real(*args)
+
+    monkeypatch.setattr(planner, "write_report", fails_once)
+    tf.replies = [(200, "## What ran\nsynth, then prep")]
+    assert (await polled(client, reports, run.id))["ready"] is False and "was not written" in caplog.text
+    r = await polled(client, reports, run.id)
+    assert r["ready"] and r["markdown"].startswith("## qa-data: succeeded") and len(tf.requests) == 1
+
+
+def test_the_template_report_keeps_name_intent_and_error_on_one_line_each():
+    run = SimpleNamespace(plan={"name": "a\n" + "b" * 100}, intent="x\n## How to use it", estimate={"usd": 1})
+    md = planner.template_report(run, {"status": "failed", "cost_usd": 0, "error": "boom\n## Cost", "nodes": [],
+                                       "artifacts": []})
+    assert [x for x in md.splitlines() if x.startswith("#")] == ["## a " + "b" * 78 + ": failed"]  # at most 80
+
+
+async def test_a_plan_name_stays_one_plain_title_line(client, db, reports, monkeypatch):
+    monkeypatch.setenv("STUB", "1")
+    run = await agent_run(db, RunStatus.SUCCEEDED)
+    (await db.get(AgentRun, run.id)).plan = {**GOOD, "name": "qa\n## Cost\n$0.00 of $0.00 estimated"}
+    await db.commit()
+    lines = (await polled(client, reports, run.id))["markdown"].splitlines()
+    assert [x for x in lines if x.startswith("#")] == ["## qa ## Cost $0.00 of $0.00 estimated: succeeded"]
+
+
+async def test_report_falls_back_to_the_template(client, db, monkeypatch, tf, reports):
     failed = await agent_run(db, RunStatus.FAILED)
     tf.replies = [(400, "no such model")]
-    md = (await client.get(f"/agent/runs/{failed.id}/report")).json()["markdown"]
+    md = (await polled(client, reports, failed.id))["markdown"]
     assert md.startswith("## qa-data: failed") and "Q&A data" in md and "$0.0200 of $0.03 estimated" in md
 
     garbled = await agent_run(db, RunStatus.SUCCEEDED)
     tf.replies = [(200, {"model": "m", "choices": [{"index": 0}]})]  # a 200 the client cannot read
-    assert (await client.get(f"/agent/runs/{garbled.id}/report")).json()["markdown"].startswith("## qa-data: succeeded")
+    assert (await polled(client, reports, garbled.id))["markdown"].startswith("## qa-data: succeeded")
 
     monkeypatch.setenv("STUB", "1")
     done = await agent_run(db, RunStatus.SUCCEEDED)
-    md = (await client.get(f"/agent/runs/{done.id}/report")).json()["markdown"]
+    md = (await polled(client, reports, done.id))["markdown"]
     assert "[prep/dataset](/artifacts/" in md and len(tf.requests) == 2  # STUB calls nothing
     assert "prep/logs" not in md  # results, not the node's log file
 
 
-async def test_a_report_written_while_the_run_is_retried_is_dropped(client, db, monkeypatch):
+async def test_a_report_written_while_the_run_is_retried_is_dropped(client, db, monkeypatch, reports):
     run = await agent_run(db, RunStatus.FAILED)
     run.finished_at = utcnow()
     await db.commit()
 
-    async def slow_lightning(agent_run_, summary, db_, scale):
+    async def slow_super(agent_run_, summary, db_, scale):
         async with async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)() as other:
-            retried = await other.get(Run, run.id)  # Retry node lands while Lightning writes
+            retried = await other.get(Run, run.id)  # Retry node lands while Super writes
             retried.status, retried.finished_at = RunStatus.PROVISIONING_GPU, None
             await other.commit()
         return "## a report of the attempt that was retried"
 
-    monkeypatch.setattr(planner, "write_report", slow_lightning)
-    r = (await client.get(f"/agent/runs/{run.id}/report")).json()
+    monkeypatch.setattr(planner, "write_report", slow_super)
+    r = await polled(client, reports, run.id)
+    await reports()
 
     assert (r["ready"], r["markdown"]) == (False, None)
     stored = await db.get(AgentRun, run.id)
@@ -519,14 +633,14 @@ async def test_a_report_written_while_the_run_is_retried_is_dropped(client, db, 
     assert stored.report_md is None  # the retried run gets its own report when it ends
 
 
-async def test_retry_clears_the_cached_report(client, db, monkeypatch):
+async def test_retry_clears_the_cached_report(client, db, monkeypatch, reports):
     monkeypatch.setenv("STUB", "1")
     monkeypatch.setattr(ex, "launch", lambda run_id, scale: None)
     run = await agent_run(db, RunStatus.FAILED)
     prep = (await db.scalars(select(NodeRun).where(NodeRun.run_id == run.id, NodeRun.node_id == "prep"))).one()
     prep.status, prep.error = NodeStatus.FAILED, "exit 1: boom"
     await db.commit()
-    assert "exit 1: boom" in (await client.get(f"/agent/runs/{run.id}/report")).json()["markdown"]
+    assert "exit 1: boom" in (await polled(client, reports, run.id))["markdown"]
 
     assert (await client.post(f"/runs/{run.id}/nodes/prep/retry")).status_code == 202
     stored = await db.get(AgentRun, run.id)

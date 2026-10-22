@@ -75,6 +75,7 @@ def last_error():
 def test_registry_row_and_defaults():
     row = NODE_REGISTRY[NodeType.TF_DEPLOY]
     assert (row["runtime"], row["inputs_schema"], row["outputs_schema"]) == ("api", TFDeployInputs, TFDeployOutputs)
+    assert row["hidden"] is True  # retired: POST /v0/models answers 410 for every base (spike 1), so no plan uses it
     assert TFDeployInputs(job=JOB_URI).name is None and TFDeployInputs(job=JOB).job == JOB
     assert set(TFDeployOutputs.model_fields) == {"model_ref"}
 

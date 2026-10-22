@@ -8,9 +8,9 @@ chat rows: train_data, and eval_data ("" or an empty file = no validation). Trai
 all-linear is Unsloth's q, k, v, o, gate, up, down; a NemotronH student trains attention, in_proj and the shared experts,
 because PEFT refuses Mamba out_proj and conv1d and the router stays frozen. Every checkpoint_steps a
 checkpoint_step_NNNNNN goes to the bucket (and validation runs); a retry resumes from ORCHAPOD_RESUME_CHECKPOINT_URI.
-Outputs: lora_adapter (PEFT), merged_model (16-bit HF, vllm-serve's model) and metrics_json with
-loss_curve [{step, train_loss, valid_loss}]. All I/O goes through the SDK. GPU time is billed as it runs, so
-ORCHAPOD_MAX_COST_USD stops training. STUB=1: no GPU and no model download, tiny fixed outputs, a 2-point loss curve.
+Outputs: lora_adapter (PEFT), merged_model (16-bit HF, vllm-serve's model; merge false skips it, for plans that read
+only the adapter) and metrics_json with loss_curve [{step, train_loss, valid_loss}]. All I/O goes through the SDK. GPU
+time is billed as it runs, so ORCHAPOD_MAX_COST_USD stops training. STUB=1: no GPU and no model download, tiny fixed outputs, a 2-point loss curve.
 """
 
 import contextlib
@@ -111,8 +111,9 @@ def train(model_id: str, rows: list[list[dict]], p: dict, meter: Meter, adapter_
     trainer.train(resume_from_checkpoint=str(checkpoint.download_checkpoint(resume, WORK / "resume")) if resume else None)
     model.save_pretrained(str(adapter_dir))
     tok.save_pretrained(str(adapter_dir))
-    log.info("merging the adapter into 16-bit weights")
-    model.save_pretrained_merged(str(merged_dir), tok, save_method="merged_16bit")
+    if p["merge"]:
+        log.info("merging the adapter into 16-bit weights")
+        model.save_pretrained_merged(str(merged_dir), tok, save_method="merged_16bit")
     return [curve[step] for step in sorted(curve)]
 
 
@@ -127,7 +128,8 @@ def main():
          "max_steps": int(inputs.get("max_steps") or 500), "learning_rate": float(inputs.get("learning_rate") or 2e-4),
          "target_modules": str(inputs.get("target_modules") or "all-linear"),
          "checkpoint_steps": int(inputs.get("checkpoint_steps") or 100),
-         "load_in_4bit": str(inputs.get("load_in_4bit")).lower() in ("true", "1")}
+         "load_in_4bit": str(inputs.get("load_in_4bit")).lower() in ("true", "1"),
+         "merge": str(inputs.get("merge", True)).lower() not in ("false", "0")}
     rows = [read_rows(str(inputs.get(name) or "")) for name in ("train_data", "eval_data")]
     if not rows[0]:
         fail("no training rows in train_data")
@@ -139,8 +141,9 @@ def main():
             adapter_dir.mkdir(parents=True, exist_ok=True)
             (adapter_dir / "adapter_config.json").write_text(json.dumps({
                 "peft_type": "LORA", "base_model_name_or_path": model_id, "r": p["lora_r"], "lora_alpha": p["lora_alpha"]}))
-            merged_dir.mkdir(parents=True, exist_ok=True)
-            (merged_dir / "config.json").write_text(json.dumps({"stub": True, "base_model": model_id}))
+            if p["merge"]:
+                merged_dir.mkdir(parents=True, exist_ok=True)
+                (merged_dir / "config.json").write_text(json.dumps({"stub": True, "base_model": model_id}))
         else:
             import torch
 
@@ -148,7 +151,8 @@ def main():
             meter()  # an unpriced GPU fails here, before the model download (R5)
             curve = train(model_id, rows, p, meter, adapter_dir, merged_dir)
         io.write_output("lora_adapter", adapter_dir, kind="model", metadata={"format": "peft", "base_model": model_id})
-        io.write_output("merged_model", merged_dir, kind="model", metadata={"format": "hf", "base_model": model_id})
+        if p["merge"]:
+            io.write_output("merged_model", merged_dir, kind="model", metadata={"format": "hf", "base_model": model_id})
         io.write_metrics({"model": model_id, **p, "train_rows": len(rows[0]), "eval_rows": len(rows[1]),
                           "steps": curve[-1]["step"] if curve else 0, "loss_curve": curve,
                           "wall_s": round(time.monotonic() - start)})

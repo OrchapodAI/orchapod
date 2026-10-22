@@ -95,7 +95,7 @@ def test_registry_row_is_a_16_bit_lora_gpu_node_on_the_spike_4_student():
     meta = NODE_REGISTRY[NodeType.UNSLOTH_TRAIN]
     assert meta["runtime"] == "gpu" and set(UnslothTrainOutputs.model_fields) == {"lora_adapter", "merged_model"}
     i = UnslothTrainInputs(train_data=TRAIN)
-    assert (i.model, i.load_in_4bit, i.max_steps, i.lora_r, i.lora_alpha) == (STUDENT, False, 500, 16, 32)
+    assert (i.model, i.load_in_4bit, i.max_steps, i.lora_r, i.lora_alpha, i.merge) == (STUDENT, False, 500, 16, 32, True)
 
 
 def test_trains_16_bit_lora_with_the_templates_bos_and_writes_adapter_merged_and_loss_curve(node, gpu):
@@ -175,3 +175,13 @@ def test_stub_writes_small_fixed_outputs_without_gpu_libraries(node, monkeypatch
     assert json.loads((outs["lora_adapter"][0] / "adapter_config.json").read_text())["base_model_name_or_path"] == STUDENT
     assert (outs["merged_model"][0] / "config.json").exists() and len(metrics["loss_curve"]) == 2
     assert not ut.cost.add.called
+
+
+@pytest.mark.parametrize("stub", [False, True], ids=["gpu", "stub"])
+def test_merge_false_writes_the_adapter_and_skips_the_16_bit_merge(node, gpu, monkeypatch, stub):
+    """Plans that read only lora_adapter (vllm-serve --enable-lora, quantize) skip the merge and its ~16 GB upload."""
+    if stub:
+        monkeypatch.setenv("STUB", "1")
+    outs, metrics = node(merge=False)
+    assert set(outs) == {"lora_adapter"} and (outs["lora_adapter"][0] / "adapter_config.json").exists() is stub
+    assert metrics["merge"] is False and not gpu.model.save_pretrained_merged.called

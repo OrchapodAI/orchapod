@@ -102,6 +102,20 @@ def test_create_retried_on_429_and_connect_errors(replay, ft_priced, train, site
     assert len(seen) == 4
 
 
+@pytest.mark.parametrize("first", [lambda: httpx.Response(503, text="busy"), lambda: httpx.ReadTimeout("slow"),
+                                   lambda: httpx.RemoteProtocolError("dropped")], ids=["5xx", "read_timeout", "dropped"])
+def test_chat_create_is_sent_once_when_it_may_have_landed(replay, sleeps, first):
+    http, seen = replay(first())
+    with pytest.raises(ProviderError) as e:
+        TokenFactory(http=http).chat(MSGS, create=True)
+    assert (e.value.kind, len(seen), sleeps) == ("server", 1, [])
+
+
+def test_chat_create_still_retries_429_and_connect_errors(replay, sleeps):
+    http, seen = replay(httpx.Response(429, headers={"Retry-After": "2"}), httpx.ConnectError("refused"), completion())
+    assert TokenFactory(http=http).chat(MSGS, create=True)["text"] == "Hello." and len(seen) == 3
+
+
 def test_any_transport_error_is_retried_then_a_provider_error(replay):
     http, seen = replay(*[httpx.ProxyError("proxy down") for _ in range(4)])
     with pytest.raises(ProviderError) as e:

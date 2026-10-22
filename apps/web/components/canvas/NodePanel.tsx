@@ -38,7 +38,7 @@ function FormInput({ field: f, value, onChange }: { field: FormField; value: unk
   const help = { "aria-describedby": `help-${f.key}` };
   switch (f.kind) {
     case "bool":
-      return <input type="checkbox" {...help} defaultChecked={Boolean(value)} onChange={(e) => onChange(e.target.checked)} />;
+      return <input type="checkbox" {...help} defaultChecked={Boolean(value ?? f.default)} onChange={(e) => onChange(e.target.checked)} />;
     case "number":
       // focus:invalid: too, or the focus border hides the red one while the user types
       return <input type="number" step="any" max={f.max} {...help} defaultValue={asText(value)} placeholder={f.placeholder}

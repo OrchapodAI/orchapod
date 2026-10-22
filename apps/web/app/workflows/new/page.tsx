@@ -8,10 +8,10 @@ import { STARTER_YAML } from "@/lib/workflowYaml";
 
 type Mode = "prompt" | "yaml";
 
-const EXAMPLE_PROMPTS = [
-  "Fine-tune Qwen3-4B on my customer support dataset, then deploy as an API",
-  "Distill Qwen3-4B into a 1.7B model for edge deployment, quantize to GGUF",
-  "Fine-tune Llama 3.1 8B on Python code, evaluate on coding benchmarks, then serve",
+const EXAMPLE_PROMPTS = [  // the Agent's canonical intents (docs/agent_knowledge.md): every one plans without errors
+  "Generate synthetic data of movie likes, shares and subscribes",
+  "Quantize a model which is an expert in maths",
+  "Distill a Nebius docs specialist: fine-tune NVIDIA Nemotron Nano 8B on the Nebius AI Cloud and Token Factory docs",
 ];
 
 export default function NewWorkflowPage() {

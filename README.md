@@ -72,7 +72,7 @@ Under the hood:
 
 ### Nemotron on Nebius Token Factory
 
-A run planned from a sentence starts with a Nemotron call (the plan), a run started from a template skips it, and a finished run ends with one (the report, which Nemotron 3.5 Lightning writes, or a deterministic template when `STUB=1` is set or that call fails); the nodes between them make their own. All calls go to `https://api.tokenfactory.nebius.com/v1` (OpenAI-compatible, key `NEBIUS_API_KEY`) through one client that retries, prices every call from a single table, refuses to send our key to any other host and honours `STUB=1`.
+A run planned from a sentence starts with a Nemotron call (the plan); a run started from a template skips it. The nodes make their own calls. When the run ends, Nemotron 3 Super writes the report once, in the background, titled `## <plan>: <status>`: one call of at most 30 s, with thinking off. A deterministic template writes it instead when `STUB=1` is set or that call fails. Spike 2 measured about 2 s per report on Super, against 16–110 s on Nemotron 3.5 Lightning. All calls go to `https://api.tokenfactory.nebius.com/v1` (OpenAI-compatible, key `NEBIUS_API_KEY`) through one client that retries, prices every call from a single table, refuses to send our key to any other host and honours `STUB=1`.
 
 | Role | Model id | Where |
 | --- | --- | --- |
@@ -80,7 +80,7 @@ A run planned from a sentence starts with a Nemotron call (the plan), a run star
 | Teacher | `nvidia/nemotron-3-super-120b-a12b` | `synth-distilabel`: grounded Q&A, structured rows, self-instruct, evol-instruct, magpie |
 | Judge | `nvidia/Nemotron-3-Ultra-550b-a55b` | `judge-eval`: base vs tuned, reference-guided, both answer orders |
 | Quality filter | `nvidia/Nemotron-3_5-Lightning` | `data-prep`: optional, scores each chat row 1 to 5 and drops rows below 3; the node fails if more than max(2, a tenth) of its scoring calls fail |
-| Reporter | `nvidia/Nemotron-3_5-Lightning` | Orchapod Agent: writes the run report (what ran, metrics, cost against the estimate) |
+| Reporter | `nvidia/nemotron-3-super-120b-a12b` | Orchapod Agent: writes the run report when the run ends (what ran, metrics, cost against the estimate) |
 
 No other model provider is called: the Anthropic and OpenAI code paths (the planner's Claude path, the synthetic-data teacher branches and the evaluation's judge fallback) were deleted during the build, and the executor forwards no other model provider's key to the node containers.
 

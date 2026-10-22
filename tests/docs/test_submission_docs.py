@@ -88,12 +88,13 @@ def test_findings_that_cite_the_openapi_name_its_version():
     assert [f[:60] for f in FINDINGS if "OpenAPI" in f and "20261020" not in f] == []
 
 
-def test_the_report_is_written_by_lightning_or_a_deterministic_template():
-    # contracts "Agent API": STUB=1, or a failed Lightning call, gets the template.
+def test_the_report_is_written_by_super_or_a_deterministic_template():
+    # contracts "Agent API" (backend-w7): Super writes it when the run ends; STUB=1, or a failed call, gets the template.
     for name, text in {"README": README, "devpost": DEVPOST}.items():
         line = next((ln for ln in text.splitlines() if "deterministic template" in ln), "")
         assert line, f"{name}: no line says a deterministic template can write the report"
-        assert "Lightning" in line, f"{name}: that line does not say Lightning writes the report"
+        assert "Nemotron 3 Super writes" in line and "Lightning writes" not in line, f"{name}: Super writes the report"
+    assert "| Reporter | `nvidia/nemotron-3-super-120b-a12b` |" in README
 
 
 def test_docs_have_no_stale_strings_or_bare_todos():

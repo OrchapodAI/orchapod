@@ -78,6 +78,12 @@ def test_setup_and_license_lines():
         assert line in README, f"README must contain: {line}"
 
 
+def test_a_code_block_starts_the_web_app_on_pnpm_11():
+    # qa-w10 F1: on pnpm 11 a plain `pnpm dev` dies after install's ERR_PNPM_IGNORED_BUILDS; the fix in prose was missed.
+    blocks = re.findall(r"```bash\n(.*?)```", README, re.S)
+    assert any("pnpm --config.verify-deps-before-run=false dev" in b for b in blocks)
+
+
 def test_no_stale_strings():
     assert [s for s in STALE if s in README] == []
 

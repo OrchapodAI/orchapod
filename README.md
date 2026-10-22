@@ -6,8 +6,7 @@
 
 An entry in the **Nebius × NVIDIA Global AI Hackathon**, track **Best Apps and Agents**. It runs on **Nebius Token Factory** and **Nebius AI Cloud**, calls **NVIDIA Nemotron** models at runtime and uses **Tavily** for web research.
 
-- TODO(D8): links to the hosted demo, the 3-minute video and the Devpost entry, each checked logged out.
-- TODO(D8): delete this note. Status on 2026-10-22: intents #2 and #3 have run live through the Agent on real Token Factory, for $0.1007 and $0.0175 (Results). On deterministic stubs (no key, $0), the three canonical intents and the golden path pass end to end. The live golden run is still to come: it needs a Tavily key, GPU quota and the hosted API (Nebius Jobs report to a public https control URL). The repository and its container images stay private until the freeze (TODO(G3)). Sections marked TODO(D8) wait for evidence from real runs (run ids, costs, win rates, screenshots) and claim nothing yet.
+**Status (2026-10-22).** Intents #2 and #3 have run live through the Agent on real Token Factory, for $0.1007 and $0.0175 (Results). On deterministic stubs (no key, $0), the three canonical intents and the golden path pass end to end, and [Setup](#setup) runs them on your machine. The live golden run still needs a Tavily key, GPU quota and the hosted API (Nebius Jobs report to a public https control URL). TODO(D8): that run, on the topic Hari picks by D6, plus links to the hosted demo, the 3-minute video and the Devpost entry, each checked logged out; then this note goes.
 
 ## What it is
 
@@ -18,7 +17,7 @@ Orchapod is an open-source platform for the whole post-training lifecycle of a l
 
 A finished run shows what it made: an eval view (win rate; wins, ties and losses; the judge's consistency between the two answer orders; exact match where it applies; every judged sample with the judge's reasoning in both orders), a dataset card (download link and per-field stats) and, when the run serves a model, a compare playground that streams one prompt to the base and tuned models side by side.
 
-Three intents define "done"; each must run from the chat box with no manual edits, and each has a template card. Two more cards distil a Nebius docs specialist, the golden path: the fourth serves the tuned student from a GPU endpoint, the fifth judges it on CPU without one (TODO(D8): Hari confirms the golden run's topic by D6).
+Three intents define "done"; each must run from the chat box with no manual edits, and each has a template card. Two more cards distil a Nebius docs specialist, the golden path: the fourth serves the tuned student from a GPU endpoint, the fifth judges it on CPU without one.
 
 | Intent | Template card | What the Agent plans |
 | --- | --- | --- |
@@ -27,8 +26,6 @@ Three intents define "done"; each must run from the chat box with no manual edit
 | "Quantize a model which is an expert in maths." | **A maths expert quantized to GGUF** | hf-download (Qwen2.5-Math-1.5B-Instruct) → quantize (GGUF q4_k_m on CPU, keeping the f16 GGUF as the baseline) → data-prep (50 GSM8K test questions) → judge-eval (f16 vs q4_k_m: exact match on all 50, Nemotron 3 Ultra judges 20) → report |
 | "Distill a Nebius docs specialist: fine-tune NVIDIA Nemotron Nano 8B on the Nebius AI Cloud and Token Factory docs" | **Nemotron Nano 8B tuned as a Nebius docs specialist** | web-research (20 Nebius docs pages) → synth-distilabel (grounded Q&A) → data-prep → unsloth-train (Nemotron Nano 8B, 16-bit LoRA on an H100 Serverless Job) → vllm-serve (base and adapter on one Serverless Endpoint; TODO(D8): untested) → judge-eval (base vs tuned) → report |
 | "Distill a Nebius docs specialist and judge it on CPU without an endpoint: train Nemotron Nano 8B, then compare base and tuned" | **Nemotron Nano docs specialist, judged on CPU** | web-research (the same 20 pages) → synth-distilabel (grounded Q&A) → data-prep → unsloth-train (Nemotron Nano 8B, H100 Serverless Job) → quantize (the student to GGUF q4_k_m, its adapter to a GGUF LoRA) → judge-eval (llama.cpp on CPU: the GGUF against the GGUF plus the LoRA; TODO(D8): untested at 8B) → report |
-
-On stubs, the three canonical intents and the golden path pass end to end. Intents #2 and #3 have also run live through the Agent on real Token Factory (Results). TODO(D8): the live golden run.
 
 ## Why
 
@@ -118,11 +115,13 @@ make check                      # ruff + unit tests + web tests; no keys, no spe
 
 `make up` publishes those four ports, so stop anything already listening on them first. On pnpm 9 (as in CI), run `make check PNPM=pnpm`.
 
-**A first run without keys.** `python scripts/e2e_agent.py --stub` builds the node images it needs and runs the three canonical intents and the golden path through the Agent API on deterministic stubs, for $0. Each intent is planned, run and reported. The golden path posts template 4's full plan straight to `/agent/run`, and its `unsloth-train` image is a small stub stage, not the 20 GB CUDA image. `make check E2E=1` runs it after `scripts/e2e_demo.py --stub` (intent #2 through the workflow API), and both are strict: a failed intent, or a canonical plan that names a node that does not exist, fails them. They start their own API with `STUB=1` and a throwaway database, need `make up`, and rebuild the local `orchapod/<node>:dev` images. Their API listens on 127.0.0.1, which node containers reach through Docker Desktop (macOS, Windows) but not on Linux; there, set `E2E_BIND_HOST` to Docker's bridge gateway (usually 172.17.0.1) on a throwaway machine, never the hosted VM (TODO(D8): not yet tried on Linux). Recorded on 2026-10-22 on NebiusHackathon @ 3b7bf07: `make check E2E=1` exited 0 with `4 PASS` (`hackathon/LOG.md`, 2026-10-22T07:27Z).
+**A first run without keys.** `python scripts/e2e_agent.py --stub` builds the node images it needs and runs the three canonical intents and the golden path through the Agent API on deterministic stubs, for $0. Each intent is planned, run and reported. The golden path posts template 4's full plan straight to `/agent/run`, and its `unsloth-train` image is a small stub stage, not the 20 GB CUDA image. The first time, the setup and this run download about 1.8 GB in all (the Postgres, Redis and MinIO images, the nodes' base images, and the pip and pnpm packages) and use about 7 GB of disk after the image builds. Each image build may take 600 s, pulls included, so a slow link can time out on `quantize`. With warm caches, a fresh clone reached a green `make check E2E=1` in 6 min 38 s (`hackathon/briefs/2026-10-22-qa-w10-report.md`).
+
+`make check E2E=1` runs it after `scripts/e2e_demo.py --stub` (intent #2 through the workflow API), and both are strict: a failed intent, or a canonical plan that names a node that does not exist, fails them. They start their own API with `STUB=1` and a throwaway database, need `make up`, and rebuild the local `orchapod/<node>:dev` images. Their API listens on 127.0.0.1, which node containers reach through Docker Desktop (macOS, Windows) but not on Linux; there, set `E2E_BIND_HOST` to Docker's bridge gateway (usually 172.17.0.1) on a throwaway machine, never the hosted VM (TODO(D8): not yet tried on Linux). Recorded on 2026-10-22 on NebiusHackathon @ 3b7bf07: `make check E2E=1` exited 0 with `4 PASS` (`hackathon/LOG.md`, 2026-10-22T07:27Z).
 
 **The app.** Two lines of `.env` decide what your browser can do:
 
-- `STUB=1` runs every node on deterministic stubs with no key. Left blank, as shipped, the API needs `NEBIUS_API_KEY` and `TAVILY_API_KEY`, and without the first `POST /agent/plan` answers 503 "NEBIUS_API_KEY is not set".
+- `STUB=1` runs every node on deterministic stubs with no key. The planner is a stub too: it answers with the template whose intent and title share the most words with your sentence. So any sentence gets one of the five plans, and one that shares no word gets the real-estate plan. Left blank, as shipped, the API needs `NEBIUS_API_KEY` and `TAVILY_API_KEY`, and without the first `POST /agent/plan` answers 503 "NEBIUS_API_KEY is not set".
 - `ORCHAPOD_ANON_SCALE=1` gives you the full caps. The web app never sends the admin header, so every browser is a public visitor, and the shipped 0.1 scales the caps down to a visitor's: $0.30 a run, $1.50 a day, no node that rents a GPU, and Run disabled on the three fine-tune templates: only the movie and maths templates fit.
 
 Then start the API and the web app in two terminals; the API creates its tables and its bucket itself.
@@ -134,11 +133,14 @@ set -a; . ./.env; set +a
 PYTHONPATH=apps:packages/sdk-py uvicorn api.main:app --port 8001
 
 # terminal 2: the web app on http://localhost:3000, which calls the API on :8001
-cd apps/web && pnpm install
-pnpm dev
+cd apps/web
+pnpm install                                    # pnpm 11 ends with ERR_PNPM_IGNORED_BUILDS (sharp): harmless
+pnpm --config.verify-deps-before-run=false dev  # without the flag, pnpm 11 reruns that install and stops
 ```
 
-On Linux, add `--host 0.0.0.0` to the uvicorn line (it then listens on every interface): node containers reach the host through Docker's host gateway, which never reaches a listener on 127.0.0.1; Docker Desktop works as written. On pnpm 11, `pnpm install` ends with `ERR_PNPM_IGNORED_BUILDS: sharp` after installing everything, and pnpm's dependency check before each script then stops `pnpm dev` and `pnpm test` with the same error, so run them as `pnpm --config.verify-deps-before-run=false dev` (and `… test`), as the Makefile does. Open http://localhost:3000; `make down` stops Postgres, Redis and MinIO.
+If port 8001 is taken, pick another, say 8061. Run uvicorn with `--port 8061`, and set `ORCHAPOD_CONTROL_URL=http://localhost:8061` in `.env` before you load it. Start the web app with `NEXT_PUBLIC_API_URL=http://localhost:8061 NEXT_PUBLIC_WS_URL=ws://localhost:8061` in front of its `pnpm` command. Node containers report to `ORCHAPOD_CONTROL_URL`, so a wrong one makes every run fail at its first node, with a `ConnectionRefusedError` in that node's log.
+
+On Linux, add `--host 0.0.0.0` to the uvicorn line (it then listens on every interface): node containers reach the host through Docker's host gateway, which never reaches a listener on 127.0.0.1; Docker Desktop works as written. Open http://localhost:3000; `make down` stops Postgres, Redis and MinIO.
 
 **Node images.** A node runs from `orchapod/<node>:dev` when that image exists locally; otherwise Docker pulls `ghcr.io/bangadpurva/<node>:latest`, which CI pushes from NebiusHackathon (forks set `ORCHAPOD_IMAGE_PREFIX`). Those packages refuse anonymous pulls until they are made public (TODO(G3)), so build the images first: the stub run above builds the images of the three canonical intents and the golden path, or build them yourself from the repo root, for example for the movie data:
 

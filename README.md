@@ -7,7 +7,7 @@
 An entry in the **Nebius × NVIDIA Global AI Hackathon**, track **Best Apps and Agents**. It runs on **Nebius Token Factory** and **Nebius AI Cloud**, calls **NVIDIA Nemotron** models at runtime and uses **Tavily** for web research.
 
 - TODO(D8): links to the hosted demo, the 3-minute video and the Devpost entry, each checked logged out.
-- TODO(D8): delete this note. Status on 2026-10-21: the three canonical intents run end to end in STUB mode (deterministic stubs in place of every paid call: no key, $0), and nothing has run live yet, because the Nebius and Tavily keys are not set and the hosted app is not deployed. The repository and its container images stay private until the freeze (TODO(G3)). Sections marked TODO(D8) wait for evidence from real runs (run ids, costs, win rates, screenshots) and claim nothing yet.
+- TODO(D8): delete this note. Status on 2026-10-22: the three canonical intents run end to end in STUB mode (deterministic stubs in place of every paid call: no key, $0). No pipeline has run live yet. Two spikes made the first live Token Factory calls: a 50-row fine-tune, a plan and reports. The first live run is next: intent #2 through the Agent on real Token Factory. The live golden run also needs a Tavily key, GPU quota and the hosted API (Nebius Jobs report to a public https control URL). The repository and its container images stay private until the freeze (TODO(G3)). Sections marked TODO(D8) wait for evidence from real runs (run ids, costs, win rates, screenshots) and claim nothing yet.
 
 ## What it is
 
@@ -18,7 +18,7 @@ Orchapod is an open-source platform for the whole post-training lifecycle of a l
 
 A finished run shows what it made: an eval view (win rate; wins, ties and losses; the judge's consistency between the two answer orders; exact match where it applies; every judged sample with the judge's reasoning in both orders), a dataset card (download link and per-field stats) and, when the run serves a model, a compare playground that streams one prompt to the base and tuned models side by side.
 
-Three intents define "done"; each must run from the chat box with no manual edits, and each has a template card. A fourth card distils a Nebius docs specialist, one of the two candidate topics for the golden run (TODO(D8): the chosen topic).
+Three intents define "done"; each must run from the chat box with no manual edits, and each has a template card. Two more cards distil a Nebius docs specialist, the golden path: the fourth serves the tuned student from a GPU endpoint, the fifth judges it on CPU without one (TODO(D8): Hari confirms the golden run's topic by D6).
 
 | Intent | Template card | What the Agent plans |
 | --- | --- | --- |
@@ -28,13 +28,13 @@ Three intents define "done"; each must run from the chat box with no manual edit
 | "Distill a Nebius docs specialist: fine-tune NVIDIA Nemotron Nano 8B on the Nebius AI Cloud and Token Factory docs" | **Nemotron Nano 8B tuned as a Nebius docs specialist** | web-research (20 Nebius docs pages) → synth-distilabel (grounded Q&A) → data-prep → unsloth-train (Nemotron Nano 8B, 16-bit LoRA on an H100 Serverless Job) → vllm-serve (base and adapter on one Serverless Endpoint; TODO(D8): untested) → judge-eval (base vs tuned) → report |
 | "Distill a Nebius docs specialist and judge it on CPU without an endpoint: train Nemotron Nano 8B, then compare base and tuned" | **Nemotron Nano docs specialist, judged on CPU** | web-research (the same 20 pages) → synth-distilabel (grounded Q&A) → data-prep → unsloth-train (Nemotron Nano 8B, H100 Serverless Job) → quantize (the student to GGUF q4_k_m, its adapter to a GGUF LoRA) → judge-eval (llama.cpp on CPU: the GGUF against the GGUF plus the LoRA; TODO(D8): untested at 8B) → report |
 
-In STUB mode all three canonical intents pass end to end (Results). TODO(D8): which intents have run live, with run ids and costs.
+In STUB mode all three canonical intents pass end to end (Results). The first live run, intent #2 through the Agent on real Token Factory, is next (TODO(D8): its run id and cost).
 
 ## Why
 
 Every team wants a cheaper, faster, private specialist model. Today that takes an ML engineer and a pile of GPU plumbing. Orchapod turns it into a costed, capped and observable workflow.
 
-- **A cascade of NVIDIA models.** Nemotron 3 Ultra judges, Nemotron 3 Super teaches and plans, Nemotron 3.5 Lightning does the cheap calls, and a small model serves. The Nemotron models share one OpenAI-compatible endpoint and one key.
+- **NVIDIA end to end on the golden path, all on Nebius.** Nemotron 3 Super plans, writes the synthetic data and writes the report. Nemotron 3.5 Lightning can filter the data. Nemotron 3 Ultra judges. The student is NVIDIA's `nvidia/Llama-3.1-Nemotron-Nano-8B-v1`: Unsloth trains it on a Nebius Serverless Job, and vLLM serves it from a Serverless Endpoint. That holds for the golden path only: the real-estate template fine-tunes Llama 3.2 3B on Token Factory (Lane A), because its intent names Llama 3B, and the maths template quantizes Qwen2.5-Math-1.5B-Instruct.
 - **It makes models, not only calls them.** Nemotron teaches and judges new specialist models, and every one is measured against its base.
 - **An evaluation you can trust.** Base and tuned models get identical prompts and decoding. A Nemotron Ultra judge sees the question, the reference answer and the source passage, and scores the two answers in both orders; a win counts only if it holds in both. Fine-tuning moves style, format and vocabulary more than it injects facts, so answers are short and sourced. TODO(D8): no win rate has been measured yet; it and the judge's agreement between the two orders come from the golden run.
 - **Cost is a first-class output.** Every billed call (tokens, Tavily credits, GPU hours) is metered per node, estimated before a run and capped during it.
@@ -43,8 +43,8 @@ Every team wants a cheaper, faster, private specialist model. Today that takes a
 
 A typical run: research the topic, generate grounded synthetic data, prepare the splits, fine-tune and serve, judge the tuned model against its base, compare side by side. The fine-tune-and-serve step has two lanes, and a plan can take either without changing the rest:
 
-- **Lane A** fine-tunes on Token Factory. TODO(D8): spike 1 decides serving — a per-token LoRA model (no GPU quota) or `vllm-serve` with the adapter (needs GPU quota).
-- **Lane B** trains a Nemotron student on a Nebius Serverless Job and serves it from a Serverless Endpoint. TODO(D8): no Job or Endpoint has run on Nebius yet (no GPU quota).
+- **Lane A** fine-tunes a Llama model on Token Factory. `vllm-serve` serves the adapter beside its base on one Serverless Endpoint, because Token Factory's per-token LoRA deploy is retired (spike 1 got 410). The real-estate template takes this lane.
+- **Lane B**, the golden path, trains NVIDIA's Nemotron Nano 8B student with Unsloth on a Nebius Serverless Job and serves it from a Serverless Endpoint. TODO(D8): no Job or Endpoint has run on Nebius yet (no GPU quota).
 
 | Node | Runtime | What it does | Calls |
 | --- | --- | --- | --- |
@@ -58,7 +58,7 @@ A typical run: research the topic, generate grounded synthetic data, prepare the
 | `hf-download` | cpu | Hugging Face model download with SHA-256 verification | Hugging Face Hub |
 | `quantize` | cpu | GGUF q4_k_m, q5_k_m or q8_0 on CPU, optionally keeping the f16 GGUF as a baseline (AWQ needs a GPU job) | llama.cpp |
 
-`cpu` and `api` nodes run as local containers (`api` nodes only call remote services); `gpu` nodes run as Nebius Serverless Jobs. `distill-sft` and `lm-eval` also exist, but the Agent never plans them. A test keeps this table's nodes and runtimes equal to `NODE_REGISTRY` in `packages/workflow_schema/models.py`.
+`cpu` and `api` nodes run as local containers (`api` nodes only call remote services); `gpu` nodes run as Nebius Serverless Jobs. `distill-sft`, `lm-eval` and the retired `tf-deploy` (Token Factory's per-token LoRA deploy answers 410) also exist, but the Agent never plans them. A test keeps this table's nodes and runtimes equal to `NODE_REGISTRY` in `packages/workflow_schema/models.py`.
 
 Under the hood:
 
@@ -92,8 +92,8 @@ TODO(D8): spike 1 fine-tuned `meta-llama/Llama-3.1-8B-Instruct` (the id the API 
 
 ### Nebius AI Cloud (Lane B)
 
-- **Serverless Jobs.** `unsloth-train` runs as a Job on `gpu-h100-sxm` with a 1-hour timeout: a 16-bit LoRA on `nvidia/Llama-3.1-Nemotron-Nano-8B-v1`. A spike on a rented A100 outside Nebius chose that student: 60 steps took 62.5 s at a 15.9 GiB peak, and the merged model served from vLLM 0.18.0. Logs and artifacts flow back through the SDK, so `ORCHAPOD_CONTROL_URL` must be a public https URL.
-- **Serverless Endpoints.** `vllm-serve` creates an Endpoint (`vllm/vllm-openai:v0.18.0-cu130`, default `gpu-l40s-a`, bearer-token auth) that serves the base model and the adapter side by side, and registers an expiry (30 minutes by default), at which the control plane is to delete it. TODO(D8): that delete is not wired to Nebius yet, and base and adapter side by side (`--enable-lora`) has not run; the spike served merged 16-bit weights.
+- **Serverless Jobs.** `unsloth-train` runs as a Job on `gpu-h100-sxm` with a 1-hour timeout: Unsloth trains a 16-bit LoRA on `nvidia/Llama-3.1-Nemotron-Nano-8B-v1`. The docs templates set `merge: false`, so training skips the 16 GB merged copy. A spike on a rented A100 outside Nebius chose that student: 60 steps took 62.5 s at a 15.9 GiB peak, and the merged model served from vLLM 0.18.0. Logs and artifacts flow back through the SDK, so `ORCHAPOD_CONTROL_URL` must be a public https URL: the live golden run needs the hosted API.
+- **Serverless Endpoints.** `vllm-serve` creates an Endpoint (`vllm/vllm-openai:v0.18.0-cu130`, default `gpu-l40s-a`, bearer-token auth) that serves the base model and the adapter side by side, so Nemotron 3 Ultra judges the tuned model pairwise against its base. It registers an expiry (15 minutes in the docs template, 30 by default), at which the control plane deletes it. TODO(D8): neither that delete nor base and adapter side by side (`--enable-lora`) has run on a live endpoint; the spike served merged 16-bit weights.
 - **Object Storage.** Datasets, checkpoints and artifacts live in an S3-compatible bucket: `https://storage.eu-north1.nebius.cloud` on Nebius, MinIO locally (TODO(D8): only MinIO so far). The `ORCHAPOD_R2_*` variables and the `r2://` scheme keep their historical names.
 - TODO(D8): GPU quota, the Job and Endpoint ids of the golden run, console screenshots.
 
@@ -162,7 +162,7 @@ The other templates need `hf-download quantize data-prep judge-eval` (maths), `w
 
 - TODO(D8): golden run id, wall time and cost; base-vs-tuned win rate and judge agreement over N held-out questions; one judged example; screenshots of the plan card, run view, eval view and playground (the full list is in `docs/video-script.md`); the video link.
 - **Intent #3 on CPU (measured, no key).** The maths template's evaluate step ran in Docker on an M1 Pro Mac, a busy host, with the judge turned off: the f16 and q4_k_m GGUFs of Qwen2.5-Math-1.5B-Instruct answered the 50 GSM8K test questions in 18 min 01 s in all, with no failed row. Exact match was 0.78 for f16 and 0.84 for q4_k_m, a gap of 3 questions in 50 that is within noise. The q4_k_m file is 0.99 GB, against 3.09 GB for f16. TODO(D8): the Nemotron 3 Ultra verdicts on 20 of the questions.
-- **Stub runs ($0, no key).** Both checks run the real API, executor and node containers on deterministic stubs. `scripts/e2e_agent.py --stub` passed all three canonical intents with none skipped on NebiusHackathon @ 3b80954 (runs fb293b38, a2e22cc5 and 3ee82280). `make ui-smoke`, the Playwright smoke of the web app, passed 5 of 5 on f43fdd0, including the golden path (template card → run → eval view → compare playground) and the public-cap check (at `ORCHAPOD_ANON_SCALE=0.1`, a template above the per-run cap cannot be run and says why). Both are in `hackathon/LOG.md` (2026-10-21T14:41Z and 14:58Z).
+- **Stub runs ($0, no key).** Both checks run the real API, executor and node containers on deterministic stubs. `scripts/e2e_agent.py --stub` passed all three canonical intents with none skipped on NebiusHackathon @ 3b80954 (runs fb293b38, a2e22cc5 and 3ee82280). `make ui-smoke`, the Playwright smoke of the web app, passed 5 of 5 on f43fdd0, including the golden path (template card → run → eval view → compare playground) and the public-cap check (at `ORCHAPOD_ANON_SCALE=0.1`, a template above the per-run cap cannot be run and says why). Both are in `hackathon/LOG.md` (2026-10-21T14:41Z and 14:58Z). Both passed again on 24e234a: 3 of 3 and 5 of 5, with a Save a copy case added (2026-10-21T17:53Z).
 
 ## Costs and caps
 
@@ -172,7 +172,7 @@ The other templates need `hf-download quantize data-prep judge-eval` (maths), `w
 | Per UTC day | $15 | `ORCHAPOD_MAX_DAY_USD` |
 | Serverless Job timeout | 1 hour | fixed |
 | Node backstop timeout | 5,400 s | `ORCHAPOD_NODE_TIMEOUT_S` |
-| Endpoint keep-alive | 30 min, at most 120 (the API deletes the endpoint at expiry; TODO(D8): verify on a live endpoint) | `keep_alive_min` on `vllm-serve` |
+| Endpoint keep-alive | 30 min (15 in the docs template), at most 120 (the API deletes the endpoint at expiry; TODO(D8): verify on a live endpoint) | `keep_alive_min` on `vllm-serve` |
 | Compare streams in flight | 4 | `ORCHAPOD_MAX_COMPARES` |
 | Kill switch | off | `ORCHAPOD_KILL_SWITCH=1` |
 | Anonymous visitors | caps × 0.1 | `ORCHAPOD_ANON_SCALE` |
@@ -190,7 +190,7 @@ The guard checks the estimate when a plan is drafted (`POST /agent/plan` answers
 | `gpu-h100-sxm`, per hour | $4.50 |
 | `gpu-l40s-a`, per hour | $1.55 |
 
-These are design budgets, not measurements: a Lane A run under $2 and a Lane B run of about $2.65 (at most 25 minutes of H100 plus 30 minutes of L40S). TODO(D8): measured time and cost per run, and the Token Factory fine-tuning price per trained token (from spike 1).
+These are estimates, not measurements. The docs template (Lane B) is estimated at $2.66 at full scale. Its worst case under ruling R14 is $2.92, still under the $3 run cap: at most 25 minutes of H100, up to 15 minutes of L40S start plus 15 of keep-alive, and about $0.27 of Tavily and Token Factory calls. Its CPU variant is estimated at $2.15. Lane A's estimates assume $0.50 for the fine-tune, because Token Factory does not publish its price per trained token (spike 1). TODO(D8): measured time and cost per run.
 
 ## What changed during the submission period
 

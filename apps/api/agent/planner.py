@@ -42,16 +42,15 @@ TEMPLATES = Path(__file__).parent / "templates"
 # much they spend are priced from PRICES in estimate(). ponytail: rough until spikes 1–3 measure real runs.
 TYPICAL = {
     "web-research": (0.10, 3), "synth-distilabel": (0.30, 6), "data-prep": (0.0, 2), "tf-finetune": (0.50, 30),
-    "tf-deploy": (0.0, 6), "judge-eval": (0.30, 15), "hf-download": (0.0, 5), "quantize": (0.0, 15),
+    "judge-eval": (0.30, 15), "hf-download": (0.0, 5), "quantize": (0.0, 15),
     "unsloth-train": (1.88, 25), "vllm-serve": (0.91, 8),
 }
-# docs/agent_knowledge.md "Constraints": what Token Factory fine-tunes, and the per-token LoRA bases spike 1 tests.
+# docs/agent_knowledge.md "Constraints": what Token Factory fine-tunes.
 TF_FINETUNE_BASES = re.compile(r"llama-3\.1-(8b|70b)|llama-3\.2-(1b|3b)|llama-3\.3-70b|qwen3|qwen2\.5|gpt-oss|deepseek|gemma-4",
                                re.IGNORECASE)
-SERVERLESS_LORA_BASES = {"meta-llama/Meta-Llama-3.1-8B-Instruct", "meta-llama/Llama-3.1-8B-Instruct"}
-# The outputs a *_model_ref input may reference (contracts "ModelRef"): our endpoints, Token Factory LoRAs, GGUF files.
-MODEL_REF_SOURCES = {("vllm-serve", "model_ref"), ("vllm-serve", "base_model_ref"), ("tf-deploy", "model_ref"),
-                     ("quantize", "gguf_file"), ("quantize", "gguf_f16")}
+# The outputs a *_model_ref input may reference (contracts "ModelRef"): our endpoints and GGUF files.
+MODEL_REF_SOURCES = {("vllm-serve", "model_ref"), ("vllm-serve", "base_model_ref"), ("quantize", "gguf_file"),
+                     ("quantize", "gguf_f16")}
 TF_FAILED = "Nemotron on Token Factory failed; the API log has the cause"
 _ID = re.compile(r"^[a-z][a-z0-9_]*$")
 
@@ -155,9 +154,6 @@ def estimate(plan: dict) -> tuple[dict, list[str]]:
                     usd = rows * TRAIN_TOKENS_PER_ROW * epochs * price
         except (TypeError, ValueError):
             pass  # a ref or a bad value: review() reports it; the typical cost stands
-        if t == "tf-deploy":
-            warnings.append(f"{n['id']}: per-token LoRA deploy is unverified until spike 1; "
-                            f"if it fails, serve the lora_adapter with vllm-serve")
         by_node[n["id"]] = {"usd": round(max(usd, 0.0), 4), "minutes": round(max(minutes, 0.0), 1)}
     return {"usd": round(sum(x["usd"] for x in by_node.values()), 4),
             "minutes": round(sum(x["minutes"] for x in by_node.values()), 1), "by_node": by_node}, warnings
@@ -227,7 +223,7 @@ def _input_problems(key: str, value: Any, n: PlanNode, nodes: dict[str, PlanNode
     if "${{" not in value:
         if model_ref and ("://" in value or "{" in value):  # its provenance cannot be checked
             return ["a model ref is a Token Factory model id, an inline Token Factory ref, or a ref to a "
-                    "vllm-serve, tf-deploy or quantize output"]
+                    "vllm-serve or quantize output"]
         return []
     m = REF.fullmatch(value.strip())
     if not m:
@@ -242,7 +238,7 @@ def _input_problems(key: str, value: Any, n: PlanNode, nodes: dict[str, PlanNode
         return [f"{m[2]} ({source.type}) has no output {m[3]!r}"]
     if model_ref and source and (source.type, m[3]) not in MODEL_REF_SOURCES:
         return [f"{m[2]}.{m[3]} is not a model: refs come from vllm-serve model_ref or base_model_ref, "
-                "tf-deploy model_ref, or quantize gguf_file or gguf_f16"]
+                "or quantize gguf_file or gguf_f16"]
     return []
 
 
@@ -271,14 +267,6 @@ def _constraint_problems(n: PlanNode, nodes: dict[str, PlanNode]) -> list[str]:
         if "nemotron" in model.lower() or not TF_FINETUNE_BASES.search(model):
             problems.append(f"Token Factory does not fine-tune {model}: use Llama 3.1 8B/70B, 3.2 1B/3B, 3.3 70B, Qwen3, "
                             "Qwen2.5, gpt-oss, DeepSeek or Gemma 4 (a Nemotron student trains with unsloth-train)")
-    if n.type == "tf-deploy":
-        job = v.get("job")
-        m = REF.fullmatch(job.strip()) if isinstance(job, str) else None
-        source = nodes.get(m[2]) if m and m[2] else None
-        base = job.get("model") if isinstance(job, dict) else _values(source.model_dump()).get("model") if source else None
-        if base and str(base) not in SERVERLESS_LORA_BASES:
-            problems.append(f"Token Factory has no per-token LoRA deploy for {base}: "
-                            "serve the tf-finetune lora_adapter with vllm-serve")
     return problems
 
 
@@ -418,10 +406,10 @@ def _title(agent_run: AgentRun, s: dict) -> str:
 
 
 def template_report(agent_run: AgentRun, s: dict) -> str:
-    lines = [_title(agent_run, s), "", f"**Intent:** {agent_run.intent}", "",
+    lines = [_title(agent_run, s), "", f"**Intent:** {' '.join(agent_run.intent.split())}", "",
              f"**Cost:** ${s['cost_usd']:.4f} of ${agent_run.estimate.get('usd', 0):.2f} estimated.", ""]
     if s.get("error"):
-        lines += [f"**Error:** {s['error']} (Retry node resumes from the failed node.)", ""]
+        lines += [f"**Error:** {' '.join(str(s['error']).split())} (Retry node resumes from the failed node.)", ""]
     lines += ["| Node | Type | Status | $ |", "| --- | --- | --- | --- |"]
     lines += [f"| {n['node_id']} | {n['type']} | {n['status']} | {n['usd']:.4f} |" for n in s["nodes"]]
     files = [a for a in s["artifacts"] if a.get("download_url") and a["kind"] not in ("metrics", "log")]

@@ -618,3 +618,6 @@ worktrees:
   - Docs: README:159, test_readme comment, CLAUDE.md/ORCHESTRATOR.md say `make e2e API=…` is orchestrator-only on G2 day.
   - hackathon/G2-CHECKLIST.md published; STATE item 1 points Hari at it.
   - Remaining minors (rare): whitespace-collapsed secrets in warnings; DecodingError on poll/POST paths.
+- 2026-10-22T09:35Z make check: pytest 1123 passed; ruff clean (on 79bd19d). qa-w9 worktree removed.
+- 2026-10-22T09:35Z qa-w10 dispatched (fresh qa agent, sonnet): the fresh-clone test, pulled forward from D7.
+  - Clone into the scratchpad; follow README Setup literally with no keys; time each step against the 20 min target; list friction points with README lines and the smallest fixes.

@@ -156,6 +156,11 @@ def no_client(monkeypatch):
     (LIVE, None, "ORCHAPOD_ADMIN_TOKEN is unset"),
     (LIVE, "", "ORCHAPOD_ADMIN_TOKEN is unset"),  # a blank token is an unset one: nobody is the admin (budget.admin)
     (LIVE, "   ", "ORCHAPOD_ADMIN_TOKEN is unset"),
+    # httpx quotes a header value it cannot send in its LocalProtocolError, in a form the scrub would not recognise
+    (LIVE, "adm-4Hk9\nfake", "ORCHAPOD_ADMIN_TOKEN holds a character that is not printable ASCII"),
+    (LIVE, "adm-4Hk9\tfake", "ORCHAPOD_ADMIN_TOKEN holds a character that is not printable ASCII"),
+    (LIVE, "adm-4Hk9\x7ffake", "ORCHAPOD_ADMIN_TOKEN holds a character that is not printable ASCII"),
+    (LIVE, "adm-4Hk9-fäke", "ORCHAPOD_ADMIN_TOKEN holds a character that is not printable ASCII"),
     (["--max-cost", "3", "--api", USERINFO_API, "--stub"], TOKEN, "--api is for the live run"),
 ])
 def test_a_live_run_is_refused_in_one_line_before_any_request(argv, token, message, no_client, monkeypatch, capsys):
@@ -166,7 +171,19 @@ def test_a_live_run_is_refused_in_one_line_before_any_request(argv, token, messa
     out = capsys.readouterr()
     lines = [ln for ln in out.err.splitlines() if ln.strip()]
     assert e.value.code == 2 and out.out == "" and len(lines) == 1 and message in lines[0], out
-    assert secrets_in(out, TOKEN, USER, PASSWORD) == [], "a refusal never shows the token or the URL's userinfo"
+    shown = [TOKEN, USER, PASSWORD, *([token.strip(), repr(token)[1:-1]] if token and token.strip() else [])]
+    assert secrets_in(out, *shown) == [], "a refusal never shows the token (nor its escaped form) or the URL's userinfo"
+
+
+def test_a_token_with_a_nul_is_refused_too():
+    """The environment cannot hold a NUL, but the check is on the token, wherever it came from."""
+    assert "not printable ASCII" in demo.refusal(3.0, API, "adm-4Hk9\x00fake")
+    assert demo.refusal(3.0, API, TOKEN) is None
+
+
+def test_a_token_with_a_space_inside_is_printable_and_goes_out_as_it_is(hosted_api):
+    api = hosted_api(token="adm 4Hk9")
+    assert demo.main(LIVE) == 0 and api.admin == [("POST", "/agent/run", "adm 4Hk9")]
 
 
 EST = I4["estimate"]["usd"]  # $2.6627 today: the planner's number for the plan at full scale
@@ -204,13 +221,19 @@ def test_a_template_edit_that_drops_a_step_is_refused_before_a_gpu_is_rented(hos
     assert api.requests == [("GET", "/agent/templates")]
 
 
-@pytest.mark.parametrize("minutes, refused", [(60, False), (61, True)])
-def test_an_estimate_longer_than_the_hour_the_run_waits_is_refused(minutes, refused, hosted_api, capsys):
+def test_the_live_run_waits_two_hours_and_the_intents_one():
+    """The golden run's healthy worst case is 75 to 87 minutes, and every paid resource has its own server-side stop (the spend deadline,
+    the Job's hour, the endpoint's TTL), so an hour would only risk cancelling a run that is going well. Intents 1 to 3 keep theirs."""
+    assert demo.LIVE_LIMIT_S == 7200 and agent.REAL_LIMIT_S == 3600
+
+
+@pytest.mark.parametrize("minutes, refused", [(120, False), (121, True)])
+def test_an_estimate_longer_than_the_time_the_run_waits_is_refused(minutes, refused, hosted_api, capsys):
     api = hosted_api(templates=[{**t, "estimate": {**t["estimate"], "minutes": minutes}} if t is I4 else t for t in TEMPLATES])
     if refused:
         with pytest.raises(SystemExit):
             demo.main(LIVE)
-        assert f"takes {minutes} min, over the 60 min a live run waits" in capsys.readouterr().err
+        assert f"takes {minutes} min, over the 120 min a live run waits" in capsys.readouterr().err
         assert api.requests == [("GET", "/agent/templates")]
     else:
         assert demo.main(LIVE) == 0
@@ -231,14 +254,16 @@ def test_a_live_run_that_delivers_passes_and_shows_its_evidence(hosted_api, caps
     out = capsys.readouterr()
     report = live_report()
     # the PASS line of e2e_agent's real run, with the judge's numbers
-    assert (f"e2e: PASS golden path: run r1 succeeded in 0 s (limit {agent.REAL_LIMIT_S} s), cost $2.4360, estimate ${I4['estimate']['usd']}, "
+    assert (f"e2e: PASS golden path: run r1 succeeded in 0 s (limit {demo.LIVE_LIMIT_S} s), cost $2.4360, estimate ${I4['estimate']['usd']}, "
             f"report ready ({len(report['markdown'])} chars); eval evaluate: n 40, judged 38, win_rate 0.71, exact_match null") in out.out
-    # per-node wall time and $ (from /runs/{id}/summary), the run's span against G1's bar, the endpoint's expiry
+    # per-node wall time and $ (from /runs/{id}/summary), the run's span against G1's bar, the endpoint's expiry (which comes first)
     assert re.search(r"research\s+web-research\s+succeeded\s+90 s\s+\$0\.0160", out.out)
     assert re.search(r"train\s+unsloth-train\s+succeeded\s+10\.0 min\s+\$1\.3100", out.out)
     assert re.search(r"serve\s+vllm-serve\s+succeeded\s+4\.5 min\s+\$0\.7800", out.out)
     assert "run wall 23.5 min (first node start to last node end); G1's 25-minute bar: met" in out.out
     assert "endpoint serve: expires_at 2026-10-25T09:41:00+00:00" in out.out
+    assert out.out.index("endpoint serve: expires_at") < out.out.index("nodes, from /runs/r1/summary"), "the endpoint bills until then: first"
+    assert out.out.splitlines()[2].startswith("e2e: started run r1;"), "the run id is on the third line (the report's checklist says so)"
     # the plan goes up as the hosted API serves it, once, with no planner in between and nothing cancelled
     assert api.posted == [{"intent": I4["intent"], "plan": I4["plan"]}]
     assert [r for r in api.requests if r[1] == "/agent/plan"] == [] and api.cancels == []
@@ -267,7 +292,7 @@ def test_the_admin_token_is_sent_stripped(hosted_api):
 ])
 def test_the_runs_span_is_held_to_g1s_25_minutes_but_a_slow_run_still_passes(minutes, bar, hosted_api, capsys):
     hosted_api(summary=summary_for(live_report(), minutes))
-    assert demo.main(LIVE) == 0  # the bar is measured and shown; the limit that fails a run is the hour
+    assert demo.main(LIVE) == 0  # the bar is measured and shown; the limit that fails a run is LIVE_LIMIT_S
     assert bar in capsys.readouterr().out
 
 
@@ -316,9 +341,8 @@ def test_each_check_fails_the_run_and_says_why(report, files, text, hosted_api, 
     assert secrets_in(out, TOKEN) == []
 
 
-def test_a_run_that_outlives_its_hour_is_cancelled_with_the_token_agent_run_returned(hosted_api, monkeypatch, capsys):
-    limit = agent.REAL_LIMIT_S
-    assert limit == 3600
+def test_a_run_that_outlives_its_limit_is_cancelled_with_the_token_agent_run_returned(hosted_api, monkeypatch, capsys):
+    limit = demo.LIVE_LIMIT_S
     clock = iter([0, 100, limit - 1, limit])  # poll_run's t0, then the time after each poll
     monkeypatch.setattr(demo, "time", SimpleNamespace(monotonic=lambda: next(clock), sleep=lambda s: None))
     api = hosted_api(not_ready=99)
@@ -326,21 +350,52 @@ def test_a_run_that_outlives_its_hour_is_cancelled_with_the_token_agent_run_retu
     out = capsys.readouterr().out
     assert api.polls == 3 and api.cancels == ["tok-live"]
     assert f"the run did not end within {limit} s, so it was cancelled" in out and "PASS" not in out
+    assert out.count("cancelling run r1 (up to 90 s)") == 1, "said before the POST, which may take that long"
     assert [r for r in api.admin if r[1].endswith("/cancel")] == [], "the cancel is the run's token, not the admin's"
 
 
-def test_a_cancel_the_hosted_api_refuses_is_said_and_the_run_is_named(hosted_api, monkeypatch, capsys):
-    clock = iter([0, 3600])
+def curl(run_id="r1", host="api.example.test"):
+    """What a run that is still running is stopped with: the admin's token as a variable, never its value."""
+    return f'curl -X POST -H "X-Orchapod-Admin: $ORCHAPOD_ADMIN_TOKEN" https://{host}/runs/{run_id}/cancel'
+
+
+def cancels_of(api):
+    return [r for r in api.requests if r == ("POST", "/runs/r1/cancel")]
+
+
+def test_a_cancel_at_the_limit_is_tried_twice_and_a_failure_names_the_run_and_the_admins_curl(hosted_api, monkeypatch, capsys):
+    clock = iter([0, demo.LIVE_LIMIT_S])
     monkeypatch.setattr(demo, "time", SimpleNamespace(monotonic=lambda: next(clock), sleep=lambda s: None))
     refuse = lambda request, seen: httpx.Response(403, json={"detail": "cancelling this run needs its cancel token"}) if request.url.path.endswith("/cancel") else None  # noqa: E731
-    hosted_api(not_ready=99, before=refuse)
+    api = hosted_api(not_ready=99, before=refuse)
     assert demo.main(LIVE) == 1
+    out = capsys.readouterr()
+    assert len(cancels_of(api)) == 2 and out.out.count("cancelling run r1 (up to 90 s)") == 2
+    assert f"run r1 did not end within {demo.LIVE_LIMIT_S} s, and POST /runs/r1/cancel -> HTTP 403" in out.out
+    assert f"run r1 may still be running; cancel it as the admin: {curl()}" in out.out
+    assert secrets_in(out, TOKEN) == []
+
+
+def test_a_second_try_finds_the_run_cancelled_or_ended(hosted_api, monkeypatch, capsys):
+    """The first POST can time out while the cancel goes through; the second then meets a run that has ended: a 409, which is done."""
+    clock = iter([0, demo.LIVE_LIMIT_S])
+    monkeypatch.setattr(demo, "time", SimpleNamespace(monotonic=lambda: next(clock), sleep=lambda s: None))
+    answers = iter([httpx.ReadTimeout("no answer"), httpx.Response(409, json={"detail": "Run already in terminal state"})])
+
+    def first_times_out(request, seen):
+        if request.url.path.endswith("/cancel"):
+            answer = next(answers)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+
+    api = hosted_api(not_ready=99, before=first_times_out)
+    assert demo.main(LIVE) == 1  # the run did not end by itself: a FAIL, but a cancelled one
     out = capsys.readouterr().out
-    assert "run r1 did not end within 3600 s, and POST /runs/r1/cancel -> HTTP 403" in out
-    assert "could not cancel run r1" in out and "as the admin" in out, "a run that is still running is named with how to stop it"
+    assert len(cancels_of(api)) == 2 and "may still be running" not in out and f"did not end within {demo.LIVE_LIMIT_S} s, so it was cancelled" in out
 
 
-# --- a run the script no longer watches must not keep its GPUs -----------------------------------------------------------------------
+# --- Ctrl-C and SIGTERM stop the run; a poll that fails is waited through until the limit -----------------------------------------------
 
 def test_ctrl_c_while_polling_cancels_the_run_it_leaves_behind(hosted_api, capsys):
     def interrupt(request, seen):
@@ -350,53 +405,39 @@ def test_ctrl_c_while_polling_cancels_the_run_it_leaves_behind(hosted_api, capsy
     api = hosted_api(not_ready=99, before=interrupt)
     with pytest.raises(KeyboardInterrupt):
         demo.main(LIVE)
-    assert api.cancels == ["tok-live"] and "cancelled run r1" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert api.cancels == ["tok-live"] and out.index("cancelling run r1 (up to 90 s)") < out.index("cancelled run r1")
 
 
-def test_a_cancel_that_gets_no_answer_is_said_and_does_not_hide_the_interrupt(hosted_api, capsys):
+def test_ctrl_c_tries_the_cancel_twice_like_the_limit_does(hosted_api, capsys):
+    def interrupt(request, seen):
+        if request.url.path == "/agent/runs/r1/report" and seen.polls == 2:
+            raise KeyboardInterrupt
+        if request.url.path == "/runs/r1/cancel" and not seen.cancels and len(cancels_of(seen)) == 1:
+            return httpx.Response(502, text="bad gateway")  # the first POST only
+
+    api = hosted_api(not_ready=99, before=interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        demo.main(LIVE)
+    out = capsys.readouterr().out
+    assert len(cancels_of(api)) == 2 and api.cancels == ["tok-live"] and out.count("cancelling run r1 (up to 90 s)") == 2
+    assert "cancelled run r1" in out and "may still be running" not in out
+
+
+def test_a_cancel_that_gets_no_answer_twice_names_the_run_and_the_admins_curl_and_keeps_the_interrupt(hosted_api, capsys):
     def interrupt(request, seen):
         if request.url.path == "/agent/runs/r1/report" and seen.polls == 2:
             raise KeyboardInterrupt
         if request.url.path == "/runs/r1/cancel":
             raise httpx.ReadTimeout("no answer")
 
-    hosted_api(not_ready=99, before=interrupt)
+    api = hosted_api(not_ready=99, before=interrupt)
     with pytest.raises(KeyboardInterrupt):
         demo.main(LIVE)
-    out = capsys.readouterr().out
-    assert "could not cancel run r1: POST /runs/r1/cancel failed: ReadTimeout" in out and "as the admin: POST /runs/r1/cancel" in out
-
-
-def test_a_poll_that_keeps_failing_gives_up_and_cancels(hosted_api, capsys):
-    bad_gateway = lambda request, seen: httpx.Response(502, text="bad gateway") if request.url.path == "/agent/runs/r1/report" and seen.polls > 1 else None  # noqa: E731
-    api = hosted_api(not_ready=99, before=bad_gateway)
-    assert demo.main(LIVE) == 1
-    out = capsys.readouterr().out
-    assert api.polls == 1 + demo.TOLERATE_POLLS + 1 and api.cancels == ["tok-live"]
-    assert "GET /agent/runs/r1/report -> HTTP 502" in out and "cancelled run r1" in out
-
-
-@pytest.mark.parametrize("fault", [
-    pytest.param(lambda request, seen: httpx.Response(502, text="bad gateway"), id="a 502 from the proxy"),
-    pytest.param(lambda request, seen: httpx.Response(500, text="boom"), id="a 500 from the API"),
-    pytest.param(lambda request, seen: (_ for _ in ()).throw(httpx.ReadTimeout("slow")), id="a timeout"),
-    pytest.param(lambda request, seen: (_ for _ in ()).throw(httpx.ConnectError("reset")), id="a dropped connection"),
-])
-def test_a_few_failed_polls_are_waited_through(fault, hosted_api, capsys):
-    def flaky(request, seen):
-        if request.url.path == "/agent/runs/r1/report" and 2 <= seen.polls <= 1 + demo.TOLERATE_POLLS:
-            return fault(request, seen)
-
-    api = hosted_api(not_ready=1, before=flaky)
-    assert demo.main(LIVE) == 0
-    assert api.polls == 2 + demo.TOLERATE_POLLS and api.cancels == []
-
-
-def test_failed_polls_are_counted_in_a_row_not_in_all(hosted_api):
-    blinks = lambda request, seen: (httpx.Response(502, text="bad gateway")  # noqa: E731
-                                    if request.url.path == "/agent/runs/r1/report" and (2 <= seen.polls <= 11 or 13 <= seen.polls <= 22) else None)
-    api = hosted_api(not_ready=12, before=blinks)  # 10 failures, an answer, 10 more: 20 in all, never more than 15 in a row
-    assert demo.main(LIVE) == 0 and api.polls == 23 and api.cancels == []
+    out = capsys.readouterr()
+    assert len(cancels_of(api)) == 2 and out.out.count("cancelling run r1 (up to 90 s)") == 2
+    assert f"run r1 may still be running; cancel it as the admin: {curl()}" in out.out and "cancelled run r1" not in out.out
+    assert secrets_in(out, TOKEN) == [], "the curl names the variable, never the value"
 
 
 def test_sigterm_unwinds_like_ctrl_c_and_the_old_handler_comes_back(hosted_api):
@@ -418,12 +459,78 @@ def test_sigterm_unwinds_like_ctrl_c_and_the_old_handler_comes_back(hosted_api):
         signal.signal(signal.SIGTERM, outside)
 
 
-def test_a_poll_the_api_refuses_for_good_is_not_waited_through(hosted_api, capsys):
-    gone = lambda request, seen: (httpx.Response(404, json={"detail": "Not a run the agent started"})  # noqa: E731
-                                  if request.url.path == "/agent/runs/r1/report" and seen.polls == 2 else None)
+def ticking(monkeypatch, seconds_per_call):
+    """A clock that moves `seconds_per_call` each time it is read (poll_run reads it once per poll), and no sleeping."""
+    ticks = iter(range(0, 10**9, seconds_per_call))
+    monkeypatch.setattr(demo, "time", SimpleNamespace(monotonic=lambda: next(ticks), sleep=lambda s: None))
+
+
+def reports_fail(fault, since=2, until=10**9):
+    """`before` for hosted(): the report polls from `since` to `until` meet `fault` (a Response, or a callable that raises)."""
+    def before(request, seen):
+        if request.url.path == "/agent/runs/r1/report" and since <= seen.polls <= until:
+            return fault() if callable(fault) else fault
+
+    return before
+
+
+def read_timeout():
+    raise httpx.ReadTimeout("slow")
+
+
+def connection_dropped():
+    raise httpx.ConnectError("reset")
+
+
+@pytest.mark.parametrize("fault", [
+    pytest.param(httpx.Response(502, text="bad gateway"), id="a 502 from the proxy"),
+    pytest.param(httpx.Response(500, text="boom"), id="a 500 from the API"),
+    pytest.param(httpx.Response(200, text="<html>maintenance</html>"), id="a 200 that is not JSON"),
+    pytest.param(read_timeout, id="a timeout"),
+    pytest.param(connection_dropped, id="a dropped connection"),
+])
+def test_failed_polls_are_waited_through_however_many(fault, hosted_api, capsys):
+    """No count gives up on a run: 40 failures in a row used to be 25 too many."""
+    api = hosted_api(not_ready=1, before=reports_fail(fault, since=2, until=41))
+    assert demo.main(LIVE) == 0
+    assert api.polls == 42 and api.cancels == []
+
+
+def test_a_poll_that_keeps_failing_is_waited_through_until_the_limit_and_then_the_run_is_cancelled(hosted_api, monkeypatch, capsys):
+    ticking(monkeypatch, 600)  # the limit is the 13th reading
+    api = hosted_api(not_ready=99, before=reports_fail(httpx.Response(502, text="bad gateway")))
+    assert demo.main(LIVE) == 1
+    out = capsys.readouterr().out
+    assert api.polls == 12 and api.cancels == ["tok-live"] and len(cancels_of(api)) == 1
+    assert f"the run did not end within {demo.LIVE_LIMIT_S} s, so it was cancelled" in out, "the last good reply is the run's last known state"
+
+
+def test_a_run_that_was_never_seen_is_cancelled_at_the_limit_and_said_so(hosted_api, monkeypatch, capsys):
+    ticking(monkeypatch, 3600)
+    api = hosted_api(before=reports_fail(httpx.Response(502, text="bad gateway"), since=1))
+    assert demo.main(LIVE) == 1
+    out = capsys.readouterr().out
+    assert api.polls == 2 and api.cancels == ["tok-live"] and "cancelled run r1" in out and "may still be running" not in out
+    assert "e2e FAIL golden path (run r1)" in out and f"the run was not seen once in {demo.LIVE_LIMIT_S} s, so it was cancelled" in out
+
+
+def test_a_warning_about_failing_polls_comes_at_most_once_a_minute(hosted_api, monkeypatch, capsys):
+    ticking(monkeypatch, 10)  # a poll every 10 s: 30 failures cover 300 s
+    hosted_api(not_ready=1, before=reports_fail(httpx.Response(502, text="bad gateway"), since=2, until=31))
+    assert demo.main(LIVE) == 0
+    warnings = [ln for ln in capsys.readouterr().out.splitlines() if "poll failed" in ln]
+    assert [re.search(r"poll failed at (\d+) s", ln).group(1) for ln in warnings] == ["20", "80", "140", "200", "260"], warnings
+
+
+@pytest.mark.parametrize("status, headers", [(404, {}), (401, {}), (307, {"location": "https://elsewhere.example.test/"})])
+def test_a_poll_that_will_not_heal_is_not_waited_through_and_the_run_is_left_with_its_curl(status, headers, hosted_api, capsys):
+    gone = reports_fail(httpx.Response(status, headers=headers, json={"detail": "no"}), since=2, until=2)
     api = hosted_api(not_ready=99, before=gone)
     assert demo.main(LIVE) == 1
-    assert api.polls == 2 and api.cancels == ["tok-live"]
+    out = capsys.readouterr().out
+    assert api.polls == 2 and api.cancels == [], "nothing here is a reason to cancel: the server's caps stop what runs on"
+    assert f"GET /agent/runs/r1/report -> HTTP {status}" in out and f"run r1 may still be running; cancel it as the admin: {curl()}" in out
+
 
 
 # --- /agent/run refuses, or the answer is lost ------------------------------------------------------------------------------------------
@@ -432,6 +539,7 @@ def test_a_poll_the_api_refuses_for_good_is_not_waited_through(hosted_api, capsy
     (403, "runs on a rented GPU, billed by the hour: only the admin can start it on the public app", "check ORCHAPOD_ADMIN_TOKEN", False),
     (402, "day cap $5: $2.10 left, the plan needs $2.66", "day cap $5: $2.10 left", False),
     (422, "the plan has errors", "POST /agent/run -> HTTP 422", False),
+    (429, "slow down", "POST /agent/run -> HTTP 429", False),
     (503, "the kill switch is on (ORCHAPOD_KILL_SWITCH)", "the kill switch is on", True),  # also what a proxy says when the API is down
     (500, "boom", "POST /agent/run -> HTTP 500", True),
 ])
@@ -442,6 +550,34 @@ def test_a_refused_run_starts_nothing_and_says_what_the_api_said(status, detail,
     out = capsys.readouterr()
     assert hint in out.out and ("the run may have started" in out.out) is started, out.out
     assert api.polls == 0 and api.cancels == [] and secrets_in(out, TOKEN) == []
+
+
+@pytest.mark.parametrize("reply", [
+    pytest.param(httpx.Response(307, headers={"location": "https://elsewhere.example.test/agent/run"}), id="a redirect"),
+    pytest.param(httpx.Response(200, text="<html>welcome</html>"), id="a 200 that is not JSON"),
+    pytest.param(httpx.Response(201, text=""), id="a 201 with no body"),
+])
+def test_a_reply_to_post_agent_run_that_is_not_a_run_says_a_run_may_have_started(reply, hosted_api, capsys):
+    api = hosted_api(before=lambda request, seen: reply if request.url.path == "/agent/run" else None)
+    assert demo.main(LIVE) == 1
+    out = capsys.readouterr().out
+    assert "the run may have started" in out and "'nebius-docs-specialist-nemotron-nano-8b'" in out
+    assert api.polls == 0 and api.cancels == []
+
+
+@pytest.mark.parametrize("interrupt", [pytest.param(KeyboardInterrupt, id="Ctrl-C"), pytest.param(lambda: sys.exit(143), id="SIGTERM")])
+def test_an_interrupt_during_post_agent_run_says_a_run_may_have_started_and_cancels_nothing(interrupt, hosted_api, capsys):
+    """There is no cancel token yet; the run, if it started, is found among the runs and stopped by the admin."""
+    def interrupted(request, seen):
+        if request.url.path == "/agent/run":
+            raise interrupt()
+
+    api = hosted_api(before=interrupted)
+    with pytest.raises((KeyboardInterrupt, SystemExit)):
+        demo.main(LIVE)
+    out = capsys.readouterr().out
+    assert "interrupted during POST /agent/run; the run may have started" in out and "'nebius-docs-specialist-nemotron-nano-8b'" in out
+    assert cancels_of(api) == [] and api.polls == 0
 
 
 def test_a_lost_reply_to_post_agent_run_says_a_run_may_have_started(hosted_api, capsys):
@@ -469,8 +605,10 @@ def test_a_run_with_credentials_in_its_url_never_prints_them(report, code, hoste
 
 @pytest.mark.parametrize("where, code", [("/agent/templates", 1), ("/agent/run", 1), ("/agent/runs/r1/report", 1), ("/runs/r1/summary", 0),
                                          ("/d/prep/dataset", 1)])  # the summary is evidence: the verdict stands without it
-def test_an_error_that_quotes_the_token_or_the_url_is_printed_without_them(where, code, hosted_api, capsys):
+def test_an_error_that_quotes_the_token_or_the_url_is_printed_without_them(where, code, hosted_api, monkeypatch, capsys):
     """An exception text is the one place a secret could get into a line: a proxy's error page, an httpx message with the URL in it."""
+    ticking(monkeypatch, 600)  # a poll that fails every time is waited through to the limit: this one gets there in 12 readings
+
     def leak(request, seen):
         if request.url.path == where:
             raise httpx.ConnectError(f"cannot reach {USERINFO_API}{where} with X-Orchapod-Admin: {TOKEN}")
@@ -521,6 +659,16 @@ def test_an_output_that_cannot_be_read_fails_the_run_with_its_verdict_and_eviden
     assert "nodes, from /runs/r1/summary" in out and "endpoint serve: expires_at" in out
 
 
+def test_an_output_check_that_breaks_on_a_bug_or_an_odd_reply_still_gives_a_verdict_and_the_evidence(hosted_api, capsys):
+    report = live_report()
+    report["artifacts"] = [{k: v for k, v in a.items() if k != "download_url"} if a["name"] == "dataset" and a["node_id"] == "prep" else a
+                           for a in report["artifacts"]]  # a reply off the contract: the check meets a KeyError, not an HTTP error
+    hosted_api(report)
+    assert demo.main(LIVE) == 1
+    out = capsys.readouterr().out
+    assert "could not check the outputs: KeyError" in out and "nodes, from /runs/r1/summary" in out
+
+
 def test_a_url_httpx_cannot_parse_is_a_failure_not_a_traceback_and_shows_no_credentials(monkeypatch, capsys):
     monkeypatch.setenv("ORCHAPOD_ADMIN_TOKEN", TOKEN)  # the real httpx.Client: it refuses the URL before any request
     assert demo.main(["--max-cost", "3", "--api", f"https://{USER}:{PASSWORD}@api.example.test:port"]) == 1
@@ -554,12 +702,33 @@ def test_a_node_that_never_started_has_no_wall_time_and_the_span_covers_those_th
     assert demo.node_lines(nothing)[1] is None
 
 
-def test_the_evidence_of_a_run_whose_summary_cannot_be_read_does_not_change_its_verdict(hosted_api, capsys):
-    broken = lambda request, seen: httpx.Response(500, text="boom") if request.url.path == "/runs/r1/summary" else None  # noqa: E731
-    hosted_api(before=broken)
+@pytest.mark.parametrize("reply", [
+    pytest.param(httpx.Response(500, text="boom"), id="a 500"),
+    pytest.param(httpx.Response(200, text="<html>not json</html>"), id="a 200 that is not JSON"),
+    pytest.param(httpx.Response(200, json={"nodes": [{"node_id": "x"}]}), id="a summary off its shape"),
+    pytest.param(httpx.Response(200, json={"nodes": [{"node_id": "x", "type": "t", "status": "s", "usd": "n/a", "started_at": "soon"}]}),
+                 id="dollars and timestamps that are not numbers"),
+])
+def test_a_summary_that_cannot_be_read_does_not_turn_a_pass_into_an_exit_1(reply, hosted_api, capsys):
+    hosted_api(before=lambda request, seen: reply if request.url.path == "/runs/r1/summary" else None)
     assert demo.main(LIVE) == 0
     out = capsys.readouterr().out
     assert "PASS golden path" in out and "could not read the summary of run r1" in out
+    assert out.index("endpoint serve: expires_at") < out.index("could not read the summary"), "the endpoint's expiry comes first, whatever follows"
+
+
+def test_a_summary_that_cannot_be_read_does_not_hide_a_fail_either(hosted_api, capsys):
+    hosted_api(live_report(cost_usd=0.0), before=lambda request, seen: httpx.Response(200, text="oops") if request.url.path == "/runs/r1/summary" else None)
+    assert demo.main(LIVE) == 1
+    out = capsys.readouterr().out
+    assert "e2e FAIL golden path" in out and "could not read the summary of run r1" in out
+
+
+def test_poll_run_gives_up_on_a_failed_poll_unless_asked_to_wait_through_it():
+    """The stub runs poll a local API: one that fails is a failure. Only the live run waits (live() asks)."""
+    c = httpx.Client(base_url=API, transport=httpx.MockTransport(lambda request: httpx.Response(502, text="bad gateway")))
+    with pytest.raises(demo.ApiError, match="GET /runs/r1/summary -> HTTP 502"):
+        demo.poll_run(c, "r1", "/runs/r1/summary", cancel_token="tok")
 
 
 def endpoints(*artifacts, node="serve"):

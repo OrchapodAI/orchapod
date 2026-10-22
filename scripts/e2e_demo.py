@@ -18,20 +18,25 @@ refuses a control URL or an object-storage endpoint that is not https, because J
 own (no Docker, no local API, none of your keys): it asks the hosted API, as its admin, to run the template. ORCHAPOD_ADMIN_TOKEN, from
 the env, goes out as X-Orchapod-Admin on POST /agent/run and nowhere else (a download redirects to another host).
 - Refused before any request, one line, exit 2: no --max-cost, or one at or under 0 or over the $3 run cap; no --api, or one that is not
-  https; no ORCHAPOD_ADMIN_TOKEN; --stub with --api. After one read of GET /agent/templates, and before anything starts: the golden
-  template is not served, no longer has the golden path's shape (docs/agent_knowledge.md), or its full estimate is over --max-cost or
-  takes longer than the hour the run waits. A refusal never shows the token or the URL (it can carry userinfo), and neither does
-  anything else printed during the run: the output is scrubbed of both.
-- Flow: POST /agent/run with the template's plan as served, then GET /agent/runs/{id}/report every 2 s until `ready`, for at most an
-  hour (e2e_agent.REAL_LIMIT_S); then the run is cancelled with the cancel token /agent/run returned. A poll that fails (a 5xx, no
-  answer) is asked again, up to TOLERATE_POLLS in a row. Ctrl-C, SIGTERM, or a poll that keeps failing cancels the run too: a run
-  nobody watches keeps its GPUs. A reply to POST /agent/run that never came says that a run may have started.
+  https; no ORCHAPOD_ADMIN_TOKEN, or one with a character that is not printable ASCII; --stub with --api. After one read of GET
+  /agent/templates, and before anything starts: the golden template is not served, no longer has the golden path's shape
+  (docs/agent_knowledge.md), or its full estimate is over --max-cost or takes longer than the LIVE_LIMIT_S the run waits. A refusal never
+  shows the token or the URL (it can carry userinfo), and neither does anything else printed during the run: the output is scrubbed of both.
+- Flow: POST /agent/run with the template's plan as served, then GET /agent/runs/{id}/report every 2 s until `ready`, for at most
+  LIVE_LIMIT_S, two hours: the healthy worst case is 75 to 87 minutes, and every paid resource has a server-side stop of its own (the
+  spend deadline, the Job's hour, the endpoint's TTL). Then the run is cancelled with the cancel token /agent/run returned, in two
+  attempts. A poll that fails (no answer, a 5xx, a 2xx that is not JSON) is asked again until the limit, with a warning at most once a
+  minute: nothing else gives up on a run. Ctrl-C and SIGTERM cancel it too (two attempts). A cancel that fails, or any other way out
+  while the run lives (a poll the API refuses), prints the run id and the admin's curl, with the token as $ORCHAPOD_ADMIN_TOKEN, never
+  its value; the server's caps bound the spend. A reply to POST /agent/run that never came, is a redirect, a 5xx or is no JSON, or
+  an interrupt during that POST (no cancel token yet), says that a run may have started, and how to find it.
 - Checks (e2e_agent's helpers, plus the endpoint): the run succeeded; 0 < cost_usd <= --max-cost; every node's contract artifacts
   and a cost_json (unsloth-train: lora_adapter); the data-prep dataset downloads with rows; judge-eval's eval_summary has the
   contract's shape and `stub` false; the report names the plan; vllm-serve registered an endpoint_url that is https and no stub-* id.
-- Output: the PASS or FAIL line of e2e_agent's real run, with the judge's numbers; each node's wall time and $ (GET
-  /runs/{id}/summary); the run's span against G1's 25-minute bar (shown, not a check); the endpoint's expires_at (the L40S bills until
-  then). Exit 0 PASS, 1 FAIL or an error, 2 refused. The Orchestrator records the run id and the cost in hackathon/LOG.md.
+- Output: the run id is on the third line; the PASS or FAIL line of e2e_agent's real run, with the judge's numbers; the endpoint's
+  expires_at (the L40S bills until then); each node's wall time and $ (GET /runs/{id}/summary) and the run's span against G1's 25-minute
+  bar (shown, not a check). A summary that cannot be read is said so, and changes nothing. Exit 0 PASS, 1 FAIL or an error, 2 refused.
+  The Orchestrator records the run id and the cost in hackathon/LOG.md.
 """
 
 import argparse
@@ -55,7 +60,10 @@ ROOT = Path(__file__).resolve().parents[1]
 LIMIT_S = 300  # a stub run must end within 5 minutes
 TERMINAL = ("succeeded", "failed", "cancelled")
 ADMIN_ENV = "ORCHAPOD_ADMIN_TOKEN"  # the live run's admin token (budget.admin): the hosted API's, never a local one
-TOLERATE_POLLS = 15  # polls in a row that may fail (a 5xx, no answer) before a live run gives up on watching its run (about 30 s)
+# The live golden run waits two hours (intents 1 to 3 keep e2e_agent.REAL_LIMIT_S, an hour): its healthy worst case is 75 to 87 minutes,
+# and every paid resource has a server-side stop of its own (R14's spend deadline, the Job's hour, the endpoint's TTL), so a shorter
+# wait protects nothing and risks cancelling a run that is going well.
+LIVE_LIMIT_S = 7200
 BAR_MIN = 25  # G1: the golden path ends within 25 minutes (hackathon/PLAN.md)
 # What each node type must register, by contract (docs/contracts.md "Data nodes", "ML nodes"); the SDK adds cost_json to all.
 MUST_REGISTER = {
@@ -288,7 +296,7 @@ def build_images(node_types: list[str]) -> str | None:
 # ---------------------------------------------------------------------------
 
 class ApiError(RuntimeError):
-    """An HTTP error from the API; `status` tells a refusal (4xx) from a failure (5xx)."""
+    """A reply that is not a JSON 2xx; `status` tells a refusal (4xx) from a failure (5xx), a redirect (3xx) from a 2xx that is no JSON."""
 
     def __init__(self, message: str, status: int):
         super().__init__(message)
@@ -297,9 +305,12 @@ class ApiError(RuntimeError):
 
 def call(c: httpx.Client, method: str, path: str, **kw):
     r = c.request(method, path, **kw)
-    if r.is_error:
+    if not r.is_success:  # a 3xx is not an answer either: the request may or may not have reached the API
         raise ApiError(f"{method} {path} -> HTTP {r.status_code}: {r.text[:300]}", r.status_code)
-    return r.json()
+    try:
+        return r.json()
+    except ValueError:
+        raise ApiError(f"{method} {path} -> HTTP {r.status_code} with a body that is not JSON: {r.text[:100]!r}", r.status_code) from None
 
 
 def get_templates(c: httpx.Client) -> list[dict]:
@@ -307,48 +318,57 @@ def get_templates(c: httpx.Client) -> list[dict]:
     return call(c, "GET", "/agent/templates")
 
 
-def cancel_run(c: httpx.Client, run_id: str, cancel_token: str) -> str | None:
-    """POST /runs/{id}/cancel with the run's token (the stack has no admin, so without it an anonymous cancel is a 403): None when the
-    run is cancelled or had ended (409), else what went wrong."""
-    try:
-        r = c.post(f"/runs/{run_id}/cancel", headers={"X-Orchapod-Cancel-Token": cancel_token}, timeout=90)
-    except httpx.TransportError as e:
-        return f"POST /runs/{run_id}/cancel failed: {type(e).__name__}: {e}"
-    if r.is_error and r.status_code != 409:  # 409: it ended while we asked; anything else leaves it running
-        return f"POST /runs/{run_id}/cancel -> HTTP {r.status_code}: {r.text[:300]}"
-    return None
+def cancel_run(c: httpx.Client, run_id: str, cancel_token: str, attempts: int = 2) -> str | None:
+    """POST /runs/{id}/cancel with the run's token (the stack has no admin, so without it an anonymous cancel is a 403), up to
+    `attempts` times: the cancel waits for the executor, so the first may time out while it goes through, and the second then finds the
+    run ended (409, which is done). None when the run is cancelled or had ended, else what went wrong the last time."""
+    for _ in range(attempts):
+        say(f"cancelling run {run_id} (up to 90 s)")
+        try:
+            r = c.post(f"/runs/{run_id}/cancel", headers={"X-Orchapod-Cancel-Token": cancel_token}, timeout=90)
+        except httpx.TransportError as e:
+            problem = f"POST /runs/{run_id}/cancel failed: {type(e).__name__}: {e}"
+        else:
+            if r.is_success or r.status_code == 409:  # 409: it ended while we asked
+                say(f"cancelled run {run_id}" if r.is_success else f"run {run_id} had ended")
+                return None
+            problem = f"POST /runs/{run_id}/cancel -> HTTP {r.status_code}: {r.text[:300]}"
+    return problem
 
 
 def poll_run(c: httpx.Client, run_id: str, path: str, done=lambda reply: reply["status"] in TERMINAL, *,
-             cancel_token: str, limit: float | None = None, tolerate: int = 0) -> tuple[dict, float]:
+             cancel_token: str, limit: float | None = None, tolerate: bool = False) -> tuple[dict | None, float]:
     """Poll `path` (a /summary-shaped reply: the summary, or an agent report) until done(reply) or `limit` seconds (default
     LIMIT_S) pass (then cancel the run with `cancel_token`, which start or /agent/run returned); the last reply and the seconds
-    taken. A poll that fails with a 5xx or no answer is asked again, up to `tolerate` times in a row (a hosted API behind a proxy
-    blinks); a 4xx never heals, and the failure beyond that is raised.
-    ponytail: a fixed 2 s poll, no backoff; add it if the API ever flaps for longer than `tolerate` polls."""
+    taken. With `tolerate`, a poll that fails (no answer, a 5xx, a 2xx that is not JSON: a hosted API behind a proxy blinks) is asked
+    again until the limit, with a warning at most once a minute, and the last good reply stands for the run (None if there was none);
+    a 3xx or 4xx never heals, and is raised.
+    ponytail: a fixed 2 s poll, no backoff."""
     limit = limit or LIMIT_S
     t0 = time.monotonic()
-    last, failed = None, 0
+    reply = last = warned = None
     while True:
+        failure = None
         try:
             reply = call(c, "GET", path)
         except (ApiError, httpx.TransportError) as e:
-            failed += 1
-            if failed > tolerate or (isinstance(e, ApiError) and e.status < 500):
+            if not tolerate or (isinstance(e, ApiError) and 300 <= e.status < 500):
                 raise
-            say(f"poll {failed} of {tolerate} failed ({type(e).__name__}: {e}), asking again")
-            time.sleep(2)
-            continue
-        failed = 0
-        seconds = time.monotonic() - t0
-        state = (reply["status"], [(n["node_id"], n["status"]) for n in reply["nodes"]])
-        if state != last:
-            say(f"{seconds:5.1f} s  run {state[0]}: " + ", ".join(f"{i} {s}" for i, s in state[1]))
-            last = state
-        if done(reply) or seconds >= limit:
+            failure = e
+        seconds = (now := time.monotonic()) - t0
+        if failure is None:
+            state = (reply["status"], [(n["node_id"], n["status"]) for n in reply["nodes"]])
+            if state != last:
+                say(f"{seconds:5.1f} s  run {state[0]}: " + ", ".join(f"{i} {s}" for i, s in state[1]))
+                last = state
+        elif warned is None or now - warned >= 60:
+            warned = now
+            say(f"poll failed at {seconds:.0f} s ({type(failure).__name__}: {failure}); asking again until the limit")
+        finished = failure is None and done(reply)
+        if finished or seconds >= limit:
             break
         time.sleep(2)
-    if not done(reply) and (problem := cancel_run(c, run_id, cancel_token)):
+    if not finished and (problem := cancel_run(c, run_id, cancel_token)):
         raise RuntimeError(f"run {run_id} did not end within {limit} s, and {problem}")
     return reply, seconds
 
@@ -429,6 +449,8 @@ def refusal(max_cost: float | None, api: str, token: str) -> str | None:
         return "refusing to run: --api must be an https URL with a host (the admin token would travel in the clear; its value is not shown)"
     if not token:
         return f"refusing to run: {ADMIN_ENV} is unset (the hosted API's admin token: only the admin can start a run that rents a GPU)"
+    if not (token.isascii() and token.isprintable()):  # httpx would quote a header value it cannot send, in a form the scrub misses
+        return f"refusing to run: {ADMIN_ENV} holds a character that is not printable ASCII (a newline, a NUL...; its value is not shown)"
     return None
 
 
@@ -499,29 +521,35 @@ def node_lines(summary: dict) -> tuple[list[str], float | None]:
 
 
 def evidence(c: httpx.Client, run_id: str, report: dict, plan: dict) -> None:
-    """What the run is for, after its verdict, and which it cannot change: each node's wall time and $, the run's span against G1's
-    bar (shown, not a check), and when the endpoint expires (the L40S bills until then)."""
-    try:
-        lines, span = node_lines(call(c, "GET", f"/runs/{run_id}/summary"))
-    except (RuntimeError, httpx.HTTPError) as e:
-        say(f"could not read the summary of run {run_id}: {type(e).__name__}: {e}")
-    else:
-        say(f"nodes, from /runs/{run_id}/summary:")
-        for line in lines:
-            say(f"  {line}")
-        say("run wall unknown (no node has a start and an end)" if span is None else
-            f"run wall {span / 60:.1f} min (first node start to last node end); G1's {BAR_MIN}-minute bar: {'met' if span <= BAR_MIN * 60 else 'NOT met'}")
+    """What the run is for, after its verdict, which nothing here can change: when the endpoint expires (the L40S bills until then),
+    then each node's wall time and $ and the run's span against G1's bar (shown, not a check)."""
     serves = {n["id"] for n in plan["nodes"] if n["type"] == "vllm-serve"}
     for a in report["artifacts"]:
         if a["node_id"] in serves and a["name"] == "endpoint_url":
             meta = a.get("meta") or {}
             say(f"endpoint {a['node_id']}: expires_at {meta.get('expires_at', 'unknown')} (keep_alive_min {meta.get('keep_alive_min', '?')}, billed until then)")
+    try:
+        lines, span = node_lines(call(c, "GET", f"/runs/{run_id}/summary"))
+        say(f"nodes, from /runs/{run_id}/summary:")
+        for line in lines:
+            say(f"  {line}")
+        say("run wall unknown (no node has a start and an end)" if span is None else
+            f"run wall {span / 60:.1f} min (first node start to last node end); G1's {BAR_MIN}-minute bar: {'met' if span <= BAR_MIN * 60 else 'NOT met'}")
+    except Exception as e:  # an unreadable summary (no answer, not JSON, off its shape) never turns a PASS into an exit 1
+        say(f"could not read the summary of run {run_id}: {type(e).__name__}: {e}")
+
+
+def still_running(c: httpx.Client, run_id: str) -> str:
+    """What to do about a run the script leaves behind: the admin stops it. The token is a variable here, never its value."""
+    base = c.base_url
+    return (f'run {run_id} may still be running; cancel it as the admin: curl -X POST -H "X-Orchapod-Admin: ${ADMIN_ENV}" '
+            f"{base.scheme}://{base.netloc.decode()}{base.path.rstrip('/')}/runs/{run_id}/cancel")
 
 
 def live(c: httpx.Client, token: str, max_cost: float) -> int:
     """The live golden run on the hosted API that `c` talks to (module docstring): 0 PASS, 1 FAIL, 2 refused (SystemExit)."""
     agent = _agent()
-    limit, number = agent.REAL_LIMIT_S, agent.GOLDEN
+    limit, number = LIVE_LIMIT_S, agent.GOLDEN
     templates = get_templates(c)
     template = agent.canonical(templates, number)
     if template is None:
@@ -535,24 +563,29 @@ def live(c: httpx.Client, token: str, max_cost: float) -> int:
         refuse(f"refusing to run: the golden path's full estimate takes {estimate['minutes']:g} min, over the {limit / 60:g} min a live run waits")
     say(f"golden path = template {template['slug']!r}: plan {plan['name']!r}, nodes {[n['id'] for n in plan['nodes']]}, "
         f"full estimate ${estimate['usd']} / {estimate['minutes']:g} min, cap ${max_cost:g}")
-    maybe = f"; the run may have started: look for {plan['name']!r} among the runs and cancel it (as the admin: POST /runs/<id>/cancel)"
+    maybe = f"the run may have started: look for {plan['name']!r} among the runs and cancel it as the admin (POST /runs/<id>/cancel)"
     try:
         started = call(c, "POST", "/agent/run", json={"intent": intent, "plan": plan}, headers={"X-Orchapod-Admin": token})
-    except ApiError as e:  # 4xx: refused, nothing started; 5xx: the answer is no proof of that
-        hint = f"; check {ADMIN_ENV}: only the admin can start a run that rents a GPU" if e.status == 403 else maybe if e.status >= 500 else ""
+    except ApiError as e:  # a 4xx is a refusal and nothing started; a 3xx, a 5xx and a 2xx that is not JSON are no proof of that
+        hint = f"; check {ADMIN_ENV}: only the admin can start a run that rents a GPU" if e.status == 403 else "" if 400 <= e.status < 500 else f"; {maybe}"
         raise ApiError(f"{e}{hint}", e.status) from e
     except httpx.TransportError as e:
-        raise RuntimeError(f"POST /agent/run: {type(e).__name__}: {e}{maybe}") from e
+        raise RuntimeError(f"POST /agent/run: {type(e).__name__}: {e}; {maybe}") from e
+    except (KeyboardInterrupt, SystemExit):  # Ctrl-C, SIGTERM: there is no cancel token yet
+        say(f"interrupted during POST /agent/run; {maybe}")
+        raise
     run_id, cancel_token = started["run_id"], started["cancel_token"]
     say(f"started run {run_id}; polling its report every 2 s for at most {limit} s, then it is cancelled")
     try:
         report, seconds = poll_run(c, run_id, f"/agent/runs/{run_id}/report", done=lambda r: r["ready"], cancel_token=cancel_token,
-                                   limit=limit, tolerate=TOLERATE_POLLS)
-    except BaseException:  # Ctrl-C, SIGTERM, a poll that kept failing: the hosted API goes on without us, with GPUs rented
-        stuck = cancel_run(c, run_id, cancel_token)
-        say(f"cancelled run {run_id}" if stuck is None else
-            f"could not cancel run {run_id}: {stuck}; cancel it as the admin: POST /runs/{run_id}/cancel with X-Orchapod-Admin")
+                                   limit=limit, tolerate=True)
+    except BaseException as e:  # Ctrl-C and SIGTERM stop the run; any other way out leaves it, and says how to stop it (the server's caps bound the spend)
+        if not isinstance(e, (KeyboardInterrupt, SystemExit)) or cancel_run(c, run_id, cancel_token):
+            say(still_running(c, run_id))
         raise
+    if report is None:  # the polls failed to the end of the limit
+        agent.show("FAIL", "golden path", [f"the run was not seen once in {limit} s, so it was cancelled"], f" (run {run_id})")
+        return 1
     problems = agent.check_report(report, intent, plan, max_cost)
     if seconds >= limit:
         problems.append(f"the run did not end within {limit} s, so it was cancelled")
@@ -560,7 +593,7 @@ def live(c: httpx.Client, token: str, max_cost: float) -> int:
     if not problems:
         try:
             problems = agent.check_outputs(c, report, plan, max_cost, evals) + check_endpoints(report, plan)
-        except (RuntimeError, httpx.HTTPError) as e:  # the verdict and the evidence matter more than this one read
+        except Exception as e:  # the verdict and the evidence matter more than this one read
             problems = [f"could not check the outputs: {type(e).__name__}: {e}"]
     cost = f"${report['cost_usd']:.4f}"
     if problems:

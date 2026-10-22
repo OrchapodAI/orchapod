@@ -2,6 +2,8 @@
 
 import copy
 import json
+import shutil
+import subprocess
 
 import e2e_agent as agent
 import e2e_demo as demo
@@ -9,7 +11,7 @@ import httpx
 import pytest
 
 from api.agent import planner
-from tests.e2e.test_e2e_demo import good_summary, templates_on_disk
+from tests.e2e.test_e2e_demo import ROW, good_summary, templates_on_disk
 
 SHIPPED = templates_on_disk()
 TEMPLATES = [{**t, "estimate": planner.estimate(t["plan"])[0]} for t in SHIPPED]  # what GET /agent/templates serves
@@ -35,11 +37,17 @@ def no_docker(monkeypatch):
     monkeypatch.setattr(demo, "build_images", refuse("build_images"))
 
 
-def fake_api(errors_by_intent=None, plan_for=None, status=200, templates=TEMPLATES):
-    """GET /agent/templates and POST /agent/plan the way the STUB planner answers them (plan_for overrides the plan)."""
+def fake_api(errors_by_intent=None, plan_for=None, status=200, templates=TEMPLATES, run=None, calls=None):
+    """GET /agent/templates and POST /agent/plan the way the STUB planner answers them (plan_for overrides the plan). `run`: a
+    handler for the run-phase routes of a real run (it answers a request, or returns None to fall through to the rest); `calls`
+    collects (method, path) of every request. Any other route is a bug in the test: a plan FAIL must stop before any run."""
     errors_by_intent = errors_by_intent or {}
 
     def handler(request):
+        if calls is not None:
+            calls.append((request.method, request.url.path))
+        if run and (reply := run(request)) is not None:
+            return reply
         if request.url.path == "/agent/templates":
             return httpx.Response(200, json=templates)
         if request.url.path == "/agent/plan":
@@ -154,23 +162,130 @@ def test_a_missing_canonical_template_fails(capsys):
     assert "none is canonical intent #3" in capsys.readouterr().out
 
 
-# --- the real run is refused without a cap -----------------------------------------------------------------------------------
+# --- the real run is refused before anything starts ---------------------------------------------------------------------------
 
 REFUSED = "refusing to run without --max-cost"
+KEY = "nb-key-9f3c1d-never-print-me"  # a stand-in value: no test may print it, log it or read a real key
+REAL = ["--intent", "2", "--max-cost", "0.5"]
 
 
-@pytest.mark.parametrize("argv, message", [
-    (["--intent", "Quantize a model"], REFUSED),
-    (["--intent", "Quantize a model", "--max-cost", "0"], REFUSED),
-    (["--intent", "Quantize a model", "--max-cost", "-1"], REFUSED),
-    ([], REFUSED),
-    (["--intent", "Quantize a model", "--max-cost", "3"], "only --stub exists"),  # capped, but the real run is not written yet
+@pytest.fixture
+def stack_spy(monkeypatch):
+    """The stack a real run would start: recorded, never started."""
+    started = []
+    monkeypatch.setattr(demo, "with_stack", lambda fn, extra=None: started.append((fn, extra)) or 0)
+    return started
+
+
+@pytest.fixture(autouse=True)
+def shell(monkeypatch):
+    """The shell is not the developer's: no key unless a test sets one, and demo.LIMIT_S is put back after main() changes it."""
+    for name in ("NEBIUS_API_KEY", "TAVILY_API_KEY", "HF_TOKEN", "VASTAI_API_KEY", "NEBIUS_BASE_URL", "STUB"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(demo, "LIMIT_S", demo.LIMIT_S)
+
+
+@pytest.mark.parametrize("argv, key, message", [
+    ([], KEY, REFUSED),
+    (["--intent", "2"], KEY, REFUSED),
+    (["--intent", "2", "--max-cost", "0"], KEY, REFUSED),
+    (["--intent", "2", "--max-cost", "-1"], KEY, REFUSED),
+    (["--intent", "2", "--max-cost", "nan"], KEY, REFUSED),  # nan is neither <= 0 nor > 3
+    (["--intent", "2", "--max-cost", "3.01"], KEY, "caps a run at $3"),
+    (["--intent", "2", "--max-cost", "inf"], KEY, "caps a run at $3"),
+    (["--max-cost", "0.5"], KEY, "without --intent"),
+    (["--intent", "  ", "--max-cost", "0.5"], KEY, "without --intent"),  # `make agent-e2e` with INTENT unset passes ""
+    (REAL, None, "NEBIUS_API_KEY is unset"),
+    (REAL, "   ", "NEBIUS_API_KEY is unset"),
 ])
-def test_a_real_run_is_refused_without_max_cost(argv, message, capsys):
+def test_a_real_run_is_refused_before_anything_starts(argv, key, message, stack_spy, monkeypatch, capsys):
+    if key is not None:
+        monkeypatch.setenv("NEBIUS_API_KEY", key)
     with pytest.raises(SystemExit) as e:
         agent.main(argv)
     err = capsys.readouterr().err
-    assert e.value.code == 2 and message in err and (message == REFUSED) == (REFUSED in err), err
+    assert e.value.code == 2 and message in err and stack_spy == [], err
+    assert (message == REFUSED) == (REFUSED in err) and KEY not in err, err
+
+
+def test_the_cap_may_be_the_project_cap_itself(stack_spy, monkeypatch):
+    monkeypatch.setenv("NEBIUS_API_KEY", KEY)
+    assert agent.main(["--intent", "2", "--max-cost", "3"]) == 0
+    assert len(stack_spy) == 1  # $3 is the run cap, not over it
+
+
+def test_a_real_run_starts_a_stack_with_the_cap_pinned_and_30_minutes(stack_spy, monkeypatch):
+    for name, value in {"NEBIUS_API_KEY": KEY, "TAVILY_API_KEY": "", "HF_TOKEN": "hf-1", "VASTAI_API_KEY": "vast-1"}.items():
+        monkeypatch.setenv(name, value)
+    assert agent.main(REAL) == 0
+    [(_, extra)] = stack_spy
+    assert extra == {  # the keys that are set, STUB gone, the shell's base URL gone, both caps = --max-cost, full scale
+        "NEBIUS_API_KEY": KEY, "HF_TOKEN": "hf-1", "STUB": None, "NEBIUS_BASE_URL": None,
+        "ORCHAPOD_MAX_RUN_USD": "0.5", "ORCHAPOD_MAX_DAY_USD": "0.5", "ORCHAPOD_ANON_SCALE": "1"}
+    assert demo.LIMIT_S == 1800
+
+
+def test_a_real_api_sees_three_keys_and_nothing_else_paid(tmp_path, monkeypatch):
+    """The env the API process gets (api_env over the shell): the three forwarded keys when set; STUB, the shell's base URL and
+    every other name in e2e_demo.PAID stay out."""
+    shell_env = {name: f"leak-{name}" for name in demo.PAID} | {"PATH": "/usr/bin", "STUB": "1", "NEBIUS_BASE_URL": "https://x.example/v1"}
+    for name, value in shell_env.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("TAVILY_API_KEY", " ")  # blank counts as unset
+    env = demo.api_env(8123, tmp_path / "e2e.db", shell_env, agent.real_env(0.5))
+    assert {n for n in demo.PAID if n in env} == {"NEBIUS_API_KEY", "HF_TOKEN"}
+    assert env["NEBIUS_API_KEY"] == "leak-NEBIUS_API_KEY" and "STUB" not in env and "NEBIUS_BASE_URL" not in env
+    assert (env["ORCHAPOD_MAX_RUN_USD"], env["ORCHAPOD_MAX_DAY_USD"], env["ORCHAPOD_ANON_SCALE"]) == ("0.5", "0.5", "1")
+    assert env["ORCHAPOD_KILL_SWITCH"] == "0" and env["DATABASE_URL"].startswith("sqlite+aiosqlite:///" + str(tmp_path))
+
+
+@pytest.mark.skipif(not shutil.which("make"), reason="make is not installed")
+@pytest.mark.parametrize("args, tail", [
+    (["INTENT=2", "MAX_COST=0.5"], 'scripts/e2e_agent.py --intent "2" --max-cost "0.5"'),
+    (["INTENT=Quantize a model"], 'scripts/e2e_agent.py --intent "Quantize a model" --max-cost "3"'),  # the cap defaults to the project's
+])
+def test_make_agent_e2e_passes_the_intent_and_the_cap(args, tail):
+    dry_run = subprocess.run(["make", "-n", "agent-e2e", *args], cwd=demo.ROOT, capture_output=True, text=True, check=True).stdout
+    assert dry_run.strip().endswith(tail), dry_run
+
+
+# --- a real plan that must not run is refused before /agent/run --------------------------------------------------------------
+
+def plan_with(*nodes):
+    """The intent #2 plan with more nodes after it."""
+    return {**I2["plan"], "nodes": [*I2["plan"]["nodes"], *nodes]}
+
+
+SERVE = {"id": "serve", "type": "vllm-serve", "needs": ["prep"], "inputs": {}}  # rents_gpu: an endpoint billed by the hour
+TRAIN = {"id": "train", "type": "unsloth-train", "needs": ["prep"], "inputs": {}}  # runtime gpu: a Serverless Job
+RESEARCH = {"id": "research", "type": "web-research", "needs": [], "inputs": {"seed_urls": ["https://docs.nebius.com"]}}
+
+
+@pytest.mark.parametrize("nodes, errors, max_cost, tavily, line", [
+    ([], ["synth: unknown input 'bogus'"], 0.5, "tv", "synth: unknown input 'bogus'"),
+    ([], [], 0.1, "tv", "the estimate $0.15 is over the $0.1 run cap"),  # I2's estimate is $0.15
+    ([SERVE], [], 0.5, "tv", "vllm-serve 'serve' rents a GPU"),
+    ([TRAIN], [], 0.5, "tv", "unsloth-train 'train' rents a GPU"),
+    ([RESEARCH], [], 0.5, "", "web-research 'research' needs TAVILY_API_KEY, which is unset"),
+])
+def test_a_real_plan_that_must_not_run_is_refused_in_one_line_before_the_run(nodes, errors, max_cost, tavily, line, monkeypatch, capsys):
+    monkeypatch.setenv("TAVILY_API_KEY", tavily)
+    calls = []
+    api = fake_api({I2["intent"]: errors}, plan_for={I2["intent"]: plan_with(*nodes)}, calls=calls)
+    assert agent.run_all(api, "2", max_cost) == 1  # the no_docker fixture fails the test if it got as far as Docker
+    out = capsys.readouterr().out
+    assert "e2e FAIL intent #2" in out and f"  - {line}" in out and out.count("\n  - ") == 1, out
+    assert ("POST", "/agent/run") not in calls
+
+
+def test_refusals_name_each_node_that_rents_a_gpu_or_lacks_its_key():
+    plan = plan_with(SERVE, TRAIN, RESEARCH)
+    assert agent.refusals(plan, {"TAVILY_API_KEY": "tv"}) == [
+        "vllm-serve 'serve' rents a GPU: only the golden run (scripts/e2e_demo.py --max-cost) starts one, and it needs G2 quota",
+        "unsloth-train 'train' rents a GPU: only the golden run (scripts/e2e_demo.py --max-cost) starts one, and it needs G2 quota"]
+    assert agent.refusals(plan_with(RESEARCH), {"TAVILY_API_KEY": "tv"}) == []
+    assert agent.refusals(plan_with(RESEARCH), {"TAVILY_API_KEY": " "}) == ["web-research 'research' needs TAVILY_API_KEY, which is unset"]
+    assert agent.refusals(I2["plan"], {}) == []
 
 
 # --- the report and the outputs -----------------------------------------------------------------------------------------------
@@ -304,3 +419,108 @@ def test_intent_2_outputs_are_the_downloaded_rows_with_exactly_the_schema_fields
     assert agent.check_outputs(download_client(ok), report_with(files, nodes), I2["plan"]) == []
     bad = {"/d/prep/dataset": json.dumps(row | {"extra": 1})}
     assert any("extra" in p for p in agent.check_outputs(download_client(bad), report_with(files, nodes), I2["plan"]))
+
+
+# --- a real run, to its verdict ----------------------------------------------------------------------------------------------
+
+MARKDOWN = "\n".join(["## movie-engagement-synthetic-data: succeeded", "", "**Intent:** Generate synthetic data of movie likes, shares "
+                      "and subscribes", "", "**Cost:** $0.0823 of $0.15 estimated.", "| Node | Type | Status | $ |",
+                      "| synth | synth-distilabel | succeeded | 0.0823 |"])  # 7 lines: the run prints 5
+DATASET = "/artifacts/prep-dataset/download"  # where good_summary() links the data-prep dataset
+ROWS_500 = "\n".join([json.dumps(ROW)] * 500) + "\n"  # intent #2 asks for n_samples = 500
+
+
+def rows(n: int) -> str:
+    return "\n".join([json.dumps(ROW)] * n) + "\n"
+
+
+def real_report(**changes):
+    """A succeeded real run of the intent #2 plan: the synth node cost $0.0823, the report is ready."""
+    report = good_report(intent=I2["intent"]) | {"cost_usd": 0.0823, "markdown": MARKDOWN}
+    report["nodes"] = [{**n, "usd": 0.0823 if n["node_id"] == "synth" else 0.0} for n in report["nodes"]]
+    return report | changes
+
+
+def live(report, dataset=ROWS_500, not_ready=0, planner_waits=0):
+    """The run-phase routes of a real run, for fake_api(run=...): /agent/run, the report (ready only after `not_ready` polls
+    that answer a finished run whose report is still being written), the dataset download. A planner that may take
+    `planner_waits` seconds raises ReadTimeout for a client that gives up sooner."""
+    polls = []
+
+    def handler(request):
+        path = request.url.path
+        if path == "/agent/plan" and request.extensions["timeout"]["read"] < planner_waits:
+            raise httpx.ReadTimeout("the planner is a model call and may take longer than this client waits")
+        if path == "/agent/run":
+            return httpx.Response(201, json={"run_id": "r1", "workflow_id": "w1", "estimate": I2["estimate"], "cancel_token": "tok-real"})
+        if path == "/agent/runs/r1/report":
+            polls.append(request)
+            return httpx.Response(200, json=report if len(polls) > not_ready else report | {"ready": False, "markdown": None})
+        if path == DATASET:
+            return httpx.Response(200, text=dataset)
+
+    return handler
+
+
+@pytest.fixture
+def stack_ok(monkeypatch):
+    """Docker and the images are fine (no_docker says otherwise), and polling does not sleep."""
+    monkeypatch.setattr(demo, "preflight", lambda: [])
+    monkeypatch.setattr(demo, "build_images", lambda types: None)
+    monkeypatch.setattr(demo.time, "sleep", lambda s: None)
+
+
+def test_a_real_run_that_delivers_within_its_cap_passes_and_shows_five_lines_of_its_report(stack_ok, capsys):
+    calls = []
+    api = fake_api(run=live(real_report(), not_ready=2), calls=calls)
+    assert agent.run_all(api, "2", 0.5) == 0
+    out = capsys.readouterr().out
+    assert f"PASS intent #2: run r1 succeeded in 0 s (limit {demo.LIMIT_S} s), cost $0.0823, estimate $0.15, " \
+           f"report ready ({len(MARKDOWN)} chars)" in out
+    lines = MARKDOWN.splitlines()
+    assert "\n".join(lines[:5]) in out and lines[5] not in out
+    assert [path for _, path in calls].count("/agent/runs/r1/report") == 3  # polled past the two "ready: false" answers
+    assert ("POST", "/runs/r1/cancel") not in calls
+
+
+def test_a_real_run_waits_for_a_slow_planner(stack_ok):
+    """The live planner is a model call (300 s a call, with repairs): a client that gives up at the stack's 30 s fails a run
+    that the API goes on to bill."""
+    api = fake_api(run=live(real_report(), planner_waits=300))
+    assert agent.run_all(api, "2", 0.5) == 0
+
+
+FAILED_RUN = real_report(status="failed", error="exit 1: boom", cost_usd=0.0123,
+                         nodes=[{"node_id": "synth", "type": "synth-distilabel", "status": "failed", "usd": 0.0123, "error": "exit 1: boom"}])
+
+
+@pytest.mark.parametrize("report, dataset, text", [
+    pytest.param(real_report(cost_usd=0.0), ROWS_500, "a real run that cost $0 called nothing", id="cost-zero"),
+    pytest.param(real_report(cost_usd=0.51), ROWS_500, "$0.51 is over --max-cost $0.5", id="cost-over-cap"),
+    pytest.param(real_report(), rows(449), "449 rows, under 90 % of the 500 asked", id="449-of-500-rows"),
+    pytest.param(real_report(), "\n".join([json.dumps(ROW | {"mood": "x"})] * 500), "mood", id="row-with-an-extra-field"),
+    pytest.param(FAILED_RUN, ROWS_500, "exit 1: boom", id="failed-run"),
+])
+def test_a_real_run_that_spent_nothing_too_much_or_delivered_too_little_fails(report, dataset, text, stack_ok, capsys):
+    assert agent.run_all(fake_api(run=live(report, dataset)), "2", 0.5) == 1
+    out = capsys.readouterr().out
+    assert "e2e FAIL intent #2 (run r1 after 0 s, cost $" in out and ", estimate $0.15)" in out and text in out, out
+    assert "e2e: PASS" not in out and MARKDOWN.splitlines()[0] in out  # the report's head is shown on a FAIL too
+
+
+def test_a_real_run_that_delivers_exactly_90_percent_of_its_rows_and_spends_exactly_its_cap_passes(stack_ok):
+    assert agent.run_all(fake_api(run=live(real_report(cost_usd=0.5), rows(450))), "2", 0.5) == 0
+
+
+def test_a_real_report_is_judged_on_its_cost_not_on_the_stub_zero():
+    ask, plan = I2["intent"], I2["plan"]
+    assert agent.check_report(real_report(), ask, plan, 0.5) == []
+    assert any("cost_usd" in p for p in agent.check_report(real_report(), ask, plan))  # judged as a STUB run, $0.0823 is wrong
+    assert any("called nothing" in p for p in agent.check_report(real_report(cost_usd=0.0), ask, plan, 0.5))
+    assert agent.check_report(real_report(cost_usd=0.5), ask, plan, 0.5) == []  # the cap itself is within the cap
+
+
+def test_judge_eval_of_a_real_run_says_stub_false():
+    assert agent.check_eval_summary(eval_summary(stub=False), False, stub=False) == []
+    assert any("stub is True in a real run" in p for p in agent.check_eval_summary(eval_summary(stub=True), False, stub=False))
+    assert any("stub is False in a STUB run" in p for p in agent.check_eval_summary(eval_summary(stub=False), False))

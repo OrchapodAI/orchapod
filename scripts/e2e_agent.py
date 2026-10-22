@@ -1,9 +1,9 @@
-"""Stub e2e of the three canonical intents through the Orchapod Agent, through the API only: $0.
+"""The canonical intents through the Orchapod Agent, through the API only: all three on stubs ($0), or ONE for real, capped.
 
     python scripts/e2e_agent.py --stub                       # all three; `make check E2E=1` runs it
     python scripts/e2e_agent.py --stub --intent 2            # one canonical intent (1, 2 or 3), or any text: the STUB planner
                                                              # answers with the closest canonical plan
-    python scripts/e2e_agent.py --intent "..." --max-cost 3  # real (`make agent-e2e INTENT=...`): refuses without --max-cost
+    python scripts/e2e_agent.py --intent 2 --max-cost 0.5    # real: one intent (1, 2, 3 or any text), `make agent-e2e INTENT=2 MAX_COST=0.5`
 
 Per intent: POST /agent/plan (the STUB planner must return that intent's canonical plan, error-free, estimate under the $3 run
 cap, with the shape docs/agent_knowledge.md gives it: #1 ends in judge-eval, #2 trains nothing, #3 runs quantize before
@@ -15,19 +15,38 @@ builds and run checks; the images it builds are the shared orchapod/<node>:dev, 
 
 Any plan error is a FAIL: a canonical plan that names a node or an input that does not exist is a regression, never a skip.
 
-The real run is not written: it needs the keys (spike 3). Without --max-cost it refuses, whatever else it is asked.
+A real run (--max-cost) spends money, so only the Orchestrator runs it, after a merge, with `.env` loaded (`set -a; . ./.env; set +a`)
+and `make up`. The same stack, but the API runs without STUB and the live Nemotron planner answers, so the plan is not the
+template's. Its env: ORCHAPOD_MAX_RUN_USD = ORCHAPOD_MAX_DAY_USD = --max-cost, ORCHAPOD_ANON_SCALE = 1, and of e2e_demo.PAID only
+NEBIUS_API_KEY, TAVILY_API_KEY and HF_TOKEN, each when set (no VASTAI, RunPod, Anthropic or OpenAI key, no Nebius project id).
+- Refused before anything starts, one line: no --max-cost, one at or under 0 or over the $3 run cap, no --intent, no NEBIUS_API_KEY.
+- Refused before POST /agent/run, one line each: a plan with an error; an estimate over --max-cost; a node that rents a GPU (the
+  golden run, e2e_demo.py --max-cost, owns those and needs G2 quota); a node whose key is unset (web-research: TAVILY_API_KEY).
+- The run must end within 30 minutes (judge-eval answers on a CPU for intent #3). Asserted besides the stub's checks: 0 < cost_usd
+  <= --max-cost (a real run that cost $0 called nothing); a structured synth node's dataset (intent #2) holds at least 90 % of
+  its n_samples; judge-eval's eval_summary says stub false. e2e_demo.check_run also wants a data-prep node in the plan.
+- Output: the PASS or FAIL line of the stub (run id, wall time, cost, estimate, report chars), then the report's first 5 lines.
+  Record the run id and cost in hackathon/LOG.md.
 """
 
 import argparse
 import json
+import os
 import sys
 
 import e2e_demo as demo
 import httpx
 
+sys.path.insert(0, str(demo.ROOT))  # a script's sys.path[0] is scripts/; the node registry is packages/ at the repo root
+from packages.workflow_schema.models import NODE_REGISTRY, SynthDistilabelInputs  # noqa: E402
+
 CAP_USD = 3.0  # ORCHAPOD_MAX_RUN_USD: a plan estimated above it can never run
 # The caps are pinned so a shell's ORCHAPOD_* cannot change the verdict; the UI is anonymous, so full scale is ANON_SCALE=1.
 FULL_CAPS = {"ORCHAPOD_ANON_SCALE": "1", "ORCHAPOD_MAX_RUN_USD": f"{CAP_USD:g}", "ORCHAPOD_MAX_DAY_USD": "15"}
+REAL_LIMIT_S = 1800  # a real run ends within 30 minutes (intent #3's judge-eval answers on a CPU for about 18)
+FORWARD = ("NEBIUS_API_KEY", "TAVILY_API_KEY", "HF_TOKEN")  # of e2e_demo.PAID, the only names a real run's API sees, each when set
+NEEDS_KEY = {"web-research": "TAVILY_API_KEY"}  # a node type that cannot run without a key beyond NEBIUS_API_KEY (main checks that)
+REAL_TIMEOUT_S = 600  # a real run's HTTP calls: the live planner (up to 300 s a call, with repairs) and the report writer are model calls
 # number: (the slug of its template (apps/api/agent/templates/1-…, 2-…, 3-…), a rule on the plan's node types in execution order,
 # what the rule says). Other templates may exist (a fourth also fine-tunes), so a plan's shape cannot tell them apart, and the
 # default run covers these three and no others. The rules are docs/agent_knowledge.md "Expected plans": a template edit that
@@ -48,6 +67,27 @@ EVAL_KEYS = ("n", "judged", "wins", "ties", "losses", "errors", "win_rate", "con
 # Pure logic (unit-tested in tests/e2e)
 # ---------------------------------------------------------------------------
 
+def real_env(max_cost: float, environ=os.environ) -> dict[str, str | None]:
+    """api_env's `extra` for a real run: both caps = max_cost at full scale, STUB gone, the shell's base URL gone (the key goes
+    to Token Factory and nowhere else), and of e2e_demo.PAID only FORWARD, each when set."""
+    return FULL_CAPS | {"ORCHAPOD_MAX_RUN_USD": str(max_cost), "ORCHAPOD_MAX_DAY_USD": str(max_cost), "STUB": None,
+                        "NEBIUS_BASE_URL": None} | {k: environ[k] for k in FORWARD if environ.get(k, "").strip()}
+
+
+def refusals(plan: dict, environ=os.environ) -> list[str]:
+    """Why a real run must not start this plan, a line each: a node that rents a GPU (runtime gpu, or rents_gpu: vllm-serve's
+    endpoint), a node whose key is unset. They are refused before /agent/run, so nothing is spent on the nodes before them."""
+    lines = []
+    for n in plan["nodes"]:
+        row = NODE_REGISTRY.get(n["type"], {})
+        if row.get("runtime") == "gpu" or row.get("rents_gpu"):
+            lines.append(f"{n['type']} {n['id']!r} rents a GPU: only the golden run (scripts/e2e_demo.py --max-cost) starts one, "
+                         "and it needs G2 quota")
+        if (key := NEEDS_KEY.get(n["type"])) and not environ.get(key, "").strip():
+            lines.append(f"{n['type']} {n['id']!r} needs {key}, which is unset")
+    return lines
+
+
 def canonical(templates: list[dict], number: str) -> dict | None:
     """The template of canonical intent 1, 2 or 3."""
     return next((t for t in templates if t["slug"] == SLUGS[number]), None)
@@ -65,8 +105,9 @@ def node_types(plan: dict) -> list[str]:
     return order
 
 
-def check_eval_summary(s, exact_match: bool) -> list[str]:
-    """The shape the eval view reads (contracts "judge-eval"): all keys, sane counts and rates, STUB flagged, verdicts valid."""
+def check_eval_summary(s, exact_match: bool, stub: bool = True) -> list[str]:
+    """The shape the eval view reads (contracts "judge-eval"): all keys, sane counts and rates, `stub` as the run is (a real
+    run's summary says stub false), verdicts valid."""
     if not isinstance(s, dict):
         return ["eval_summary is not a JSON object"]
     if missing := [k for k in EVAL_KEYS if k not in s]:
@@ -80,8 +121,8 @@ def check_eval_summary(s, exact_match: bool) -> list[str]:
     for k in ("win_rate", "consistency"):
         if s[k] is not None and not (isinstance(s[k], (int, float)) and 0 <= s[k] <= 1):
             problems.append(f"{k} is {s[k]!r}, not a share in [0, 1]")
-    if s["stub"] is not True:
-        problems.append(f"stub is {s['stub']!r} in a STUB run")
+    if s["stub"] is not stub:
+        problems.append(f"stub is {s['stub']!r} in a {'STUB' if stub else 'real'} run")
     if bool(s["exact_match"]) != exact_match:
         problems.append(f"exact_match is {s['exact_match']!r} but the plan asked for exact_match={exact_match}")
     if not isinstance(s["samples"], list) or any(
@@ -90,11 +131,18 @@ def check_eval_summary(s, exact_match: bool) -> list[str]:
     return problems
 
 
-def check_report(report: dict, intent: str, plan: dict) -> list[str]:
-    """What is wrong with the finished run and its report; empty = fine."""
-    problems = demo.check_run(report)
+def check_report(report: dict, intent: str, plan: dict, max_cost: float | None = None) -> list[str]:
+    """What is wrong with the finished run and its report; empty = fine. A real run (max_cost) must have cost more than $0 (one
+    that cost nothing called nothing) and at most max_cost."""
+    # demo.check_run holds a STUB run to $0, so it is shown a real run's costs as 0: they are judged below
+    problems = demo.check_run(report if max_cost is None else
+                              {**report, "cost_usd": 0, "nodes": [{**n, "usd": 0} for n in report["nodes"]]})
     if report["status"] != "succeeded":
         return problems
+    cost = report["cost_usd"]
+    if max_cost is not None and not 0 < cost <= max_cost:
+        problems.append(f"cost_usd ${cost} is over --max-cost ${max_cost:g}" if cost > max_cost
+                        else f"cost_usd is {cost}: a real run that cost $0 called nothing")
     if report["intent"] != intent:
         problems.append(f"the report is for the intent {report['intent']!r}, not the one asked")
     text = (report["markdown"] or "").strip()
@@ -105,9 +153,25 @@ def check_report(report: dict, intent: str, plan: dict) -> list[str]:
     return problems
 
 
-def check_outputs(c: httpx.Client, report: dict, plan: dict) -> list[str]:
+def check_row_count(c: httpx.Client, report: dict, plan: dict) -> list[str]:
+    """A structured synth node (intent #2) asks for n_samples rows: the data-prep dataset holds at least 90 % of them."""
+    synth = demo.synth_inputs(plan) or {}
+    if synth.get("pipeline_template") != "structured":
+        return []
+    asked = int(synth.get("n_samples") or SynthDistilabelInputs.model_fields["n_samples"].default)
+    prep = next(n["node_id"] for n in report["nodes"] if n["type"] == "data-prep")
+    text, problem = demo.download(c, report, prep, "dataset")
+    if problem:
+        return [problem]
+    rows = sum(1 for line in text.splitlines() if line.strip())
+    return [f"the dataset has {rows} rows, under 90 % of the {asked} asked (n_samples)"] if rows * 10 < asked * 9 else []
+
+
+def check_outputs(c: httpx.Client, report: dict, plan: dict, max_cost: float | None = None) -> list[str]:
     """What a finished plan promised beyond its artifacts existing: data rows, the eval summary, the f16 baseline."""
     problems = demo.fetch_dataset(c, report, plan)
+    if max_cost is not None and not problems:
+        problems = check_row_count(c, report, plan)
     for node in plan["nodes"]:
         made = {a["name"] for a in report["artifacts"] if a["node_id"] == node["id"]}
         inputs = node.get("inputs") or {}
@@ -119,7 +183,7 @@ def check_outputs(c: httpx.Client, report: dict, plan: dict) -> list[str]:
                 summary = None if problem else json.loads(text)
             except ValueError:
                 problem = f"{node['id']}.eval_summary is not JSON: {text[:60]!r}"
-            problems += [problem] if problem else check_eval_summary(summary, bool(inputs.get("exact_match")))
+            problems += [problem] if problem else check_eval_summary(summary, bool(inputs.get("exact_match")), max_cost is None)
     return problems
 
 
@@ -131,8 +195,10 @@ def show(verb: str, label: str, lines: list[str], note: str = "") -> None:
     print("\n".join([f"e2e {verb} {label}{note}", *(f"  - {x}" for x in lines)]), flush=True)
 
 
-def run_one(c: httpx.Client, label: str, intent: str, template: dict | None, number: str | None = None) -> str:
-    """One intent: PASS or FAIL. `number` is the canonical intent, None for free text."""
+def run_one(c: httpx.Client, label: str, intent: str, template: dict | None, number: str | None = None,
+            max_cost: float | None = None) -> str:
+    """One intent: PASS or FAIL. `number` is the canonical intent, None for free text. `max_cost` makes it a real run: the live
+    planner answers, so there is no template to compare with, and a plan that would spend wrongly is refused before /agent/run."""
     demo.say(f"--- {label}: {intent!r}")
     reply = demo.call(c, "POST", "/agent/plan", json={"intent": intent})
     plan, estimate, errors = reply["plan"], reply["estimate"], reply["errors"]
@@ -144,8 +210,11 @@ def run_one(c: httpx.Client, label: str, intent: str, template: dict | None, num
     if number and not INTENTS[number][1](types := node_types(plan)):
         problems.append(f"the plan of canonical intent #{number} {INTENTS[number][2]} (docs/agent_knowledge.md), but this one runs {types}")
     problems += errors
-    if estimate["usd"] > CAP_USD:
-        problems.append(f"the estimate ${estimate['usd']} is over the ${CAP_USD:g} run cap")
+    cap = CAP_USD if max_cost is None else max_cost
+    if estimate["usd"] > cap:
+        problems.append(f"the estimate ${estimate['usd']} is over the ${cap:g} run cap")
+    if max_cost is not None:
+        problems += refusals(plan)
     if not problems:
         demo.say(f"plan {plan['name']!r}: {[n['id'] for n in plan['nodes']]}, estimate ${estimate['usd']} / {estimate['minutes']} min")
         if stack := demo.preflight():
@@ -159,33 +228,40 @@ def run_one(c: httpx.Client, label: str, intent: str, template: dict | None, num
     run_id = started["run_id"]
     report, seconds = demo.poll_run(c, run_id, f"/agent/runs/{run_id}/report", done=lambda r: r["ready"],
                                     cancel_token=started["cancel_token"])
-    problems = check_report(report, intent, plan)
+    problems = check_report(report, intent, plan, max_cost)
     if seconds >= demo.LIMIT_S:
         problems.append(f"the run did not end within {demo.LIMIT_S} s, so it was cancelled")
     if not problems:
-        problems = check_outputs(c, report, plan)
-    if problems:
-        show("FAIL", label, problems, f" (run {run_id} after {seconds:.0f} s)")
-        return "FAIL"
-    demo.say(f"PASS {label}: run {run_id} succeeded in {seconds:.0f} s (limit {demo.LIMIT_S} s), cost $0, "
-             f"estimate ${estimate['usd']}, report ready ({len(report['markdown'])} chars)")
-    return "PASS"
+        problems = check_outputs(c, report, plan, max_cost)
+    cost = "$0" if max_cost is None else f"${report['cost_usd']:.4f}"
+    if problems:  # a real run's FAIL says what it cost: that is what the Orchestrator logs
+        facts = f"run {run_id} after {seconds:.0f} s" + ("" if max_cost is None else f", cost {cost}, estimate ${estimate['usd']}")
+        show("FAIL", label, problems, f" ({facts})")
+    else:
+        demo.say(f"PASS {label}: run {run_id} succeeded in {seconds:.0f} s (limit {demo.LIMIT_S} s), cost {cost}, "
+                 f"estimate ${estimate['usd']}, report ready ({len(report['markdown'])} chars)")
+    if max_cost is not None and report["markdown"]:
+        demo.say("report, first 5 lines:")
+        print("\n".join(report["markdown"].splitlines()[:5]), flush=True)
+    return "FAIL" if problems else "PASS"
 
 
-def run_all(c: httpx.Client, which: str | None) -> int:
+def run_all(c: httpx.Client, which: str | None, max_cost: float | None = None) -> int:
+    if max_cost is not None:
+        c.timeout = REAL_TIMEOUT_S  # the stack's client waits 30 s
     templates = demo.get_templates(c)
     todo = []  # (label, intent text, its canonical template and number, or None for free text)
     for number in [which] if which in INTENTS else [] if which else list(INTENTS):
         template = canonical(templates, number)
         if template is None:
             return demo.fail(f"{len(templates)} templates, none is canonical intent #{number} (slug {SLUGS[number]!r})")
-        todo.append((f"intent #{number}", template["intent"], template, number))
+        todo.append((f"intent #{number}", template["intent"], template if max_cost is None else None, number))
     if which and which not in INTENTS:
         todo.append(("free-text intent", which, None, None))
     results = {}
     for label, intent, template, number in todo:
         try:
-            results[label] = run_one(c, label, intent, template, number)
+            results[label] = run_one(c, label, intent, template, number, max_cost)
         except RuntimeError as e:  # an HTTP error from the API fails this intent, not the others
             show("FAIL", label, [str(e)])
             results[label] = "FAIL"
@@ -195,16 +271,24 @@ def run_all(c: httpx.Client, which: str | None) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Stub e2e of the canonical intents through the Agent (see the module docstring).")
+    ap = argparse.ArgumentParser(description="E2E of the canonical intents through the Agent, on stubs or one for real (see the module docstring).")
     ap.add_argument("--stub", action="store_true", help="STUB=1: $0, no keys, no network beyond the local stack")
     ap.add_argument("--intent", help="1, 2 or 3 (a canonical intent), or any text; stub default: all three; a real run needs one")
-    ap.add_argument("--max-cost", type=float, help="USD cap of a real run; a real run is refused without it")
+    ap.add_argument("--max-cost", type=float, help=f"USD cap of a real run, above 0 and at most ${CAP_USD:g}; a real run is refused without it")
     args = ap.parse_args(argv)
-    if not args.stub:
-        if args.max_cost is None or args.max_cost <= 0:
-            ap.error("refusing to run without --max-cost: a real run spends money, so it needs a USD cap above 0")
-        ap.error("only --stub exists so far; the real run is written once the keys exist (spike 3)")
-    return demo.with_stack(lambda c: run_all(c, args.intent), FULL_CAPS)
+    if args.stub:
+        return demo.with_stack(lambda c: run_all(c, args.intent), FULL_CAPS)
+    cost, intent = args.max_cost, (args.intent or "").strip()
+    if cost is None or not cost > 0:  # `not > 0` also refuses nan
+        ap.error("refusing to run without --max-cost: a real run spends money, so it needs a USD cap above 0")
+    if cost > CAP_USD:
+        ap.error(f"refusing --max-cost {cost:g}: the project caps a run at ${CAP_USD:g}")
+    if not intent:
+        ap.error("refusing to run without --intent: a real run takes one intent, 1, 2, 3 or any text")
+    if not os.environ.get("NEBIUS_API_KEY", "").strip():
+        ap.error("refusing to run: NEBIUS_API_KEY is unset (the Agent plans with Nemotron on Token Factory; load .env: set -a; . ./.env; set +a)")
+    demo.LIMIT_S = REAL_LIMIT_S
+    return demo.with_stack(lambda c: run_all(c, intent, cost), real_env(cost))
 
 
 if __name__ == "__main__":

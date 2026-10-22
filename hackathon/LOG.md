@@ -591,3 +591,8 @@ worktrees:
   - README/Devpost/NODE_CONTRACT/feedback report live runs #1 and #3 and the golden path on stubs; tests/docs bans the three stale phrases.
   - Orchestrator review of the added lines: facts match the LOG.
   - MERGED → f9748ec, plus d25f3e1: the stub results cite the integration run on 3b7bf07 (golden run 298cf7be; ui-smoke 5/5 with the template-4 checks). Worktree removed.
+- 2026-10-22T08:20Z Independent review (sonnet) of the orchestrator's 6 code commits (21e3806, 90020da, 1ce321d, acf5e7f, 782be76, 7adad9e).
+  - Important: 782be76 ignored a config flagged `default: true` (it overrode the library's choice).
+  - Fixed: data-prep now uses get_dataset_default_config_name (checked importable in the data-prep image, datasets 5.1.0).
+  - Minors fixed: LocalDocker argv pin; unused planner param; R20 wording; chat create wording; the hf_config fallback in contracts; /workflows/new placeholder and subtitle.
+  - Tests: 113 targeted; web 36; tsc clean.

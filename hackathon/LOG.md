@@ -551,3 +551,8 @@ worktrees:
   - Concerns: the smoke runs the reduced plan; --target stub in every mode (safe by refusal order); template 5 uncovered.
   - Review dispatched (sonnet). Trial merge clean.
 - 2026-10-22T07:27Z LIVE RUN #2 started: `make agent-e2e INTENT=3 MAX_COST=0.5` on bc9f9dc (maths quantize; Ultra judges live; it also exercises acf5e7f's env-by-name for real). No other e2e running.
+- 2026-10-22T07:30Z LIVE RUN #2 FAIL (intent #3, run cf49d0f1, 73 s, total $0.0034 = planner/reporter only).
+  - Super planned 'quantize-math-expert' live: hf_download, quantize_model, prepare_test_data, evaluate_quantization; estimate $0.24 / 35.3 min.
+  - prepare_test_data failed: datasets 'Config name is missing' (gsm8k: main, socratic). The live plan omitted hf_config, which the template sets.
+  - The failure path worked as designed: failed fast, nothing billed past planning, and Super's report says what failed.
+  - Root-cause fix (orchestrator, data lane): data-prep picks 'main' (else the first config) when a dataset has several and no default, with a warning; agent_knowledge names hf_config explicitly. Re-running live.

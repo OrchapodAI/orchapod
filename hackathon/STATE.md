@@ -75,7 +75,7 @@ Updated: 2026-10-22T07:01Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - [x] P1 D3 loss chart fills from the fine-tune node's loss_curve on load; live events append — DONE (frontend-w4)
 - [x] P0 D6 polish: toasts, honest error/empty/loading states, OG image, demo banner, `fits` on template cards, loss chart from loss_curve — DONE (frontend-w4); D7 screenshots — TODO
 ### P2 follow-ups (2026-10-22)
-- [ ] platform: local_docker passes node env as `docker run -e K=V` (a key on a command line for an instant) → `-e K` with the value in the client's env; review the orchestrator's chat(create=True) (21e3806) — TODO
+- [x] platform: local_docker passes node env by name (`-e K`, values in the CLI's env) — DONE (orchestrator, checked on Docker Desktop); [ ] platform reviews the orchestrator's chat(create=True) (21e3806) at its next task — TODO
 - [ ] data: quality_filter → chat(create=True); Lightning's 16–110 s latency vs its 30 s read timeout (opt-in, no template uses it) — TODO
 - [ ] backend: estimate unsloth-train from max_steps (the flat $1.88 makes the reduced docs plan $2.32) — TODO
 ### qa

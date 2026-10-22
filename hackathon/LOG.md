@@ -541,3 +541,4 @@ worktrees:
 - 2026-10-22T07:03Z Attempted a live click-through of intent #2 on /agent (local API on 8002 with the key, caps $0.50/run and $1/day, web on 3000) via the browser pane.
   - The permission classifier denied starting the long-running server ('Unauthorized Persistence'). Not worked around; launch configs removed.
   - The live Agent API run (84e57f84) is the G1 evidence; a /agent click-through waits for Hari (locally) or the hosted demo.
+- 2026-10-22T07:04Z Orchestrator fix (platform lane): LocalDocker passes node env by name (-e K) with the values in the docker CLI's env. No key on a command line (qa-w7 finding). Test + a real `docker run -e NAME` probe. Platform reviews it and chat(create=True) at its next task.

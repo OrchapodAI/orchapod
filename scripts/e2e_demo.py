@@ -76,12 +76,14 @@ def api_env(port: int, db: Path, environ, extra: dict[str, str | None] | None = 
 
 
 def bind_host() -> str:
-    """Where the stub API listens: E2E_BIND_HOST, else 127.0.0.1. A node container reaches it as host.docker.internal: Docker
+    """Where the API listens: E2E_BIND_HOST, else 127.0.0.1. A node container reaches it as host.docker.internal: Docker
     Desktop (macOS, Windows) forwards that name to the host's 127.0.0.1, but on Linux it is the docker0 gateway (LocalDocker's
     --add-host ...:host-gateway), which a 127.0.0.1 listener never answers. There set E2E_BIND_HOST to docker0's gateway
-    (`docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}'`, usually 172.17.0.1), on a throwaway host only:
-    the key-less STUB API takes runs from anyone who reaches it, and a firewall that drops docker0 traffic needs a rule for
-    ports 8003-8052 (preflight says so; never the hosted VM, docs/HOSTING.md)."""
+    (`docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}'`, usually 172.17.0.1), on a throwaway host only,
+    and for a stub run only: the key-less STUB API takes runs from anyone who reaches it, whereas the API of e2e_agent.py's real
+    run holds a key, so that run refuses when E2E_BIND_HOST is set and stays on 127.0.0.1 (so it needs Docker Desktop). A
+    firewall that drops docker0 traffic needs a rule for ports 8003-8052 (preflight says so; never the hosted VM,
+    docs/HOSTING.md)."""
     return os.environ.get("E2E_BIND_HOST") or "127.0.0.1"
 
 

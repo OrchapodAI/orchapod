@@ -241,6 +241,26 @@ def test_a_real_api_sees_three_keys_and_nothing_else_paid(tmp_path, monkeypatch)
     assert env["ORCHAPOD_KILL_SWITCH"] == "0" and env["DATABASE_URL"].startswith("sqlite+aiosqlite:///" + str(tmp_path))
 
 
+@pytest.mark.parametrize("bind, refused", [("172.17.0.1", True), ("0.0.0.0", True), ("", False)])  # blank = unset = loopback
+def test_a_real_run_is_refused_when_its_api_would_listen_beyond_loopback(bind, refused, stack_spy, monkeypatch, capsys):
+    """The API of a real run holds a key, so it takes runs, and spends, from anyone who reaches it: it stays on 127.0.0.1."""
+    monkeypatch.setenv("NEBIUS_API_KEY", KEY)
+    monkeypatch.setenv("E2E_BIND_HOST", bind)
+    if not refused:
+        assert agent.main(REAL) == 0 and len(stack_spy) == 1
+        return
+    with pytest.raises(SystemExit) as e:
+        agent.main(REAL)
+    err = capsys.readouterr().err
+    assert e.value.code == 2 and "E2E_BIND_HOST" in err and stack_spy == [] and KEY not in err, err
+
+
+def test_a_stub_run_may_listen_on_the_docker_bridge(stack_spy, monkeypatch):
+    """Linux: the node containers reach a stub API through docker0; a stub API holds no key."""
+    monkeypatch.setenv("E2E_BIND_HOST", "172.17.0.1")
+    assert agent.main(["--stub"]) == 0 and len(stack_spy) == 1
+
+
 @pytest.mark.parametrize("argv", [["--stub"], ["--stub", "--intent", "2", "--max-cost", "0.5"]])
 def test_a_stub_run_forwards_no_key_whatever_the_shell_holds(argv, stack_spy, monkeypatch):
     """`make check E2E=1` runs `e2e_agent.py --stub` from the Orchestrator's shell, which holds the keys: a stub stays a stub, with the

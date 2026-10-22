@@ -285,6 +285,8 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("refusing to run without --intent: a real run takes one intent, 1, 2, 3 or any text")
     if not os.environ.get("NEBIUS_API_KEY", "").strip():
         ap.error("refusing to run: NEBIUS_API_KEY is unset (the Agent plans with Nemotron on Token Factory; load .env: set -a; . ./.env; set +a)")
+    if os.environ.get("E2E_BIND_HOST"):  # blank counts as unset, as in demo.bind_host
+        ap.error("refusing to run: E2E_BIND_HOST is set, but the API of a real run holds your key and listens on 127.0.0.1 only (unset it)")
     return demo.with_stack(lambda c: run_all(c, intent, cost), real_env(cost))
 
 

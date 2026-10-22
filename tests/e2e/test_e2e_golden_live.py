@@ -393,6 +393,19 @@ def test_a_second_try_finds_the_run_cancelled_or_ended(hosted_api, monkeypatch, 
     assert demo.main(LIVE) == 1  # the run did not end by itself: a FAIL, but a cancelled one
     out = capsys.readouterr().out
     assert len(cancels_of(api)) == 2 and "may still be running" not in out and f"did not end within {demo.LIVE_LIMIT_S} s, so it was cancelled" in out
+    assert "run r1 had ended" in out
+
+
+def test_a_redirect_is_not_a_cancel(hosted_api, monkeypatch, capsys):
+    """A proxy that redirects the POST has cancelled nothing: two tries, then the run is named with the admin's curl."""
+    clock = iter([0, demo.LIVE_LIMIT_S])
+    monkeypatch.setattr(demo, "time", SimpleNamespace(monotonic=lambda: next(clock), sleep=lambda s: None))
+    redirect = lambda request, seen: (httpx.Response(307, headers={"location": "https://elsewhere.example.test/"})  # noqa: E731
+                                      if request.url.path.endswith("/cancel") else None)
+    api = hosted_api(not_ready=99, before=redirect)
+    assert demo.main(LIVE) == 1
+    out = capsys.readouterr().out
+    assert len(cancels_of(api)) == 2 and "POST /runs/r1/cancel -> HTTP 307" in out and f"run r1 may still be running; cancel it as the admin: {curl()}" in out
 
 
 # --- Ctrl-C and SIGTERM stop the run; a poll that fails is waited through until the limit -----------------------------------------------

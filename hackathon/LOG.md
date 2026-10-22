@@ -613,3 +613,8 @@ worktrees:
     - Poll failures are tolerated until the limit, never a cancel — why: when the API is down a cancel fails anyway; caps bound spend.
   - Fix round → ae3c65befef5dcb2b.
 - 2026-10-22T09:18Z qa-w9 fix round done (c68d669, 3d9e671, c30f3ff, dbd51c9, 4f050f9; $0): LIVE_LIMIT_S 7200; poll failures tolerated to the limit, cancels only at the limit/Ctrl-C/SIGTERM; evidence never flips a PASS; printable-token refusal; POST window; cancel feedback; checklist. 301 e2e tests; make check 1122; 99 mutants caught. Scoped re-review dispatched (sonnet).
+- 2026-10-22T09:34Z qa-w9 re-review (sonnet): APPROVED. All 7 findings and both invariants hold (probes: 2 h API outage → 3601 polls, 121 warnings, cancel ×2, curl hint, exit 1).
+  - MERGED qa-w9 → 3ab57fd, plus fbfeec0: a second Ctrl-C during the cancel still prints the admin curl (test + mutant).
+  - Docs: README:159, test_readme comment, CLAUDE.md/ORCHESTRATOR.md say `make e2e API=…` is orchestrator-only on G2 day.
+  - hackathon/G2-CHECKLIST.md published; STATE item 1 points Hari at it.
+  - Remaining minors (rare): whitespace-collapsed secrets in warnings; DecodingError on poll/POST paths.

@@ -583,3 +583,7 @@ worktrees:
   - make ui-smoke 5/5 (golden path: template 4, run, eval view, compare playground, 11.0 s).
   - acf5e7f (env by name) is exercised by every stub node container.
 - 2026-10-22T07:58Z G1 MET (as ruled): the golden path (template 4) green from the UI on stubs, plus live intents #2 (84e57f84, $0.10) and #3 (59786797, $0.02) through the Agent.
+- 2026-10-22T07:59Z Worktrees of the 8 merged branches removed (each clean, merged; branches deleted with -d).
+- 2026-10-22T07:59Z qa-w9 dispatched (resumed ae3c65befef5dcb2b; worktree qa-w9 @ 57a62c1): e2e_demo.py --max-cost --api https://api.<domain> runs the live golden run (template 4) against the hosted API with the admin header.
+  - Refusals; 60 min limit with cancel; checks (lora_adapter, https endpoint, eval stub false); per-node times for the 25-min bar.
+  - Fake-API tests only. The report lists Hari's G2-day prerequisites.

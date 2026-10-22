@@ -429,3 +429,8 @@ worktrees:
   - Ruling: the GET's restart catch-up (it starts the writer for an ended run with no report) is accepted — why: off the request path, single-flight, in the day ledger — cost if wrong: one ~$0.002 Super call per ended run that lost its report.
   - Ruling: orchestrator added TokenFactory.chat(create=True) (21e3806, 2 lines + 2 tests + contract line in platform's lane) so _SendOnce goes — why: the flag already exists in base.request for paid creates; two lines beat a second agent round — cost if wrong: platform reviews it at its next task.
   - Fix round 1 → adaa43fd9d6077de1: merge NebiusHackathon, chat(create=True), title normalised to one line ≤ 80, single-flight + retry tests, minor 5, minor 6.
+- 2026-10-22T05:12Z ml-w6 fix round 1 done (9b88339 merge of NebiusHackathon; 33d1053..a8da008; $0).
+  - Full docs plan: keep_alive 15, merge false → $2.66 (reduced $2.32); CPU variant $2.15 / $1.93; R14 worst case $2.92; serve preflight $0.78.
+  - 891 passed; ruff clean; web 30/30.
+  - Open: --enable-lora unproven on Nebius (runbook in the report); the reduced estimate prices unsloth-train at a flat $1.88 (backend's estimator).
+  - Scoped re-review dispatched (sonnet, a677940a140672b15). Trial merge with NebiusHackathon: clean.

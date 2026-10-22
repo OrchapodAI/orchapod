@@ -211,6 +211,19 @@ test("tf-finetune's timeout_min stops at 85, under the executor's 90-minute back
   assert.match(timeout?.help ?? "", /85/);
 });
 
+test("the palette lists the golden path first (R25) and no node the registry hides: tf-deploy is retired (R24)", () => {
+  const read = (path: string) => readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
+  const palette = [...read("apps/web/components/canvas/NodePalette.tsx").matchAll(/\{ type: "([a-z0-9-]+)",/g)].map((m) => m[1]);
+  assert.deepEqual(palette, ["web-research", "synth-distilabel", "data-prep", "unsloth-train", "vllm-serve", "judge-eval",
+    "tf-finetune", "quantize", "hf-download", "distill-sft", "lm-eval"]);
+  // The registry's `"hidden": True` rows, read as text (the web job of CI has no Python); a row is NodeType.X: {…} or NODE_REGISTRY[NodeType.X] = {…}.
+  const hidden = read("packages/workflow_schema/models.py").split(/(?=NodeType\.[A-Z0-9_]+(?:: |\] = )\{)/)
+    .filter((row) => row.includes('"hidden": True')).map((row) => row.match(/^NodeType\.([A-Z0-9_]+)/)![1].toLowerCase().replaceAll("_", "-"));
+  assert.ok(["tf-deploy", "s3-import", "hf-import"].every((t) => hidden.includes(t)), `read the registry's hidden rows: ${hidden}`);
+  // distill-sft and lm-eval are hidden from the planner (off the demo path) but have containers, and the brief keeps them on the palette
+  assert.deepEqual(palette.filter((t) => hidden.includes(t) && !["distill-sft", "lm-eval"].includes(t)), []);
+});
+
 test("the template gallery reads GET /agent/templates", async () => {
   const calls: string[] = [];
   globalThis.fetch = async (url: string, init?: RequestInit) => {

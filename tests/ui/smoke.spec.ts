@@ -11,7 +11,7 @@ const SLUGS: Record<string, string> = JSON.parse(process.env.E2E_SLUGS || "{}");
 type Template = {
   slug: string; title: string; intent: string; estimate: { usd: number; minutes: number };
   plan: { name: string; nodes: { type: string; inputs?: Record<string, unknown> }[] };
-  reduced?: { estimate: { usd: number } }; fits?: boolean;
+  reduced?: { estimate: { usd: number; minutes: number } }; fits?: boolean;
 };
 
 const usd = (n: number) => `$${n.toFixed(2)}`; // the page's own formats
@@ -220,10 +220,21 @@ async function checkPlayground(page: Page): Promise<void> {
 test("golden path: template 4, run, eval view, compare playground", async ({ page }) => {
   const problems = watch(page);
   const t = await template(4);
+  // R25's six, written out here and not read from the template: the eval and compare checks below would pass for another template's run
+  expect(t.plan.nodes.map((n) => n.type)).toEqual(["web-research", "synth-distilabel", "data-prep", "unsloth-train", "vllm-serve", "judge-eval"]);
   await runFromGallery(page, t);
+
+  // the Plan card shows the plan that the one-click Run starts: template 4's name, its six nodes, their types, the reduced estimate
+  const card = page.getByLabel("Plan", { exact: true });
+  await expect(card.getByText(t.plan.name, { exact: true })).toBeVisible();
+  await expect(card.getByText(`${t.plan.nodes.length} nodes`, { exact: true })).toBeVisible();
+  for (const node of t.plan.nodes) await expect(card.getByRole("cell", { name: node.type })).toBeVisible();
+  const shown = (t.reduced ?? t).estimate;
+  await expect(card.getByTitle("Estimated cost and wall time")).toHaveText(`${usd(shown.usd)} · ${mins(shown.minutes)}`);
 
   await untilDone(page, tab(page, "eval"), 180_000); // a failed node shows at once: do not wait out the eval tab
   await checkEvalView(page); // the eval view on the judge-eval node's real STUB result
   await checkPlayground(page); // the playground over POST /compare: one prompt, two models, streamed side by side
+  await untilDone(page, page.getByText(`${t.plan.name}: succeeded`)); // and the report that the run wrote names template 4's plan
   expect(problems).toEqual([]);
 });

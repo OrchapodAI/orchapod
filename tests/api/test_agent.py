@@ -139,14 +139,15 @@ def test_the_docs_specialist_validates_at_both_scales_on_10_to_20_docs_pages(mon
     t = planner.templates()[3]
     for plan in (t["plan"], planner.reduced(t)["plan"]):
         assert planner.review(plan)[0] == []
-    # Lane B (Hari, 2026-10-22): NVIDIA's student, served beside its adapter on one endpoint that bills 25 min (R14)
+    # Lane B (R25): NVIDIA's student, served beside its adapter on one endpoint kept 15 min (R14), no 16 GB merge
     nodes = {n["id"]: n for n in t["plan"]["nodes"]}
     assert [n["type"] for n in t["plan"]["nodes"]] == ["web-research", "synth-distilabel", "data-prep", "unsloth-train",
                                                        "vllm-serve", "judge-eval"]
     assert nodes["train"]["inputs"]["model"] == nodes["serve"]["inputs"]["model"] == "nvidia/Llama-3.1-Nemotron-Nano-8B-v1"
     assert (nodes["serve"]["inputs"]["keep_alive_min"], nodes["serve"]["inputs"]["lora_adapter"]) == (
-        25, "${{ nodes.train.outputs.lora_adapter }}")
-    assert planner.estimate(t["plan"])[0]["usd"] < 3  # about 25 min of H100 and the L40S endpoint, R14
+        15, "${{ nodes.train.outputs.lora_adapter }}")
+    assert nodes["train"]["inputs"]["merge"] is False  # vllm-serve reads the adapter, not merged_model
+    assert planner.estimate(t["plan"])[0]["usd"] == pytest.approx(2.6627, abs=1e-4)  # 25 min of H100 + 20 of L40S, R14
     seeds = t["plan"]["nodes"][0]["inputs"]["seed_urls"]
     assert 10 <= len(set(seeds)) == len(seeds) <= 20
     assert all(re.fullmatch(r"https://docs\.(tokenfactory\.)?nebius\.com(/[a-z0-9-]+)+", u) for u in seeds), seeds

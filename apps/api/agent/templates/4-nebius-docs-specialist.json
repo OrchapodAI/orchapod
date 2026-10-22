@@ -2,7 +2,7 @@
   "slug": "nebius-docs-specialist",
   "title": "Nemotron Nano 8B tuned as a Nebius docs specialist",
   "intent": "Distill a Nebius docs specialist: fine-tune NVIDIA Nemotron Nano 8B on the Nebius AI Cloud and Token Factory docs",
-  "rationale": "Tavily extracts 20 Nebius docs pages (Token Factory fine-tuning, models, Dedicated-endpoint deploy and billing; AI Cloud Serverless jobs and endpoints, Compute and Object Storage prices, Object Storage, quotas), Nemotron 3 Super writes short Q&A grounded in them, and Unsloth trains NVIDIA's open Nemotron Nano 8B with a 16-bit LoRA on an H100 Serverless Job (spike 4's recipe: 60 steps, about two epochs). vllm-serve hosts the student and its adapter side by side on one L40S endpoint for 25 minutes (R14), so base and tuned answer from one serving stack with identical decoding, and Nemotron 3 Ultra then judges base against tuned on held-out questions with the source passage as reference, so every answer can be checked against the docs. It rents GPUs (under the $3 run cap, R14), so on the public app only the admin runs it.",
+  "rationale": "Tavily extracts 20 Nebius docs pages (Token Factory fine-tuning, models, Dedicated-endpoint deploy and billing; AI Cloud Serverless jobs and endpoints, Compute and Object Storage prices, Object Storage, quotas), Nemotron 3 Super writes short Q&A grounded in them, and Unsloth trains NVIDIA's open Nemotron Nano 8B with a 16-bit LoRA on an H100 Serverless Job (spike 4's recipe: 60 steps, about two epochs). vllm-serve hosts the student and its adapter side by side on one L40S endpoint for 15 minutes (R14), so base and tuned answer from one serving stack with identical decoding, and Nemotron 3 Ultra then judges base against tuned on held-out questions with the source passage as reference, so every answer can be checked against the docs. It rents GPUs (under the $3 run cap, R14), so on the public app only the admin runs it.",
   "plan": {
     "name": "nebius-docs-specialist-nemotron-nano-8b",
     "nodes": [
@@ -36,10 +36,11 @@
         "dataset": "${{ nodes.synth.outputs.dataset }}", "format": "chatml", "train_split": 0.8, "test_split": 0.1}},
       {"id": "train", "type": "unsloth-train", "needs": ["prep"], "inputs": {
         "model": "nvidia/Llama-3.1-Nemotron-Nano-8B-v1", "train_data": "${{ nodes.prep.outputs.train_jsonl }}",
-        "eval_data": "${{ nodes.prep.outputs.eval_jsonl }}", "lora_alpha": 16, "max_steps": 60, "checkpoint_steps": 30}},
+        "eval_data": "${{ nodes.prep.outputs.eval_jsonl }}", "lora_alpha": 16, "max_steps": 60, "checkpoint_steps": 30,
+        "merge": false}},
       {"id": "serve", "type": "vllm-serve", "needs": ["train"], "inputs": {
         "model": "nvidia/Llama-3.1-Nemotron-Nano-8B-v1", "lora_adapter": "${{ nodes.train.outputs.lora_adapter }}",
-        "keep_alive_min": 25}},
+        "keep_alive_min": 15}},
       {"id": "evaluate", "type": "judge-eval", "needs": ["prep", "serve"], "inputs": {
         "test_data": "${{ nodes.prep.outputs.test_jsonl }}",
         "base_model_ref": "${{ nodes.serve.outputs.base_model_ref }}",

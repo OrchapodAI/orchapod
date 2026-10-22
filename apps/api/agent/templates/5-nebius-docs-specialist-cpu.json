@@ -36,7 +36,8 @@
         "dataset": "${{ nodes.synth.outputs.dataset }}", "format": "chatml", "train_split": 0.8, "test_split": 0.1}},
       {"id": "train", "type": "unsloth-train", "needs": ["prep"], "inputs": {
         "model": "nvidia/Llama-3.1-Nemotron-Nano-8B-v1", "train_data": "${{ nodes.prep.outputs.train_jsonl }}",
-        "eval_data": "${{ nodes.prep.outputs.eval_jsonl }}", "lora_alpha": 16, "max_steps": 60, "checkpoint_steps": 30}},
+        "eval_data": "${{ nodes.prep.outputs.eval_jsonl }}", "lora_alpha": 16, "max_steps": 60, "checkpoint_steps": 30,
+        "merge": false}},
       {"id": "quantize", "type": "quantize", "needs": ["train"], "inputs": {
         "model": "nvidia/Llama-3.1-Nemotron-Nano-8B-v1", "method": "gguf", "precision": "q4_k_m",
         "lora_adapter": "${{ nodes.train.outputs.lora_adapter }}"}},

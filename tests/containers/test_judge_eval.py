@@ -457,13 +457,15 @@ def test_a_llama_server_that_dies_while_loading_exits_1_with_its_last_line(llama
 LORA_SIDE = {"base_url": None, "model": GGUF_LORA, "api_key_env": "", "base_model": GGUF_Q4}
 
 
-def test_stub_serves_a_tuned_lora_offline(node, monkeypatch):
+def test_stub_serves_a_tuned_lora_offline(node, monkeypatch, mock_orchapod_io):
     monkeypatch.setenv("STUB", "1")
     monkeypatch.setattr(je.subprocess, "Popen", MagicMock(side_effect=AssertionError("no llama-server under STUB")))
     node.objects[GGUF_Q4] = node.objects[GGUF_LORA] = b"GGUF"  # quantize's STUB files
     out = node(base_model_ref=GGUF_Q4, tuned_model_ref=GGUF_Q4, tuned_lora=GGUF_LORA)
     assert out["tuned"] == {**LORA_SIDE, "base_url": "http://127.0.0.1:8082/v1"}  # the LoRA, on its base GGUF
     assert out["base"]["model"] == GGUF_Q4 and (out["stub"], out["errors"], node.seen) == (True, 0, [])
+    fetched = [c.args[0] for c in mock_orchapod_io.download_input.call_args_list]
+    assert fetched.count(GGUF_Q4) == 1  # base and tuned name one GGUF (about 5 GB at 8B): downloaded once
 
 
 def test_the_tuned_llama_server_applies_the_lora_and_the_base_server_does_not(llama):
@@ -472,7 +474,7 @@ def test_the_tuned_llama_server_applies_the_lora_and_the_base_server_does_not(ll
     ports = je.LLAMA_PORTS
     base, tuned = (json.loads((llama.bin / f"argv-{ports[side]}.json").read_text()) for side in ("base", "tuned"))
     assert "--lora" not in base and Path(tuned[tuned.index("--lora") + 1]).read_bytes() == b"GGUF lora"
-    assert {Path(argv[argv.index("-m") + 1]).read_bytes() for argv in (base, tuned)} == {b"GGUF and weights"}  # one base
+    assert base[base.index("-m") + 1] == tuned[tuned.index("-m") + 1]  # one GGUF file for both sides
     assert [(argv[argv.index("-np") + 1], argv[argv.index("-c") + 1], "--jinja" in argv) for argv in (base, tuned)] == [
         (str(je.WORKERS), str(je.WORKERS * (512 + 2048)), True)] * 2  # the same serving for both sides
     assert out["tuned"] == {**LORA_SIDE, "base_url": f"http://127.0.0.1:{ports['tuned']}/v1"} and out["errors"] == 0
@@ -481,8 +483,9 @@ def test_the_tuned_llama_server_applies_the_lora_and_the_base_server_does_not(ll
 @pytest.mark.parametrize("inputs, error", [
     ({"tuned_lora": "${{ nodes.quantize.outputs.gguf_lora }}"}, "unresolved ref tuned_lora"),
     ({"tuned_lora": GGUF_LORA, "tuned_model_ref": LORA}, "tuned_lora needs a GGUF tuned_model_ref"),
-    ({"tuned_lora": TEST}, f"tuned_lora {TEST} is not a GGUF file"),
-], ids=["unresolved", "tuned-not-gguf", "lora-not-gguf"])
+    ({"tuned_lora": TEST}, f"refused ModelRef tuned_lora: {TEST} is neither a GGUF file nor a model_ref JSON"),
+    ({"tuned_lora": LLAMA}, "tuned_lora must be quantize's gguf_lora"),  # a model id, not a LoRA file
+], ids=["unresolved", "tuned-not-gguf", "lora-not-gguf", "lora-a-model-id"])
 def test_a_tuned_lora_that_cannot_be_served_exits_1_before_any_answer(node, inputs, error):
     node.objects[GGUF_Q4], node.objects[GGUF_LORA] = b"GGUF", b"GGUF lora"
     with pytest.raises(SystemExit) as e:

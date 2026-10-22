@@ -101,19 +101,6 @@ def model_ref(name: str, value) -> dict:
             "base_model": base_model if isinstance(base_model, str) else None}
 
 
-def gguf_lora(uri) -> str | None:
-    """tuned_lora (quantize's gguf_lora) → the local file, or None when unset; exit 1 unless it is an r2:// GGUF."""
-    if uri in (None, ""):
-        return None
-    if not isinstance(uri, str) or "${{" in uri or not uri.startswith("r2://"):
-        fail(f"unresolved ref tuned_lora: {uri!r} (expected quantize's r2:// gguf_lora)")
-    path = io.download_input(uri, tempfile.mkdtemp())
-    with path.open("rb") as f:
-        if f.read(4) != b"GGUF":
-            fail(f"tuned_lora {uri} is not a GGUF file")
-    return str(path)
-
-
 def public(ref: dict) -> dict:
     return {k: ref[k] for k in ("base_url", "model", "api_key_env", "base_model")}
 
@@ -238,8 +225,11 @@ def main():
     rows = read_rows(inputs.get("test_data"))[:max_samples]  # before the refs: a GGUF pair is about 4 GB to fetch
     if not rows:
         fail("no test rows")
-    lora = gguf_lora(inputs.get("tuned_lora"))  # also before the refs: the LoRA is MBs, a GGUF model GBs
-    refs = {side: model_ref(f"{side}_model_ref", inputs.get(f"{side}_model_ref")) for side in ("base", "tuned")}
+    lora = inputs.get("tuned_lora")  # also before the refs: the LoRA is MBs, a GGUF model GBs
+    lora = lora and (model_ref("tuned_lora", lora).get("gguf") or fail("tuned_lora must be quantize's gguf_lora (a GGUF file)"))
+    base, tuned = inputs.get("base_model_ref"), inputs.get("tuned_model_ref")
+    refs = {"base": model_ref("base_model_ref", base)}
+    refs["tuned"] = refs["base"] if tuned == base else model_ref("tuned_model_ref", tuned)  # one download of a shared GGUF
     if lora:  # tuned = its GGUF plus the adapter: the ref names the LoRA, on the GGUF as its base
         if not refs["tuned"].get("gguf"):
             fail("tuned_lora needs a GGUF tuned_model_ref (quantize's gguf_file): llama-server applies the LoRA to it")

@@ -506,9 +506,9 @@ class JudgeEvalInputs(BaseModel):
                                        "(or dataset); context and source_url are kept")
     base_model_ref: dict[str, Any] | str = Field(
         description="ModelRef JSON {base_url, model, api_key_env, base_model}, a Token Factory model id, or a ref to "
-                    "vllm-serve base_model_ref, tf-deploy model_ref or quantize gguf_f16 (served with llama-server)")
+                    "vllm-serve base_model_ref or quantize gguf_f16 / gguf_file (served with llama-server)")
     tuned_model_ref: dict[str, Any] | str = Field(
-        description="Same forms as base_model_ref: vllm-serve model_ref, tf-deploy model_ref or quantize gguf_file")
+        description="Same forms as base_model_ref: vllm-serve model_ref or quantize gguf_file")
     judge_model: str = Field(default="nvidia/Nemotron-3-Ultra-550b-a55b", description="Nemotron on Token Factory")
     max_samples: int = Field(default=60, ge=1, description="Both models answer the first max_samples rows")
     n_judge: int | None = Field(default=None, ge=0, description="The judge sees the first n rows; empty = max_samples")

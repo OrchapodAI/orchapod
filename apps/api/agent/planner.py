@@ -18,7 +18,6 @@ from collections import Counter
 from pathlib import Path
 from typing import Annotated, Any
 
-import httpx
 import yaml
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, StringConstraints, ValidationError
@@ -31,7 +30,6 @@ from api.models.db import AgentRun
 from api.services import budget
 from api.services.provider_selector import get_providers
 from orchapod.prices import PRICES
-from packages.providers.base import ProviderError
 from packages.providers.tokenfactory import SUPER, ULTRA
 from packages.workflow_schema.models import NODE_REGISTRY, ResourceSpec
 
@@ -395,41 +393,17 @@ and say that Retry node resumes from it."""
 REPORT_TIMEOUT_S = 30  # spike 2: Super wrote this report in 2.1 s; Lightning took 16-110 s and once 4 x 120 s
 
 
-class _SendOnce:
-    """The report call's http client: one send. The client re-sends a timed-out or failed call up to 3 times, each maybe
-    billed; for a report the template stands in instead. A timeout is raised as a ProviderError, which the client's
-    retry loop lets through."""
-
-    def __init__(self, http: httpx.Client):
-        self.http, self.sent = http, False
-
-    def build_request(self, *args, **kwargs) -> httpx.Request:
-        return self.http.build_request(*args, **kwargs)
-
-    def send(self, request: httpx.Request, **kwargs) -> httpx.Response:
-        if self.sent:  # the client's retry of a 429 or a 5xx
-            raise ProviderError("token_factory", "server", None, "the report call is not re-sent")
-        self.sent = True
-        try:
-            return self.http.send(request, **kwargs)
-        except httpx.TransportError as e:  # no reply in REPORT_TIMEOUT_S, or the connection dropped
-            raise ProviderError("token_factory", "server", None, repr(e)) from e
-
-
 async def write_report(agent_run: AgentRun, summary: dict, db: AsyncSession, scale: float) -> str:
-    """Nemotron 3 Super writes the report under the template's title line (so it names the plan), in one send with a
-    REPORT_TIMEOUT_S read timeout; STUB=1, the kill switch, an empty day budget or a failed call fall back to the
-    template."""
+    """Nemotron 3 Super writes the report under the template's title line (so it names the plan), sent at most once it
+    may have landed (create=True) with a REPORT_TIMEOUT_S read timeout; STUB=1, the kill switch, an empty day budget or
+    a failed call fall back to the template."""
     if config.env("STUB") != "1" and not budget.kill_switch() and (await budget.left(db, None, scale))[0] > 0:
         facts = json.dumps({"intent": agent_run.intent, "plan": agent_run.plan, "estimate": agent_run.estimate,
                             "run": summary}, default=str)[:20_000]
-
-        def call(tf):
-            tf.http = _SendOnce(tf.http)
-            return tf.chat([{"role": "system", "content": REPORT_PROMPT}, {"role": "user", "content": facts}],
-                           SUPER, temperature=0.0, max_tokens=1200, thinking=False, read_timeout=REPORT_TIMEOUT_S)
         try:
-            out = await budget.control_plane(db, "reporter", call)
+            out = await budget.control_plane(db, "reporter", lambda tf: tf.chat(
+                [{"role": "system", "content": REPORT_PROMPT}, {"role": "user", "content": facts}], SUPER, create=True,
+                temperature=0.0, max_tokens=1200, thinking=False, read_timeout=REPORT_TIMEOUT_S))
             if out["text"].strip():
                 return f"{_title(agent_run, summary)}\n\n{out['text'].strip()}"
         except Exception as e:  # a ProviderError, or a reply the client could not read
@@ -438,7 +412,9 @@ async def write_report(agent_run: AgentRun, summary: dict, db: AsyncSession, sca
 
 
 def _title(agent_run: AgentRun, s: dict) -> str:
-    return f"## {agent_run.plan.get('name') or 'Agent run'}: {s['status']}"
+    """One plain line: a plan name's newlines (or a "## Cost" in it) never become headings of the report."""
+    name = " ".join((agent_run.plan.get("name") or "").split())[:80]
+    return f"## {name or 'Agent run'}: {s['status']}"
 
 
 def template_report(agent_run: AgentRun, s: dict) -> str:

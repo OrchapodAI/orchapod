@@ -87,7 +87,7 @@ async def run(body: RunRequest, db: Session, scale: Scale):
 async def report(run_id: uuid.UUID, db: Session, scale: Scale):
     """→ {<GET /runs/{id}/summary fields>, intent, estimate, ready, markdown}; ready = terminal and written. It never waits
     on Nemotron: the report is written in the background once the run ends, and a poll reads it."""
-    agent_run = await db.get(AgentRun, run_id, populate_existing=True)  # the writer stores it from its own session
+    agent_run = await db.get(AgentRun, run_id, populate_existing=True)  # the stored row: the writer updates it elsewhere
     if not agent_run:
         raise HTTPException(status_code=404, detail="Not a run the agent started")
     summary = jsonable_encoder(await run_summary(run_id, db))
@@ -128,7 +128,7 @@ async def _write_report(run_id: uuid.UUID, scale: float) -> None:
                     AgentRun.run_id == run_id, AgentRun.report_md.is_(None),
                     select(Run.id).where(Run.id == run_id, Run.finished_at == finished_at).exists(),
                 ).values(report_md=written).execution_options(synchronize_session=False))
-            await db.commit()  # a read alone ends with it too: close() would roll back, and tests share one connection
+            await db.commit()  # the update if there was one; the transaction ends here either way
     except Exception:
         log.exception("the report of run %s was not written", run_id)  # the next poll of an ended run tries again
 

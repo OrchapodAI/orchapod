@@ -6,7 +6,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 import sys
-import time
 import uuid
 from types import SimpleNamespace
 
@@ -144,11 +143,9 @@ def deps(db, monkeypatch):
     monkeypatch.setattr("api.database.engine", db.bind)
     monkeypatch.setattr(main, "_health", None)
     monkeypatch.setattr(main, "HEALTH_TTL_S", 0)  # a fresh check per request, unless a test says otherwise
-    up = SimpleNamespace(redis=True, storage=True, redis_hangs=False)
+    up = SimpleNamespace(redis=True, storage=True)
 
     async def ping():
-        if up.redis_hangs:
-            await asyncio.sleep(10)
         if not up.redis:
             raise ConnectionError("redis down")
 
@@ -174,11 +171,24 @@ async def test_health_names_the_dependencies_that_failed(client, deps, monkeypat
 
 
 async def test_a_hung_dependency_fails_health_within_the_timeout(client, deps, monkeypatch):
+    """No wall clock decides it: the answering checks finish without yielding, so the timer cannot beat them (a real
+    SELECT 1 waits on aiosqlite's thread, and could lose to 0.2 s on a loaded machine), and the hung one, object storage
+    blocked in its thread until the reply is in, can only lose to it."""
+    import threading
+    from api.services import storage
+    release, returned = threading.Event(), []
+
+    async def answers():
+        pass
+
     monkeypatch.setattr(main, "HEALTH_TIMEOUT_S", 0.2)
-    deps.redis_hangs = True
-    started = time.monotonic()
-    r = await client.get("/health")
-    assert (r.status_code, r.json()["failed"]) == (503, ["redis"]) and time.monotonic() - started < 2
+    monkeypatch.setattr(main, "_database", answers)
+    monkeypatch.setattr(storage, "head_bucket", lambda: returned.append(release.wait(30)))
+    try:
+        r = await client.get("/health")
+        assert (r.status_code, r.json()["failed"], returned) == (503, ["storage"], [])  # cut off, never waited for
+    finally:
+        release.set()
 
 
 async def test_health_runs_one_check_at_a_time_and_reuses_it_for_10_s(client, deps, monkeypatch):

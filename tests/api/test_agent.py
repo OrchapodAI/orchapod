@@ -20,6 +20,7 @@ from sqlmodel import select
 
 from api.agent import planner
 from api.executor import run_workflow as ex
+from api.routes import agent as agent_routes
 from api.models.db import AgentRun, Artifact, ArtifactKind, NodeRun, NodeStatus, Run, RunStatus, Spend, Workflow, utcnow
 from api.services import budget
 from orchapod.prices import PRICES
@@ -466,16 +467,17 @@ async def agent_run(db, status):
 
 
 @pytest.fixture
-def reports(db, monkeypatch):
-    """The background report writer (routes/agent.report_later) on the test database; `await reports()` waits for it."""
-    from api.routes import agent as routes
+async def reports(db, monkeypatch):
+    """The background report writer (routes/agent.report_later) on the test database; `await reports()` waits for it, as
+    the teardown does."""
     monkeypatch.setattr("api.database.AsyncSessionLocal",
                         async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False))
 
     async def settle():
-        while routes._reporting:
-            await asyncio.wait(set(routes._reporting.values()))
-    return settle
+        while agent_routes._reporting:
+            await asyncio.wait(set(agent_routes._reporting.values()))
+    yield settle
+    await settle()
 
 
 async def polled(client, reports, run_id) -> dict:
@@ -501,7 +503,7 @@ async def test_super_writes_the_report_in_the_background_once_the_run_ends(clien
     assert (r["ready"], r["markdown"]) == (True, "## qa-data: succeeded\n\n## What ran\nsynth, then prep")  # names the plan
     sent = tf.requests[0]
     assert (sent["model"], sent["chat_template_kwargs"]) == (SUPER, {"enable_thinking": False})
-    assert "Q&A data" in sent["messages"][1]["content"] and tf.calls[0]["read_timeout"] == 30
+    assert "Q&A data" in sent["messages"][1]["content"] and (tf.calls[0]["read_timeout"], tf.calls[0]["create"]) == (30, True)
     assert (await polled(client, reports, run.id))["markdown"] == r["markdown"]
     assert len(tf.requests) == 1  # cached in the DB (R8)
     ledger = (await db.scalars(select(Spend).where(Spend.source == "reporter"))).all()
@@ -521,16 +523,47 @@ async def test_the_report_is_written_as_the_run_ends(client, db, provider, launc
     assert stored.report_md.startswith("## qa-data: succeeded")  # before any GET asked for it
 
 
-async def test_the_report_call_is_sent_once_then_the_template_stands_in(client, db, tf, reports, monkeypatch):
-    """The client re-sends a timed-out or failed call up to 3 times, each maybe billed (Lightning once took 4 x 120 s):
-    the report gets one send with a 30 s read timeout."""
-    from packages.providers import base
-    monkeypatch.setattr(base, "time", SimpleNamespace(sleep=lambda s: None))  # the client's backoff before a re-send
-    for reply in ((None, httpx.ReadTimeout("no reply in 30 s")), (503, "busy"), (429, "slow down")):
+async def test_the_report_call_is_sent_once_then_the_template_stands_in(client, db, tf, reports):
+    """create=True: a call that may have landed is never re-sent (each send may bill; Lightning once took 4 x 120 s)."""
+    for reply in ((None, httpx.ReadTimeout("no reply in 30 s")), (503, "busy")):
         run = await agent_run(db, RunStatus.SUCCEEDED)
         tf.replies, tf.requests = [reply, (200, "## a re-sent report")], []
         md = (await polled(client, reports, run.id))["markdown"]
         assert md.startswith("## qa-data: succeeded\n\n**Intent:** Q&A data") and len(tf.requests) == 1, reply
+
+
+async def test_a_report_is_written_once_however_often_it_is_asked_for(client, db, tf, reports):
+    run = await agent_run(db, RunStatus.SUCCEEDED)
+    tf.replies = [(200, "## What ran\nsynth, then prep")]
+    agent_routes.report_later(run.id, 1.0)
+    agent_routes.report_later(run.id, 1.0)  # the executor's ask and a poll at once
+    await reports()
+    assert len(tf.requests) == 1 and (await client.get(f"/agent/runs/{run.id}/report")).json()["ready"]
+
+
+async def test_a_report_that_was_not_written_is_tried_again_on_the_next_poll(client, db, tf, reports, monkeypatch, caplog):
+    run, real, calls = await agent_run(db, RunStatus.SUCCEEDED), planner.write_report, []
+
+    async def fails_once(*args):
+        calls.append(1)
+        if len(calls) == 1:
+            raise ConnectionError("database gone")
+        return await real(*args)
+
+    monkeypatch.setattr(planner, "write_report", fails_once)
+    tf.replies = [(200, "## What ran\nsynth, then prep")]
+    assert (await polled(client, reports, run.id))["ready"] is False and "was not written" in caplog.text
+    r = await polled(client, reports, run.id)
+    assert r["ready"] and r["markdown"].startswith("## qa-data: succeeded") and len(tf.requests) == 1
+
+
+async def test_a_plan_name_stays_one_plain_title_line(client, db, reports, monkeypatch):
+    monkeypatch.setenv("STUB", "1")
+    run = await agent_run(db, RunStatus.SUCCEEDED)
+    (await db.get(AgentRun, run.id)).plan = {**GOOD, "name": "qa\n## Cost\n$0.00 of $0.00 estimated"}
+    await db.commit()
+    lines = (await polled(client, reports, run.id))["markdown"].splitlines()
+    assert [x for x in lines if x.startswith("#")] == ["## qa ## Cost $0.00 of $0.00 estimated: succeeded"]
 
 
 async def test_report_falls_back_to_the_template(client, db, monkeypatch, tf, reports):

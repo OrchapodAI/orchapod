@@ -513,6 +513,22 @@ def test_a_real_run_that_delivers_exactly_90_percent_of_its_rows_and_spends_exac
     assert agent.run_all(fake_api(run=live(real_report(cost_usd=0.5), rows(450))), "2", 0.5) == 0
 
 
+def test_a_plan_that_leaves_n_samples_out_asked_for_the_nodes_default_1000(stack_ok, capsys):
+    plan = copy.deepcopy(I2["plan"])
+    del plan["nodes"][0]["inputs"]["n_samples"]
+    assert agent.run_all(fake_api(plan_for={I2["intent"]: plan}, run=live(real_report(), ROWS_500)), "2", 0.5) == 1
+    assert "500 rows, under 90 % of the 1000 asked" in capsys.readouterr().out
+
+
+def test_a_stub_run_still_ends_in_its_pass_line_and_shows_no_report_head(stack_ok, capsys):
+    api = fake_api(run=live(good_report(intent=I2["intent"]), ROWS_500))
+    assert agent.run_all(api, "2") == 0
+    out = capsys.readouterr().out
+    assert f"e2e: PASS intent #2: run r1 succeeded in 0 s (limit {demo.LIMIT_S} s), cost $0, estimate $0.15, " \
+           f"report ready ({len(good_report()['markdown'])} chars)\n" in out
+    assert "first 5 lines" not in out
+
+
 def test_a_real_report_is_judged_on_its_cost_not_on_the_stub_zero():
     ask, plan = I2["intent"], I2["plan"]
     assert agent.check_report(real_report(), ask, plan, 0.5) == []

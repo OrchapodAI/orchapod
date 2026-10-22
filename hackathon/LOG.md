@@ -458,3 +458,4 @@ worktrees:
   - Notes: intent 3's estimate is 30.3 min vs the 30 min limit; local_docker passes node env as `docker run -e K=V` (the key is on a command line for an instant; platform P2); README:159 → devrel-w6 (sent).
   - Review dispatched (sonnet, abb46fa15cf21e029). Trial merge clean.
 - 2026-10-22T05:41Z Integration run started on 90020da: make check E2E=1, then make ui-smoke.
+- 2026-10-22T05:43Z Integration on 90020da GREEN: make check E2E=1 (e2e_demo + e2e_agent 3 PASS) and make ui-smoke 5/5.

@@ -1,9 +1,9 @@
 # STATE — Orchapod × Nebius hackathon
-Updated: 2026-10-22T05:08Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
+Updated: 2026-10-22T05:43Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
 1. Hari — waiting: TAVILY_API_KEY; for the golden path (Lane B, R25) the Nebius AI Cloud setup — project id (NEBIUS_PROJECT_ID), a `nebius` CLI login on this Mac, the Object Storage bucket — plus the hosting console steps (vCPU quota 0→8 in eu-north1, GPU quotas → 1 + 1, VM, Hostinger A records; docs/HOSTING.md); golden-run topic by D6 (the docs specialist now uses Nemotron Nano); optional: HF_TOKEN + the Token Factory fine-tune rate only for the Llama templates; MinIO test data; AI disclosure; vast.ai instances.
-2. Spikes 1 and 2 DONE (R24, R25). Spike 3 waits for TAVILY_API_KEY. platform-w7 MERGED. Fix rounds: backend-w7 (APPROVED; chat(create=True) replaces _SendOnce, title one line, single-flight tests), ml-w6 (I1: keep_alive_min 15 + unsloth `merge: false` keep Lane B under $3, ≈ $2.66). qa-w7 coding the e2e_agent real mode → first live intent #2 run (≤ $0.50). Queued after the merges: devrel-w6, frontend-w6 (briefs written).
+2. Spikes 1 and 2 DONE (R24, R25). Spike 3 waits for TAVILY_API_KEY. MERGED: platform-w7, ml-w6 (docs template Lane B on Nemotron Nano, $2.66; CPU variant), backend-w7 (Super reporter, flakes fixed). In review: qa-w7 (e2e_agent real mode) → first live intent #2 run (≤ $0.50). In progress: devrel-w6, frontend-w6.
 3. Wave 5: COMPLETE incl. qa-w6 and backend-w6 (startup sweep of leftover node containers; cancel race fixed; SQLite WAL). Parked: a millisecond double-click cancel can leave a node unmarked.
 4. G1 Oct 24 holds in STUB: e2e_agent 3/3, ui-smoke golden path green. Live G1 waits on the key + spike 1.
 
@@ -136,6 +136,7 @@ Updated: 2026-10-22T05:08Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 
 - 2026-10-20: $1.29 (vast.ai A100 SXM4 80 GB at $1.2485/h, 48 min, spike 4; instance destroyed)
 - 2026-10-22: ≈ $0.04 Token Factory (spike 1 ≤ $0.03 fine-tune of 50 rows; spike 2 $0.0055; key validation $0)
 ## Golden path status (last real run: id, date, cost, result)
+- 2026-10-22T05:43Z: G1 STUB green on 90020da (ml-w6 + backend-w7 merged): e2e_agent 3/3, demo e2e, ui-smoke 5/5. Live intent #2 next (qa-w7 real mode in review).
 - 2026-10-21T17:53Z: G1 STUB green on 24e234a — e2e_agent 3/3, demo e2e, ui-smoke 5/5 (golden path, public-cap check, Save a copy). Live runs wait on NEBIUS_API_KEY.
 - 2026-10-21: intent #2 STUB e2e PASS (`make check E2E=1` on 1c0b746): run 9214965e succeeded in 4 s, $0, dataset/train_jsonl/eval_jsonl registered, 500 rows downloadable. Live (non-STUB) runs wait on NEBIUS_API_KEY.
 - Live: never run (waits on the key). `make check` green at 3d250c5 (519 passed, 126 warnings; web tests pass); gitleaks clean at bootstrap (1 triaged false positive).

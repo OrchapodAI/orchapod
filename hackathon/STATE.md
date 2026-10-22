@@ -130,7 +130,7 @@ Updated: 2026-10-22T07:58Z by orchestrator · Phase: P1 · G1 MET 2026-10-22 · 
 - [ ] DECISION: disclose in the README/Devpost that the build used AI coding agents? (Hari's call)
 - [ ] Before submission: GitHub's default branch is `main` (pre-hackathon code) — set it to NebiusHackathon, or link the branch explicitly in Devpost (repo admin: Purva)
 - [ ] DECISION by D6: golden-run topic — the Nebius docs specialist (PLAN's default; template 4 now exists, NOT G1-ready until spike 1 settles tf-deploy) or intent #1 (US real-estate compliance; template 1)?
-- [ ] Before the repo goes public (G3): gitleaks clean, keys rotated, docs/Jira.csv reviewed for personal data
+- [ ] Before the repo goes public (G3): gitleaks clean over all refs — DONE 2026-10-22 (.gitleaksignore, 11 triaged false positives; no .env secret in history); keys rotated; docs/Jira.csv reviewed for personal data (Hari)
 
 ## Tooling (installed skills/plugins/MCP, with install command)
 - python 3.12.13 venv (`uv venv --python 3.12 .venv`; `uv pip install -r requirements-dev.txt -r apps/api/requirements.txt pyyaml boto3 redis huggingface_hub ruff`)

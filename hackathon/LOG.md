@@ -642,3 +642,6 @@ worktrees:
 - 2026-10-22T10:30Z frontend-w7 round 2 done (b56829f run-view scroll, 75af5c3 title 'Orchapod', ba68f54 base/tuned labels with a refName test, 6771f4b). MERGED.
   - Orchestrator follow-up: LogStream scrolls its own box (it pulled the page on every line); /docs describes Orchapod.
   - ui-smoke 5/5; web 38; tsc clean; tests/api 223. Worktree removed.
+- 2026-10-22T10:31Z SECURITY: gitleaks over all refs found 11 generic-api-key hits, all false positives (env-var names in tuples, test fixtures, an empty OPENAI_API_KEY= on a May branch).
+  - Every non-trivial .env secret (NEBIUS_API_KEY, HF_TOKEN, AWS_*, SECRETS_ENCRYPTION_KEY) appears 0× in `git log -p --all` (checked by value, nothing printed).
+  - .gitleaksignore lists the 11 fingerprints; `gitleaks git --log-opts=--all` now exits 0.

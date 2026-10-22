@@ -22,6 +22,24 @@ export const canRetry = (status: RunStatus) => status === "failed" || status ===
 /** A run that will change no more (until a retry). */
 export const finished = (status: RunStatus) => status === "succeeded" || canRetry(status);
 
+/** How long /agent keeps asking for the report after the run ended: the API writes it in the background (backend-w7). */
+export const REPORT_WAIT_MS = 60_000;
+
+/** When a poll first saw the run finished (`was` = what the polls before knew), undefined while it runs: a Retry node starts the wait over. */
+export const seenFinishedAt = (status: RunStatus, was: number | undefined, now: number) => (finished(status) ? was ?? now : undefined);
+
+/** What the report card does after a poll of GET /agent/runs/{id}/report: stop when the report is `ready`, else poll again,
+ *  until the run has been finished for REPORT_WAIT_MS ("gone"). `endedAt` = seenFinishedAt. */
+export function reportNext(ready: boolean, endedAt: number | undefined, now: number): "done" | "wait" | "gone" {
+  return ready ? "done" : endedAt !== undefined && now - endedAt >= REPORT_WAIT_MS ? "gone" : "wait";
+}
+
+/** A report starts with its title line, `## <plan name>: <status>` (planner._title); the rest is Markdown, shown as written. */
+export function splitReport(md: string): { title: string | null; body: string } {
+  const m = md.match(/^## ([^\n]*)\n?([\s\S]*)$/);
+  return m ? { title: m[1], body: m[2].trim() } : { title: null, body: md };
+}
+
 /** One side of the compare playground. */
 export interface CompareSide { text: string; done: boolean; usd: number | null; error?: string }
 

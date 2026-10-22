@@ -3,9 +3,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
-import { yamlValue, buildYamlFromGraph, planYaml } from "../../apps/web/lib/workflowYaml.ts";
+import { yamlValue, buildYamlFromGraph, planYaml, STARTER_YAML } from "../../apps/web/lib/workflowYaml.ts";
 import { api, apiDate, cancelToken, capNote, demoNote, explainError, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
-import { applyCompareEvent, applyRunEvent, canRetry, finished, runShown } from "../../apps/web/lib/runEvents.ts";
+import { applyCompareEvent, applyRunEvent, canRetry, finished, REPORT_WAIT_MS, reportNext, runShown, seenFinishedAt, splitReport } from "../../apps/web/lib/runEvents.ts";
 import { defaultInputs, NODE_FORMS } from "../../apps/web/lib/nodeForms.ts";
 import { datasetOf, evalOf, lossPoints, lossSources, modelRefsOf } from "../../apps/web/lib/results.ts";
 
@@ -184,9 +184,10 @@ test("Retry node is enabled only once the run has stopped (failed or cancelled)"
   assert.deepEqual(statuses.filter(finished), ["succeeded", "failed", "cancelled"]); // the loss chart's and artifact list's "this run is over"
 });
 
-test("dropped nodes start from contract defaults: no teacher_kind, vllm-serve keep-alive 30 min", () => {
+test("dropped nodes start from contract defaults: no teacher_kind, vllm-serve keep-alive 30 min, unsloth-train on R25's student", () => {
   assert.equal("teacher_kind" in defaultInputs("synth-distilabel"), false);
   assert.equal(defaultInputs("vllm-serve").keep_alive_min, 30);
+  assert.equal(defaultInputs("unsloth-train").model, "nvidia/Llama-3.1-Nemotron-Nano-8B-v1"); // as the palette says
   assert.equal(defaultInputs("judge-eval").max_samples, 60);
 });
 
@@ -209,6 +210,62 @@ test("tf-finetune's timeout_min stops at 85, under the executor's 90-minute back
   const timeout = NODE_FORMS["tf-finetune"]?.find((f) => f.key === "timeout_min");
   assert.equal(timeout?.max, 85);
   assert.match(timeout?.help ?? "", /85/);
+});
+
+test("the golden path's forms: quantize lora_adapter, judge-eval tuned_lora, unsloth-train merge and vllm-serve lora_adapter and keep_alive_min, in the contract's words; tf-deploy's help says it is retired", () => {
+  const help = (type: "quantize" | "judge-eval" | "unsloth-train" | "vllm-serve", key: string) => NODE_FORMS[type]?.find((f) => f.key === key)?.help;
+  assert.equal(help("quantize", "lora_adapter"), "An r2 PEFT LoRA dir trained on model, such as unsloth-train's or tf-finetune's lora_adapter.");
+  assert.equal(help("judge-eval", "tuned_lora"), "quantize's gguf_lora, which the tuned side's llama-server applies with --lora over tuned_model_ref's GGUF, "
+    + "so tuned = the base GGUF plus the adapter; a tuned ref that is not a GGUF, or a LoRA file that is not GGUF, → exit 1; "
+    + "the summary's tuned ModelRef then has model = the LoRA's URI and base_model = the GGUF's.");
+  // no default: a dropped node sends neither until it is filled in, and quantize keeps the inputs it had
+  assert.deepEqual(defaultInputs("quantize"), { model: "", method: "gguf", precision: "q4_k_m" });
+  assert.equal("tuned_lora" in defaultInputs("judge-eval"), false);
+  // a form replaces the generic input list, so it must cover every input of the node's model (packages/workflow_schema/models.py)
+  assert.deepEqual(NODE_FORMS.quantize?.map((f) => f.key), ["model", "method", "precision", "bits", "keep_f16", "lora_adapter"]);
+  assert.deepEqual(NODE_FORMS["unsloth-train"]?.map((f) => f.key), ["model", "train_data", "eval_data", "lora_r", "lora_alpha", "max_steps",
+    "learning_rate", "target_modules", "checkpoint_steps", "load_in_4bit", "merge"]);
+  assert.deepEqual(NODE_FORMS["vllm-serve"]?.map((f) => f.key), ["model", "lora_adapter", "max_model_len", "keep_alive_min", "served_model_name",
+    "gpu_memory_utilization", "dtype", "platform", "preset"]);
+  // unsloth-train (docs/contracts.md "unsloth-train")
+  assert.equal(help("unsloth-train", "merge"), "false skips the 16-bit merge and the ~16 GB merged_model upload, for plans that read only lora_adapter, such as vllm-serve --enable-lora or quantize.");
+  assert.equal(help("unsloth-train", "load_in_4bit"), "QLoRA; false, i.e. 16-bit LoRA.");
+  assert.equal(help("unsloth-train", "eval_data"), "data-prep's eval_jsonl. \"\" or an empty file = none.");
+  // vllm-serve (docs/contracts.md "vllm-serve", R14 for Lane B's 15)
+  assert.equal(help("vllm-serve", "model"), "HF id, or an r2 dir such as merged_model.");
+  assert.equal(help("vllm-serve", "lora_adapter"), "r2 PEFT dir. Served as tuned (--enable-lora) beside the base on the same endpoint, so base and tuned share one serving stack.");
+  assert.equal(help("vllm-serve", "keep_alive_min"), "L40S costs $1.55/h against the $3 run cap; max 120. The backend deletes the endpoint after this; GPU time bills until then. "
+    + "Lane B plans use 15; the default 30 stays for other plans.");
+  assert.equal(help("vllm-serve", "served_model_name"), "The model's name in /v1/models. Default: the HF id; \"tuned\" for an r2 dir or adapter.");
+  assert.equal(NODE_FORMS["vllm-serve"]?.find((f) => f.key === "keep_alive_min")?.max, 120);
+  // the registry's defaults (packages/workflow_schema/models.py): a required input starts empty, an optional one with none is absent
+  assert.deepEqual(defaultInputs("unsloth-train"), { model: "nvidia/Llama-3.1-Nemotron-Nano-8B-v1", train_data: "", eval_data: "", lora_r: 16, lora_alpha: 32,
+    max_steps: 500, learning_rate: 0.0002, target_modules: "all-linear", checkpoint_steps: 100, load_in_4bit: false, merge: true });
+  assert.deepEqual(defaultInputs("vllm-serve"), { model: "", max_model_len: 8192, keep_alive_min: 30, gpu_memory_utilization: 0.9, dtype: "bfloat16",
+    platform: "gpu-l40s-a", preset: "1gpu-8vcpu-32gb" });
+  assert.equal(NODE_FORMS["tf-deploy"]?.length, 2);
+  for (const f of NODE_FORMS["tf-deploy"] ?? []) assert.match(f.help, /^Retired, kept for old workflows only/, f.key);
+  assert.doesNotMatch(NODE_FORMS["judge-eval"]?.find((f) => f.key === "tuned_model_ref")?.help ?? "", /tf-deploy/);
+});
+
+test("the palette is the golden path first (R25), then exactly the node types the registry shows: hidden = off the demo path, tf-deploy retired (R24)", () => {
+  const read = (path: string) => readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
+  const palette = [...read("apps/web/components/canvas/NodePalette.tsx").matchAll(/\{ type: "([a-z0-9-]+)",/g)].map((m) => m[1]);
+  // The registry's rows, read as text (the web job of CI has no Python); a row is NodeType.X: {…} or NODE_REGISTRY[NodeType.X] = {…}.
+  const rows = read("packages/workflow_schema/models.py").split(/(?=NodeType\.[A-Z0-9_]+(?:: |\] = )\{)/).filter((r) => r.startsWith("NodeType."));
+  const visible = rows.filter((r) => !r.includes('"hidden": True')).map((r) => r.match(/^NodeType\.([A-Z0-9_]+)/)![1].toLowerCase().replaceAll("_", "-"));
+  const known = [...read("apps/web/components/canvas/OrchaNode.tsx").matchAll(/^ {2}"([a-z0-9-]+)": +\{ label:/gm)].map((m) => m[1]); // NODE_META: what the web app can draw
+  assert.deepEqual(palette.slice(0, 6), ["web-research", "synth-distilabel", "data-prep", "unsloth-train", "vllm-serve", "judge-eval"]);
+  assert.deepEqual([...palette].sort(), visible.filter((t) => known.includes(t)).sort());
+});
+
+test("the New Workflow starter is intent #2's shape, synth-distilabel into data-prep, and uses only palette node types", () => {
+  const palette = [...readFileSync(new URL("../../apps/web/components/canvas/NodePalette.tsx", import.meta.url), "utf8").matchAll(/\{ type: "([a-z0-9-]+)",/g)].map((m) => m[1]);
+  const types = [...STARTER_YAML.matchAll(/^ {2}- id: \w+\n {4}type: ([a-z0-9-]+)$/gm)].map((m) => m[1]);
+  assert.deepEqual(types, ["synth-distilabel", "data-prep"]);
+  assert.deepEqual(types.filter((t) => !palette.includes(t)), []);
+  assert.match(STARTER_YAML, /^ {4}needs: \[synth\]$/m); // data-prep reads what synth wrote
+  assert.match(STARTER_YAML, /^ {6}dataset: \$\{\{ nodes\.synth\.outputs\.dataset \}\}$/m);
 });
 
 test("the template gallery reads GET /agent/templates", async () => {
@@ -344,6 +401,40 @@ test("the demo banner says what a run costs (the estimates one-click Run uses) a
   assert.equal(demoNote([template(0.15, true), template(0.88, false), template(0.02)]),
     "Every run shows its estimated cost before you press Run: $0.02 to $0.88 for the templates below. "
     + "Public runs are capped per run and per day; a template above the per-run cap links to its golden run instead.");
+});
+
+test("the report card polls until the report is ready, also after the run ended, and gives up 60 s after it ended", () => {
+  const t0 = 1_000_000; // when a poll first saw the run finished
+  assert.equal(REPORT_WAIT_MS, 60_000);
+  assert.equal(reportNext(false, undefined, t0 + 6 * 3_600_000), "wait"); // the run is still going: no bound, however long it takes
+  assert.equal(reportNext(false, t0, t0), "wait"); // just ended: the API writes the report in the background
+  assert.equal(reportNext(false, t0, t0 + REPORT_WAIT_MS - 1), "wait");
+  assert.equal(reportNext(false, t0, t0 + REPORT_WAIT_MS), "gone"); // "Report unavailable, see the run page"
+  assert.equal(reportNext(true, undefined, t0), "done");
+  assert.equal(reportNext(true, t0, t0 + 2 * REPORT_WAIT_MS), "done"); // a report that lands late is still shown
+});
+
+test("a Retry node starts the report's 60 s wait over: finished, running again, finished again", () => {
+  const t0 = 1_000_000;
+  let endedAt = seenFinishedAt("failed", undefined, t0); // a poll sees the run fail
+  assert.equal(endedAt, t0);
+  endedAt = seenFinishedAt("failed", endedAt, t0 + 5_000); // still finished: the first sighting stands
+  assert.equal(endedAt, t0);
+  endedAt = seenFinishedAt("running", endedAt, t0 + 20_000); // Retry node: the run runs again
+  assert.equal(endedAt, undefined);
+  assert.equal(reportNext(false, endedAt, t0 + REPORT_WAIT_MS + 1), "wait"); // past the first bound, but no bound while it runs
+  endedAt = seenFinishedAt("failed", endedAt, t0 + 100_000); // it ends again
+  assert.equal(reportNext(false, endedAt, t0 + 100_000 + REPORT_WAIT_MS - 1), "wait"); // the bound counts from this end
+  assert.equal(reportNext(false, endedAt, t0 + 100_000 + REPORT_WAIT_MS), "gone");
+  for (const s of ["pending", "provisioning_gpu", "running"] as const) assert.equal(seenFinishedAt(s, t0, t0 + 1), undefined, s);
+  for (const s of ["succeeded", "failed", "cancelled"] as const) assert.equal(seenFinishedAt(s, undefined, t0), t0, s);
+});
+
+test("the report's first line, ## <plan>: <status>, is its title; the rest stays Markdown as written", () => {
+  assert.deepEqual(splitReport("## movies: succeeded\n\n**Intent:** x\n\n## Cost\n$0"), { title: "movies: succeeded", body: "**Intent:** x\n\n## Cost\n$0" });
+  assert.deepEqual(splitReport("## only a title"), { title: "only a title", body: "" });
+  assert.deepEqual(splitReport("no title\n## Cost"), { title: null, body: "no title\n## Cost" }); // only the first line is the title
+  assert.equal(splitReport("### Cost\nx").title, null); // and only `## `, the level the API writes
 });
 
 test("a failed fetch with no error display of its own raises one readable toast", () => {

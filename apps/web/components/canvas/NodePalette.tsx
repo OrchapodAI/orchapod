@@ -3,20 +3,18 @@
 import type { NodeType } from "@/lib/types";
 import { NODE_META } from "./OrchaNode";
 
-// Demo path first. Hidden (no container): hf-import, file-upload, s3-import, auto-label-cleanlab.
+// The golden path first (R25), then the registry's other visible node types, and nothing else (tests/web compares the two). The registry's
+// hidden ones are off the demo path (tf-deploy is retired, R24): their NODE_META stays (tf-deploy's form too), so an old workflow still renders.
 const PALETTE_ITEMS: { type: NodeType; description: string; runtime: "cpu" | "gpu" | "api" }[] = [
   { type: "web-research",     description: "Tavily search + extract into a passage corpus",       runtime: "cpu" },
   { type: "synth-distilabel", description: "Generate data with Nemotron teacher (Token Factory)", runtime: "cpu" },
   { type: "data-prep",        description: "Validate, reformat, dedup & split dataset",          runtime: "cpu" },
-  { type: "tf-finetune",      description: "LoRA fine-tune on Nebius Token Factory",             runtime: "api" },
-  { type: "tf-deploy",        description: "Serve the LoRA per token on Token Factory",          runtime: "api" },
+  { type: "unsloth-train",    description: "LoRA SFT of Nemotron Nano 8B on an H100 Job (Unsloth)", runtime: "gpu" },
+  { type: "vllm-serve",       description: "Base + LoRA on one L40S endpoint (vLLM)",            runtime: "api" },
   { type: "judge-eval",       description: "Base vs tuned, judged by Nemotron Ultra",            runtime: "api" },
-  { type: "hf-download",      description: "Download HF model to R2 (once, reuse)",              runtime: "cpu" },
-  { type: "unsloth-train",    description: "LoRA SFT via Unsloth (2–5× faster, 80% less VRAM)",  runtime: "gpu" },
-  { type: "distill-sft",      description: "Teacher → student knowledge distillation",           runtime: "gpu" },
-  { type: "quantize",         description: "GGUF (Ollama) or AWQ (vLLM)",                        runtime: "cpu" },
-  { type: "vllm-serve",       description: "OpenAI-compatible endpoint via vLLM on Nebius",      runtime: "api" },
-  { type: "lm-eval",          description: "lm-evaluation-harness benchmarks",                   runtime: "gpu" },
+  { type: "tf-finetune",      description: "LoRA fine-tune on Token Factory; serve with vllm-serve", runtime: "api" },
+  { type: "quantize",         description: "GGUF q4_k_m, plus a GGUF LoRA for CPU serving",      runtime: "cpu" },
+  { type: "hf-download",      description: "Download an HF model to object storage (once, reuse)", runtime: "cpu" },
 ];
 
 const RUNTIME_BADGE = {

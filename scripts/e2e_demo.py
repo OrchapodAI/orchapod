@@ -60,26 +60,30 @@ def fail(msg) -> int:
 # Pure logic (unit-tested in tests/e2e)
 # ---------------------------------------------------------------------------
 
-def api_env(port: int, db: Path, environ, extra: dict[str, str] | None = None) -> dict[str, str]:
-    """The API's env: stub, no paid key, the compose stack, its own DB and port, the kill switch off; `extra` (budget
-    knobs such as ORCHAPOD_ANON_SCALE) lands last."""
+def api_env(port: int, db: Path, environ, extra: dict[str, str | None] | None = None) -> dict[str, str]:
+    """The API's env: STUB=1, no paid key, the compose stack, its own DB and port, the kill switch off. `extra` lands last:
+    budget knobs such as ORCHAPOD_ANON_SCALE, and for a real run (e2e_agent.py --max-cost) the few keys it forwards; a None
+    in it removes the name, which is how a real run drops STUB."""
     env = {k: v for k, v in environ.items() if k not in PAID}
-    return env | LOCAL_STACK | {
+    env |= LOCAL_STACK | {
         "STUB": "1",
         "ORCHAPOD_KILL_SWITCH": "0",
         "DATABASE_URL": f"sqlite+aiosqlite:///{db}",
         "ORCHAPOD_CONTROL_URL": f"http://127.0.0.1:{port}",  # LocalDocker rewrites it to host.docker.internal
         "PYTHONPATH": os.pathsep.join([str(ROOT), str(ROOT / "apps"), str(ROOT / "packages/sdk-py")]),
     } | (extra or {})
+    return {k: v for k, v in env.items() if v is not None}
 
 
 def bind_host() -> str:
-    """Where the stub API listens: E2E_BIND_HOST, else 127.0.0.1. A node container reaches it as host.docker.internal: Docker
+    """Where the API listens: E2E_BIND_HOST, else 127.0.0.1. A node container reaches it as host.docker.internal: Docker
     Desktop (macOS, Windows) forwards that name to the host's 127.0.0.1, but on Linux it is the docker0 gateway (LocalDocker's
     --add-host ...:host-gateway), which a 127.0.0.1 listener never answers. There set E2E_BIND_HOST to docker0's gateway
-    (`docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}'`, usually 172.17.0.1), on a throwaway host only:
-    the key-less STUB API takes runs from anyone who reaches it, and a firewall that drops docker0 traffic needs a rule for
-    ports 8003-8052 (preflight says so; never the hosted VM, docs/HOSTING.md)."""
+    (`docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}'`, usually 172.17.0.1), on a throwaway host only,
+    and for a stub run only: the key-less STUB API takes runs from anyone who reaches it, whereas the API of e2e_agent.py's real
+    run holds a key, so that run refuses when E2E_BIND_HOST is set and stays on 127.0.0.1 (so it needs Docker Desktop). A
+    firewall that drops docker0 traffic needs a rule for ports 8003-8052 (preflight says so; never the hosted VM,
+    docs/HOSTING.md)."""
     return os.environ.get("E2E_BIND_HOST") or "127.0.0.1"
 
 
@@ -116,8 +120,10 @@ def plan_yaml(plan: dict) -> str:
     return yaml.safe_dump(plan, sort_keys=False)  # contracts "Agent API": running a plan = safe_dump(plan) -> Workflow -> Run
 
 
-def check_run(summary: dict) -> list[str]:
-    """What is wrong with a finished stub run (a summary, or an agent report, which holds the same fields); empty = fine."""
+def check_run(summary: dict, max_cost: float | None = None) -> list[str]:
+    """What is wrong with a finished run (a summary, or an agent report, which holds the same fields); empty = fine. A STUB
+    run (max_cost None) costs $0; a real one more than $0 (one that cost nothing called nothing) and at most max_cost, and no
+    node less than $0."""
     nodes, artifacts = summary["nodes"], summary["artifacts"]
     if summary["status"] != "succeeded":
         def state(x):
@@ -129,11 +135,15 @@ def check_run(summary: dict) -> list[str]:
     for n in nodes:  # on the node's own id: synth and data-prep both register a `dataset`
         if absent := [name for name in MUST_REGISTER.get(n["type"], ()) if name not in made[n["node_id"]]]:
             problems.append(f"{n['type']} {n['node_id']!r} did not register {', '.join(absent)}")
-    if summary["cost_usd"] != 0:
-        problems.append(f"cost_usd is {summary['cost_usd']}, expected 0 in STUB")
+    cost = summary["cost_usd"]
+    if max_cost is None and cost != 0:
+        problems.append(f"cost_usd is {cost}, expected 0 in STUB")
+    elif max_cost is not None and not 0 < cost <= max_cost:
+        problems.append(f"cost_usd ${cost} is over --max-cost ${max_cost:g}" if cost > max_cost
+                        else f"cost_usd is {cost}: a real run that cost $0 called nothing")
     for n in nodes:
-        if n["usd"] != 0:
-            problems.append(f"node {n['node_id']!r} reports usd {n['usd']}, expected 0 in STUB")
+        if (n["usd"] != 0) if max_cost is None else (n["usd"] < 0):
+            problems.append(f"node {n['node_id']!r} reports usd {n['usd']}, expected {'0 in STUB' if max_cost is None else 'at least 0'}")
         if "cost_json" not in made[n["node_id"]]:
             problems.append(f"node {n['node_id']!r} wrote no cost_json, so its $0 was never measured")
     return problems
@@ -168,7 +178,7 @@ def tail(path: Path, n: int = 15) -> str:
     return "\n".join(path.read_text(errors="replace").splitlines()[-n:])
 
 
-def start_api(tmp: Path, extra: dict[str, str] | None = None) -> tuple[subprocess.Popen, str]:
+def start_api(tmp: Path, extra: dict[str, str | None] | None = None) -> tuple[subprocess.Popen, str]:
     """The API on its own port and database; the URL is 127.0.0.1 whichever address it listens on (bind_host)."""
     with listen_on_free_port(host=bind_host()) as sock:
         port = sock.getsockname()[1]
@@ -258,11 +268,12 @@ def get_templates(c: httpx.Client) -> list[dict]:
 
 
 def poll_run(c: httpx.Client, run_id: str, path: str, done=lambda reply: reply["status"] in TERMINAL, *,
-             cancel_token: str) -> tuple[dict, float]:
-    """Poll `path` (a /summary-shaped reply: the summary, or an agent report) until done(reply) or LIMIT_S passes (then
-    cancel the run with `cancel_token`, which start or /agent/run returned: the stack has no admin, so an anonymous cancel
-    without it is a 403); the last reply and the seconds taken.
+             cancel_token: str, limit: float | None = None) -> tuple[dict, float]:
+    """Poll `path` (a /summary-shaped reply: the summary, or an agent report) until done(reply) or `limit` seconds (default
+    LIMIT_S) pass (then cancel the run with `cancel_token`, which start or /agent/run returned: the stack has no admin, so an
+    anonymous cancel without it is a 403); the last reply and the seconds taken.
     ponytail: a fixed 2 s poll and no retry of a failed call; add backoff if the API ever flaps."""
+    limit = limit or LIMIT_S
     t0 = time.monotonic()
     last = None
     while True:
@@ -272,13 +283,13 @@ def poll_run(c: httpx.Client, run_id: str, path: str, done=lambda reply: reply["
         if state != last:
             say(f"{seconds:5.1f} s  run {state[0]}: " + ", ".join(f"{i} {s}" for i, s in state[1]))
             last = state
-        if done(reply) or seconds >= LIMIT_S:
+        if done(reply) or seconds >= limit:
             break
         time.sleep(2)
     if not done(reply):
         r = c.post(f"/runs/{run_id}/cancel", headers={"X-Orchapod-Cancel-Token": cancel_token}, timeout=90)
         if r.is_error and r.status_code != 409:  # 409: it ended while we asked; anything else leaves it running
-            raise RuntimeError(f"run {run_id} did not end within {LIMIT_S} s, and POST /runs/{run_id}/cancel -> HTTP "
+            raise RuntimeError(f"run {run_id} did not end within {limit} s, and POST /runs/{run_id}/cancel -> HTTP "
                                f"{r.status_code}: {r.text[:300]}")
     return reply, seconds
 
@@ -336,9 +347,9 @@ def run(c: httpx.Client) -> int:
     return 0
 
 
-def with_stack(fn, extra_env: dict[str, str] | None = None) -> int:
-    """fn(client) -> exit code, run against a fresh stub API (own port, own DB). The API stops however this ends:
-    a failure, Ctrl-C, SIGTERM; a start that fails is reported like any other failure."""
+def with_stack(fn, extra_env: dict[str, str | None] | None = None) -> int:
+    """fn(client) -> exit code, run against a fresh API (own port, own DB; STUB=1 unless extra_env sets STUB to None, see
+    api_env). The API stops however this ends: a failure, Ctrl-C, SIGTERM; a start that fails is reported like any other failure."""
     old = signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))  # unwind through the finally that stops the API
     started = time.monotonic()
     try:
@@ -347,7 +358,8 @@ def with_stack(fn, extra_env: dict[str, str] | None = None) -> int:
             try:
                 proc, base = start_api(Path(tmp), extra_env)
                 wait_healthy(proc, base, Path(tmp) / "api.log")
-                say(f"API up on {base}, listening on {bind_host()} (STUB=1, throwaway DB)")
+                stub = "STUB=1" if (extra_env or {}).get("STUB", "1") else "STUB unset"  # a real run's extra_env sets STUB to None
+                say(f"API up on {base}, listening on {bind_host()} ({stub}, throwaway DB)")
                 with httpx.Client(base_url=base, timeout=30) as client:
                     code = fn(client)
             except (RuntimeError, httpx.HTTPError) as e:

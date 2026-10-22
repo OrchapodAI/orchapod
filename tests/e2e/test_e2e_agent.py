@@ -410,6 +410,13 @@ def test_a_real_plan_that_must_not_run_is_refused_in_one_line_before_the_run(nod
     assert ("POST", "/agent/run") not in calls
 
 
+def test_every_stub_target_is_a_node_a_real_run_refuses():
+    """The stub stage has no torch, so a node built from it must never be one a real run could start: a real run refuses it first."""
+    for node in demo.STUB_TARGETS:
+        lines = agent.refusals({"nodes": [{"id": "n", "type": node}]}, {})
+        assert any("rents a GPU" in line for line in lines), f"{node} is built from a stub-only stage but a real run would start it: {lines}"
+
+
 def test_refusals_name_each_node_that_rents_a_gpu_or_lacks_its_key():
     plan = plan_with(SERVE, TRAIN, RESEARCH)
     assert agent.refusals(plan, {"TAVILY_API_KEY": "tv"}) == [

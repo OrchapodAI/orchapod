@@ -477,3 +477,10 @@ worktrees:
     - REAL_LIMIT_S 3600 and a refusal when the estimate exceeds it — why: a cancel at the limit wastes what was spent — cost if wrong: a slow real run waits longer.
     - The PASS line prints the throwaway DB's day ledger total — why: LOG.md must record the real spend — cost if wrong: none.
   - Fix round 1 → ae3c65befef5dcb2b, starting with `git merge NebiusHackathon`.
+- 2026-10-22T06:02Z frontend-w6 review (sonnet): Needs fixes.
+  - (1) The palette keeps hidden distill-sft/lm-eval (the ruling stands; set equality with the registry).
+  - (2) endedAt is not reset when Retry node re-runs a failed run, so the card shows 'unavailable' while running.
+  - Polling, heading (plain text: <h2> + <pre>, no HTML injection) and help texts are verified.
+  - Minor → QA: smoke untilDone doesn't know 'Report unavailable'.
+  - Follow-up folded in: forms for unsloth-train and vllm-serve, so the golden path can be built on the canvas.
+  - Fix round 1 → a0b588992b033feb4.

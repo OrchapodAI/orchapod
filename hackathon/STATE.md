@@ -2,7 +2,7 @@
 Updated: 2026-10-21T15:45Z by orchestrator · Phase: P0 · Next gate: G1 Oct 24 · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
-1. Hari — waiting: TAVILY_API_KEY; the Token Factory fine-tune rate (console: tokenfactory.nebius.com/organization/prices, or the charge for spike 1's 2,599-token job) — tf-finetune is fail-closed until then; a Hugging Face token with the Llama 3.1 licence accepted (HF_TOKEN in .env); hosting console steps (vCPU quota 0→8 in eu-north1, GPU quotas → 1 + 1, AI Cloud project id, nebius CLI login, bucket, VM, Hostinger A records — docs/HOSTING.md); golden-run topic by D6; MinIO test data; AI disclosure; vast.ai instances.
+1. Hari — waiting: TAVILY_API_KEY; for the golden path (Lane B, R25) the Nebius AI Cloud setup — project id (NEBIUS_PROJECT_ID), a `nebius` CLI login on this Mac, the Object Storage bucket — plus the hosting console steps (vCPU quota 0→8 in eu-north1, GPU quotas → 1 + 1, VM, Hostinger A records; docs/HOSTING.md); golden-run topic by D6 (the docs specialist now uses Nemotron Nano); optional: HF_TOKEN + the Token Factory fine-tune rate only for the Llama templates; MinIO test data; AI disclosure; vast.ai instances.
 2. Spikes 1 and 2 DONE (R24: Lane A serves via vllm-serve; tf-deploy retired). Spike 3 waits for TAVILY_API_KEY. Next: platform-w7 (client: files.content 307, lora 410 → unsupported), ml-w6 (docs template → vllm-serve; CPU LoRA fallback via llama.cpp).
 3. Wave 5: COMPLETE incl. qa-w6 and backend-w6 (startup sweep of leftover node containers; cancel race fixed; SQLite WAL). Parked: a millisecond double-click cancel can leave a node unmarked.
 4. G1 Oct 24 holds in STUB: e2e_agent 3/3, ui-smoke golden path green. Live G1 waits on the key + spike 1.

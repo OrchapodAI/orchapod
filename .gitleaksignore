@@ -1,2 +1,13 @@
-# Triaged false positive (2026-10-20): generic-api-key matched an empty OPENAI_API_KEY= plus the next line STUB_TEACHER=true
-c2bc9f7a10a64631411a1225d2ea2a35794f1f50:.env.example:generic-api-key:38
+# gitleaks false positives, triaged 2026-10-22 by the orchestrator: env-var names (ORCHAPOD_R2_*_KEY, *_TOKEN) in
+# tuples and test fixture values ("r2-secret"). No .env secret appears in the history (checked by value).
+
+089ee4a37996d59094e2c85006ced50385b4668a:tests/containers/test_vllm_serve.py:generic-api-key:46
+178d2e6703aeca3b3cd1e9251fac08dd1493e2b3:hackathon/briefs/2026-10-20-contracts-platform.md:generic-api-key:9
+36252802ed846bccf43c50c86d7cd38efbbf8c7a:hackathon/briefs/2026-10-23-wave4-backend-w4-report.md:generic-api-key:108
+39156094b89d28c9b481a3f25cdeda11ac8bc722:tests/e2e/test_e2e_demo.py:generic-api-key:207
+673ef7751b751b958b13e8a757c2a0f34e99ae04:tests/providers/test_nebius.py:generic-api-key:19
+6f7f629671401368a8dc587690fb648cd2006437:tests/api/test_executor.py:generic-api-key:219
+c36f051cf812d81952c171326b777d7011d77944:hackathon/briefs/2026-10-22-wave3-qa-w3-report.md:generic-api-key:62
+c53db2a6c24e5f964fa8a13d8a55d9c11471411e:hackathon/briefs/2026-10-23-wave4-backend-w4-report.md:generic-api-key:106
+e7bff8fd0ad2543e9b51e944e480858ea6b587f6:apps/api/executor/run_workflow.py:generic-api-key:49
+ee6227b4d4754ade5fbb417ddb8774de784bf4ce:tests/e2e/test_e2e_demo.py:generic-api-key:190

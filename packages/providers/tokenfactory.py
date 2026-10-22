@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import time
 from pathlib import Path
 from typing import Iterator
@@ -148,23 +149,27 @@ class _Files(_Part):
     def content(self, file_id: str) -> bytes:
         """At most FILE_MAX_BYTES within FILE_TIMEOUT_S. A large file answers 307 to a presigned object-storage URL
         (spike 1), followed without the key: httpx drops Authorization on a cross-origin hop."""
-        deadline, size, chunks = time.monotonic() + FILE_TIMEOUT_S, 0, []
-        resp = self._tf._call("GET", f"/files/{file_id}/content", raw=True, stream=True, follow_redirects=True)
-        try:  # ponytail: a body cut off mid-download is not retried here; retry-node fetches it again (R19 adopts)
-            for chunk in resp.iter_bytes():
-                size += len(chunk)
-                if size > FILE_MAX_BYTES:
-                    raise ProviderError(P, "bad_output", resp.status_code, f"{file_id} is over {FILE_MAX_BYTES} bytes")
-                if time.monotonic() > deadline:
-                    raise ProviderError(P, "server", None, f"{file_id} took over {FILE_TIMEOUT_S} s to download")
-                chunks.append(chunk)
-        except httpx.DecodingError as e:
-            raise ProviderError(P, "bad_output", resp.status_code, repr(e)) from e
-        except httpx.HTTPError as e:
-            raise ProviderError(P, "server", None, repr(e)) from e
-        finally:
-            resp.close()
-        return b"".join(chunks)
+        deadline = time.monotonic() + FILE_TIMEOUT_S
+        for attempt in range(4):
+            resp = self._tf._call("GET", f"/files/{file_id}/content", raw=True, stream=True, follow_redirects=True)
+            size, chunks = 0, []
+            try:
+                for chunk in resp.iter_bytes():
+                    size += len(chunk)
+                    if size > FILE_MAX_BYTES:
+                        raise ProviderError(P, "bad_output", resp.status_code, f"{file_id} is over {FILE_MAX_BYTES} bytes")
+                    if time.monotonic() > deadline:
+                        raise ProviderError(P, "server", None, f"{file_id} took over {FILE_TIMEOUT_S} s to download")
+                    chunks.append(chunk)
+                return b"".join(chunks)
+            except httpx.DecodingError as e:
+                raise ProviderError(P, "bad_output", resp.status_code, repr(e)) from e
+            except httpx.TransportError as e:  # cut off mid-body: retried like a timeout before the reply (free GET)
+                if attempt == 3:
+                    raise ProviderError(P, "server", None, repr(e)) from e
+            finally:
+                resp.close()
+            time.sleep(2 ** attempt + random.random())
 
 
 class _FineTuning(_Part):

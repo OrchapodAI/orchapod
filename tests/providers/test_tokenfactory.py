@@ -339,6 +339,21 @@ def test_content_follows_the_recorded_307_to_object_storage_without_the_key(repl
         ("api.tokenfactory.nebius.com", "Bearer tf-key"), ("storage.eu-west2.nebius.cloud", None)]
 
 
+def test_content_cut_off_mid_body_is_retried_like_any_timeout(replay, sleeps):
+    class Cut(httpx.SyncByteStream):
+        def __iter__(self):
+            yield b"\x00ada"
+            raise httpx.ReadTimeout("stalled")
+
+    http, seen = replay(httpx.Response(200, stream=Cut()), httpx.Response(200, content=b"\x00adapter"))
+    assert TokenFactory(http=http).files.content("file-a") == b"\x00adapter"
+    assert (len(seen), len(sleeps)) == (2, 1)
+    http, seen = replay(*[httpx.Response(200, stream=Cut()) for _ in range(4)])
+    with pytest.raises(ProviderError) as e:
+        TokenFactory(http=http).files.content("file-a")
+    assert (e.value.kind, len(seen)) == ("server", 4)
+
+
 def test_content_is_bounded_in_size_and_time(replay, monkeypatch):
     monkeypatch.setattr(tokenfactory, "FILE_MAX_BYTES", 4)
     http, _ = replay(httpx.Response(200, content=b"1234"), httpx.Response(200, content=b"12345"))

@@ -5,6 +5,7 @@ import json
 import socket
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import e2e_demo as e2e  # scripts/ is on pytest's import path (pytest.ini)
 import httpx
@@ -199,6 +200,33 @@ def test_check_run_wants_zero_cost_measured_on_every_node():
     assert any("data-prep" in p for p in e2e.check_run(s))
 
 
+def spent(total, **by_node):
+    """good_summary() that cost `total`, each node `by_node[node_id]` (default 0)."""
+    s = good_summary()
+    s["cost_usd"] = total
+    for n in s["nodes"]:
+        n["usd"] = by_node.get(n["node_id"], 0.0)
+    return s
+
+
+def test_check_run_of_a_real_run_wants_more_than_zero_and_at_most_the_cap():
+    """With max_cost the run is judged on 0 < cost_usd <= max_cost; a node may cost nothing (data-prep) but never less."""
+    assert e2e.check_run(spent(0.0823, synth=0.0823), 0.5) == []
+    assert e2e.check_run(spent(0.5, synth=0.5), 0.5) == []  # the cap itself is within it
+    assert any("a real run that cost $0 called nothing" in p for p in e2e.check_run(spent(0.0), 0.5))
+    assert any("cost_usd $0.51 is over --max-cost $0.5" in p for p in e2e.check_run(spent(0.51, synth=0.51), 0.5))
+    assert any("'prep'" in p for p in e2e.check_run(spent(0.08, synth=0.09, prep=-0.01), 0.5))
+    assert any("expected 0 in STUB" in p for p in e2e.check_run(spent(0.0823, synth=0.0823)))  # no cap: the STUB rule, as before
+
+
+def test_check_run_of_a_failed_real_run_names_the_node_error_not_the_cost():
+    s = spent(0.0)
+    s["status"], s["error"] = "failed", "exit 1: boom"
+    s["nodes"][1] |= {"status": "failed", "error": "exit 1: boom"}
+    problems = e2e.check_run(s, 0.5)
+    assert any("exit 1: boom" in p for p in problems) and not any("cost" in p for p in problems), problems
+
+
 def test_check_rows_wants_rows_with_exactly_the_schema_fields():
     line = json.dumps(ROW)
     assert e2e.check_rows(line + "\n" + line + "\n", ROW_SCHEMA) == []
@@ -352,6 +380,32 @@ def test_a_cancel_the_api_refuses_is_a_failure_but_a_run_that_just_ended_is_not(
         e2e.poll_run(client(403), "r1", "/runs/r1/summary", cancel_token="wrong")  # it would run on: say so, never "so it was cancelled"
     reply, _ = e2e.poll_run(client(409), "r1", "/runs/r1/summary", cancel_token="tok-1")  # 409: it ended while we asked
     assert reply["status"] == "running"
+
+
+def test_poll_run_holds_a_run_to_the_limit_it_is_given_not_to_the_stub_one(monkeypatch):
+    """A real run waits an hour: poll_run(limit=...) beats LIMIT_S (300 s), which the stub runs keep. The clock is poll_run's t0, then
+    the time after each poll."""
+    clock = iter([0, 100, 599, 600])
+    monkeypatch.setattr(e2e, "time", SimpleNamespace(monotonic=lambda: next(clock), sleep=lambda s: None))
+    seen = []
+
+    def api(request):
+        seen.append((request.method, request.url.path, request.headers.get("x-orchapod-cancel-token")))
+        return httpx.Response(200, json=RUNNING)
+
+    reply, seconds = e2e.poll_run(httpx.Client(base_url="http://api", transport=httpx.MockTransport(api)), "r1", "/runs/r1/summary",
+                                  cancel_token="tok-1", limit=600)
+    assert seconds == 600 and reply["status"] == "running"
+    assert seen == [("GET", "/runs/r1/summary", None)] * 3 + [("POST", "/runs/r1/cancel", "tok-1")]  # 3 polls; the stub's 300 s would stop at 2
+
+
+def test_a_cancel_the_api_refuses_names_the_limit_the_run_was_held_to(monkeypatch):
+    clock = iter([0, 700])
+    monkeypatch.setattr(e2e, "time", SimpleNamespace(monotonic=lambda: next(clock), sleep=lambda s: None))
+    api = lambda r: httpx.Response(403 if r.method == "POST" else 200, json=RUNNING)  # noqa: E731
+    with pytest.raises(RuntimeError, match="run r1 did not end within 600 s, and POST /runs/r1/cancel -> HTTP 403"):
+        e2e.poll_run(httpx.Client(base_url="http://api", transport=httpx.MockTransport(api)), "r1", "/runs/r1/summary",
+                     cancel_token="tok-1", limit=600)
 
 
 def test_run_plan_cancels_with_the_token_start_returned(monkeypatch):

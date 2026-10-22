@@ -118,8 +118,10 @@ def plan_yaml(plan: dict) -> str:
     return yaml.safe_dump(plan, sort_keys=False)  # contracts "Agent API": running a plan = safe_dump(plan) -> Workflow -> Run
 
 
-def check_run(summary: dict) -> list[str]:
-    """What is wrong with a finished stub run (a summary, or an agent report, which holds the same fields); empty = fine."""
+def check_run(summary: dict, max_cost: float | None = None) -> list[str]:
+    """What is wrong with a finished run (a summary, or an agent report, which holds the same fields); empty = fine. A STUB
+    run (max_cost None) costs $0; a real one more than $0 (one that cost nothing called nothing) and at most max_cost, and no
+    node less than $0."""
     nodes, artifacts = summary["nodes"], summary["artifacts"]
     if summary["status"] != "succeeded":
         def state(x):
@@ -131,11 +133,15 @@ def check_run(summary: dict) -> list[str]:
     for n in nodes:  # on the node's own id: synth and data-prep both register a `dataset`
         if absent := [name for name in MUST_REGISTER.get(n["type"], ()) if name not in made[n["node_id"]]]:
             problems.append(f"{n['type']} {n['node_id']!r} did not register {', '.join(absent)}")
-    if summary["cost_usd"] != 0:
-        problems.append(f"cost_usd is {summary['cost_usd']}, expected 0 in STUB")
+    cost = summary["cost_usd"]
+    if max_cost is None and cost != 0:
+        problems.append(f"cost_usd is {cost}, expected 0 in STUB")
+    elif max_cost is not None and not 0 < cost <= max_cost:
+        problems.append(f"cost_usd ${cost} is over --max-cost ${max_cost:g}" if cost > max_cost
+                        else f"cost_usd is {cost}: a real run that cost $0 called nothing")
     for n in nodes:
-        if n["usd"] != 0:
-            problems.append(f"node {n['node_id']!r} reports usd {n['usd']}, expected 0 in STUB")
+        if (n["usd"] != 0) if max_cost is None else (n["usd"] < 0):
+            problems.append(f"node {n['node_id']!r} reports usd {n['usd']}, expected {'0 in STUB' if max_cost is None else 'at least 0'}")
         if "cost_json" not in made[n["node_id"]]:
             problems.append(f"node {n['node_id']!r} wrote no cost_json, so its $0 was never measured")
     return problems
@@ -260,11 +266,12 @@ def get_templates(c: httpx.Client) -> list[dict]:
 
 
 def poll_run(c: httpx.Client, run_id: str, path: str, done=lambda reply: reply["status"] in TERMINAL, *,
-             cancel_token: str) -> tuple[dict, float]:
-    """Poll `path` (a /summary-shaped reply: the summary, or an agent report) until done(reply) or LIMIT_S passes (then
-    cancel the run with `cancel_token`, which start or /agent/run returned: the stack has no admin, so an anonymous cancel
-    without it is a 403); the last reply and the seconds taken.
+             cancel_token: str, limit: float | None = None) -> tuple[dict, float]:
+    """Poll `path` (a /summary-shaped reply: the summary, or an agent report) until done(reply) or `limit` seconds (default
+    LIMIT_S) pass (then cancel the run with `cancel_token`, which start or /agent/run returned: the stack has no admin, so an
+    anonymous cancel without it is a 403); the last reply and the seconds taken.
     ponytail: a fixed 2 s poll and no retry of a failed call; add backoff if the API ever flaps."""
+    limit = limit or LIMIT_S
     t0 = time.monotonic()
     last = None
     while True:
@@ -274,13 +281,13 @@ def poll_run(c: httpx.Client, run_id: str, path: str, done=lambda reply: reply["
         if state != last:
             say(f"{seconds:5.1f} s  run {state[0]}: " + ", ".join(f"{i} {s}" for i, s in state[1]))
             last = state
-        if done(reply) or seconds >= LIMIT_S:
+        if done(reply) or seconds >= limit:
             break
         time.sleep(2)
     if not done(reply):
         r = c.post(f"/runs/{run_id}/cancel", headers={"X-Orchapod-Cancel-Token": cancel_token}, timeout=90)
         if r.is_error and r.status_code != 409:  # 409: it ended while we asked; anything else leaves it running
-            raise RuntimeError(f"run {run_id} did not end within {LIMIT_S} s, and POST /runs/{run_id}/cancel -> HTTP "
+            raise RuntimeError(f"run {run_id} did not end within {limit} s, and POST /runs/{run_id}/cancel -> HTTP "
                                f"{r.status_code}: {r.text[:300]}")
     return reply, seconds
 

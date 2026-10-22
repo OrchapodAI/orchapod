@@ -6,6 +6,7 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import e2e_agent as agent
 import e2e_demo as demo
@@ -181,10 +182,9 @@ def stack_spy(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def shell(monkeypatch):
-    """The shell is not the developer's: no key unless a test sets one, and demo.LIMIT_S is put back after main() changes it."""
+    """The shell is not the developer's: no key, base URL or bind host unless a test sets one."""
     for name in ("NEBIUS_API_KEY", "TAVILY_API_KEY", "HF_TOKEN", "VASTAI_API_KEY", "NEBIUS_BASE_URL", "STUB", "E2E_BIND_HOST"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr(demo, "LIMIT_S", demo.LIMIT_S)
 
 
 @pytest.mark.parametrize("argv, key, message", [
@@ -216,7 +216,7 @@ def test_the_cap_may_be_the_project_cap_itself(stack_spy, monkeypatch):
     assert len(stack_spy) == 1  # $3 is the run cap, not over it
 
 
-def test_a_real_run_starts_a_stack_with_the_cap_pinned_and_30_minutes(stack_spy, monkeypatch):
+def test_a_real_run_starts_a_stack_with_the_cap_pinned(stack_spy, monkeypatch):
     for name, value in {"NEBIUS_API_KEY": KEY, "TAVILY_API_KEY": "", "HF_TOKEN": "hf-1", "VASTAI_API_KEY": "vast-1"}.items():
         monkeypatch.setenv(name, value)
     assert agent.main(REAL) == 0
@@ -224,7 +224,6 @@ def test_a_real_run_starts_a_stack_with_the_cap_pinned_and_30_minutes(stack_spy,
     assert extra == {  # the keys that are set, STUB gone, the shell's base URL gone, both caps = --max-cost, full scale
         "NEBIUS_API_KEY": KEY, "HF_TOKEN": "hf-1", "STUB": None, "NEBIUS_BASE_URL": None,
         "ORCHAPOD_MAX_RUN_USD": "0.5", "ORCHAPOD_MAX_DAY_USD": "0.5", "ORCHAPOD_ANON_SCALE": "1"}
-    assert demo.LIMIT_S == 1800
 
 
 def test_a_real_api_sees_three_keys_and_nothing_else_paid(tmp_path, monkeypatch):
@@ -463,7 +462,7 @@ def live(report, dataset=ROWS_500, not_ready=0, planner_waits=0):
     """The run-phase routes of a real run, for fake_api(run=...): /agent/run, the report (ready only after `not_ready` polls
     that answer a finished run whose report is still being written), the dataset download. A planner that may take
     `planner_waits` seconds raises ReadTimeout for a client that gives up sooner."""
-    polls = []
+    polls, cancels = [], []
 
     def handler(request):
         path = request.url.path
@@ -474,9 +473,13 @@ def live(report, dataset=ROWS_500, not_ready=0, planner_waits=0):
         if path == "/agent/runs/r1/report":
             polls.append(request)
             return httpx.Response(200, json=report if len(polls) > not_ready else report | {"ready": False, "markdown": None})
+        if path == "/runs/r1/cancel":
+            cancels.append(request.headers.get("x-orchapod-cancel-token"))
+            return httpx.Response(200, json={"id": "r1"})
         if path == DATASET:
             return httpx.Response(200, text=dataset)
 
+    handler.polls, handler.cancels = polls, cancels
     return handler
 
 
@@ -493,7 +496,7 @@ def test_a_real_run_that_delivers_within_its_cap_passes_and_shows_five_lines_of_
     api = fake_api(run=live(real_report(), not_ready=2), calls=calls)
     assert agent.run_all(api, "2", 0.5) == 0
     out = capsys.readouterr().out
-    assert f"PASS intent #2: run r1 succeeded in 0 s (limit {demo.LIMIT_S} s), cost $0.0823, estimate $0.15, " \
+    assert f"PASS intent #2: run r1 succeeded in 0 s (limit {agent.REAL_LIMIT_S} s), cost $0.0823, estimate $0.15, " \
            f"report ready ({len(MARKDOWN)} chars)" in out
     lines = MARKDOWN.splitlines()
     assert "\n".join(lines[:5]) in out and lines[5] not in out
@@ -510,6 +513,18 @@ def test_a_real_run_waits_for_a_slow_planner(stack_ok):
 
 FAILED_RUN = real_report(status="failed", error="exit 1: boom", cost_usd=0.0123,
                          nodes=[{"node_id": "synth", "type": "synth-distilabel", "status": "failed", "usd": 0.0123, "error": "exit 1: boom"}])
+
+
+def test_a_real_run_that_never_becomes_ready_is_cancelled_at_the_real_limit(stack_ok, monkeypatch, capsys):
+    """Polled past the stub's 300 s, cancelled with the token /agent/run returned once REAL_LIMIT_S has passed. The clock is
+    poll_run's t0, then the time after each poll."""
+    limit = agent.REAL_LIMIT_S
+    clock = iter([0, 100, limit - 1, limit])
+    monkeypatch.setattr(demo, "time", SimpleNamespace(monotonic=lambda: next(clock), sleep=lambda s: None))
+    run = live(real_report(), not_ready=99)
+    assert agent.run_all(fake_api(run=run), "2", 0.5) == 1
+    assert len(run.polls) == 3 and run.cancels == ["tok-real"]
+    assert f"the run did not end within {limit} s, so it was cancelled" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("report, dataset, text", [
@@ -556,7 +571,7 @@ def test_a_free_text_intent_runs_for_real_with_no_canonical_shape(stack_ok, caps
     text = "Make me some movie event data"
     api = fake_api(templates=[*TEMPLATES, {**I2, "slug": "free", "intent": text}], run=live(real_report(intent=text)))
     assert agent.run_all(api, text, 0.5) == 0
-    assert f"e2e: PASS free-text intent: run r1 succeeded in 0 s (limit {demo.LIMIT_S} s), cost $0.0823" in capsys.readouterr().out
+    assert f"e2e: PASS free-text intent: run r1 succeeded in 0 s (limit {agent.REAL_LIMIT_S} s), cost $0.0823" in capsys.readouterr().out
 
 
 def test_a_real_report_is_judged_on_its_cost_not_on_the_stub_zero():

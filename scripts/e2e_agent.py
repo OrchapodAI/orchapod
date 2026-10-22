@@ -43,7 +43,7 @@ from packages.workflow_schema.models import NODE_REGISTRY, SynthDistilabelInputs
 CAP_USD = 3.0  # ORCHAPOD_MAX_RUN_USD: a plan estimated above it can never run
 # The caps are pinned so a shell's ORCHAPOD_* cannot change the verdict; the UI is anonymous, so full scale is ANON_SCALE=1.
 FULL_CAPS = {"ORCHAPOD_ANON_SCALE": "1", "ORCHAPOD_MAX_RUN_USD": f"{CAP_USD:g}", "ORCHAPOD_MAX_DAY_USD": "15"}
-REAL_LIMIT_S = 1800  # a real run ends within 30 minutes (intent #3's judge-eval answers on a CPU for about 18)
+REAL_LIMIT_S = 3600  # a real run ends within an hour (intent #3 is estimated at 30 minutes: judge-eval answers on a CPU)
 FORWARD = ("NEBIUS_API_KEY", "TAVILY_API_KEY", "HF_TOKEN")  # of e2e_demo.PAID, the only names a real run's API sees, each when set
 NEEDS_KEY = {"web-research": "TAVILY_API_KEY"}  # a node type that cannot run without a key beyond NEBIUS_API_KEY (main checks that)
 REAL_TIMEOUT_S = 600  # a real run's HTTP calls: the live planner (up to 300 s a call, with repairs) and the report writer are model calls
@@ -132,17 +132,11 @@ def check_eval_summary(s, exact_match: bool, stub: bool = True) -> list[str]:
 
 
 def check_report(report: dict, intent: str, plan: dict, max_cost: float | None = None) -> list[str]:
-    """What is wrong with the finished run and its report; empty = fine. A real run (max_cost) must have cost more than $0 (one
-    that cost nothing called nothing) and at most max_cost."""
-    # demo.check_run holds a STUB run to $0, so it is shown a real run's costs as 0: they are judged below
-    problems = demo.check_run(report if max_cost is None else
-                              {**report, "cost_usd": 0, "nodes": [{**n, "usd": 0} for n in report["nodes"]]})
+    """What is wrong with the finished run and its report; empty = fine. A real run (max_cost) is held to demo.check_run's real
+    rule: more than $0 and at most max_cost."""
+    problems = demo.check_run(report, max_cost)
     if report["status"] != "succeeded":
         return problems
-    cost = report["cost_usd"]
-    if max_cost is not None and not 0 < cost <= max_cost:
-        problems.append(f"cost_usd ${cost} is over --max-cost ${max_cost:g}" if cost > max_cost
-                        else f"cost_usd is {cost}: a real run that cost $0 called nothing")
     if report["intent"] != intent:
         problems.append(f"the report is for the intent {report['intent']!r}, not the one asked")
     text = (report["markdown"] or "").strip()
@@ -200,6 +194,7 @@ def run_one(c: httpx.Client, label: str, intent: str, template: dict | None, num
             max_cost: float | None = None) -> str:
     """One intent: PASS or FAIL. `number` is the canonical intent, None for free text. `max_cost` makes it a real run: the live
     planner answers, so there is no template to compare with, and a plan that would spend wrongly is refused before /agent/run."""
+    limit = demo.LIMIT_S if max_cost is None else REAL_LIMIT_S
     demo.say(f"--- {label}: {intent!r}")
     reply = demo.call(c, "POST", "/agent/plan", json={"intent": intent})
     plan, estimate, errors = reply["plan"], reply["estimate"], reply["errors"]
@@ -228,10 +223,10 @@ def run_one(c: httpx.Client, label: str, intent: str, template: dict | None, num
     started = demo.call(c, "POST", "/agent/run", json={"intent": intent, "plan": plan})  # run_id, cancel_token (once), ...
     run_id = started["run_id"]
     report, seconds = demo.poll_run(c, run_id, f"/agent/runs/{run_id}/report", done=lambda r: r["ready"],
-                                    cancel_token=started["cancel_token"])
+                                    cancel_token=started["cancel_token"], limit=limit)
     problems = check_report(report, intent, plan, max_cost)
-    if seconds >= demo.LIMIT_S:
-        problems.append(f"the run did not end within {demo.LIMIT_S} s, so it was cancelled")
+    if seconds >= limit:
+        problems.append(f"the run did not end within {limit} s, so it was cancelled")
     if not problems:
         problems = check_outputs(c, report, plan, max_cost)
     cost = "$0" if max_cost is None else f"${report['cost_usd']:.4f}"
@@ -239,7 +234,7 @@ def run_one(c: httpx.Client, label: str, intent: str, template: dict | None, num
         facts = f"run {run_id} after {seconds:.0f} s" + ("" if max_cost is None else f", cost {cost}, estimate ${estimate['usd']}")
         show("FAIL", label, problems, f" ({facts})")
     else:
-        demo.say(f"PASS {label}: run {run_id} succeeded in {seconds:.0f} s (limit {demo.LIMIT_S} s), cost {cost}, "
+        demo.say(f"PASS {label}: run {run_id} succeeded in {seconds:.0f} s (limit {limit} s), cost {cost}, "
                  f"estimate ${estimate['usd']}, report ready ({len(report['markdown'])} chars)")
     if max_cost is not None and report["markdown"]:
         demo.say("report, first 5 lines:")
@@ -288,7 +283,6 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("refusing to run without --intent: a real run takes one intent, 1, 2, 3 or any text")
     if not os.environ.get("NEBIUS_API_KEY", "").strip():
         ap.error("refusing to run: NEBIUS_API_KEY is unset (the Agent plans with Nemotron on Token Factory; load .env: set -a; . ./.env; set +a)")
-    demo.LIMIT_S = REAL_LIMIT_S
     return demo.with_stack(lambda c: run_all(c, intent, cost), real_env(cost))
 
 

@@ -87,8 +87,8 @@ def test_every_todo_names_its_day():
 
 
 def test_unbuilt_make_targets_are_marked_todo():
-    # `make e2e` refuses real runs (scripts/e2e_demo.py has only --stub so far). `make agent-e2e` ran live on 2026-10-22,
-    # so it is no longer pinned. Drop this test when `make e2e` has a live result.
+    # `make e2e API=…` exists since qa-w9 but has not run live (it needs the hosted API and GPU quota). `make agent-e2e` ran
+    # live on 2026-10-22, so it is no longer pinned. Drop this test when `make e2e` has a live result.
     for line in README.splitlines():
         if re.search(r"\bmake e2e\b", line):
             assert "TODO(D8)" in line, f"the target does not work yet: {line[:70]}"

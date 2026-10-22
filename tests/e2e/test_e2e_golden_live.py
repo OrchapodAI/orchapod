@@ -453,6 +453,20 @@ def test_a_cancel_that_gets_no_answer_twice_names_the_run_and_the_admins_curl_an
     assert secrets_in(out, TOKEN) == [], "the curl names the variable, never the value"
 
 
+def test_a_second_ctrl_c_during_the_cancel_still_names_the_run_and_the_admins_curl(hosted_api, capsys):
+    def interrupt(request, seen):
+        if request.url.path == "/agent/runs/r1/report" and seen.polls == 2:
+            raise KeyboardInterrupt
+        if request.url.path == "/runs/r1/cancel":
+            raise KeyboardInterrupt  # the user presses Ctrl-C again while the cancel waits
+
+    hosted_api(not_ready=99, before=interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        demo.main(LIVE)
+    out = capsys.readouterr().out
+    assert f"run r1 may still be running; cancel it as the admin: {curl()}" in out
+
+
 def test_sigterm_unwinds_like_ctrl_c_and_the_old_handler_comes_back(hosted_api):
     def terminate(request, seen):
         if request.url.path == "/agent/runs/r1/report" and seen.polls == 2:

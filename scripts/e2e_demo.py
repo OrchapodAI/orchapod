@@ -580,8 +580,12 @@ def live(c: httpx.Client, token: str, max_cost: float) -> int:
         report, seconds = poll_run(c, run_id, f"/agent/runs/{run_id}/report", done=lambda r: r["ready"], cancel_token=cancel_token,
                                    limit=limit, tolerate=True)
     except BaseException as e:  # Ctrl-C and SIGTERM stop the run; any other way out leaves it, and says how to stop it (the server's caps bound the spend)
-        if not isinstance(e, (KeyboardInterrupt, SystemExit)) or cancel_run(c, run_id, cancel_token):
-            say(still_running(c, run_id))
+        left = True
+        try:  # a second Ctrl-C during the cancel (up to 180 s) must still print the hint
+            left = not isinstance(e, (KeyboardInterrupt, SystemExit)) or bool(cancel_run(c, run_id, cancel_token))
+        finally:
+            if left:
+                say(still_running(c, run_id))
         raise
     if report is None:  # the polls failed to the end of the limit
         agent.show("FAIL", "golden path", [f"the run was not seen once in {limit} s, so it was cancelled"], f" (run {run_id})")

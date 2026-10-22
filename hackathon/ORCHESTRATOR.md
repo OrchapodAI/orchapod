@@ -204,7 +204,7 @@ You are part of a multi-agent build led by the Orchestrator. Operating manual: h
 ## Commands
 make up        # postgres + redis + minio (docker compose)
 make check     # lint + unit + web tests (fast, no spend); `make check E2E=1` adds the strict stub e2e (orchestrator/integration only)
-make e2e       # real golden path, budget-capped — QA agent only
+make e2e API=https://api.<domain>   # the live golden run on the hosted API (admin token, ≤ MAX_COST, 120 min) — orchestrator only
 make agent-e2e INTENT="..."   # one canonical intent through the Orchapod Agent
 make demo      # seed the golden run fixture for the hosted app
 make checkpoint

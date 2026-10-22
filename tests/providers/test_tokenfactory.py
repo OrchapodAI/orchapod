@@ -339,6 +339,77 @@ def test_content_follows_the_recorded_307_to_object_storage_without_the_key(repl
         ("api.tokenfactory.nebius.com", "Bearer tf-key"), ("storage.eu-west2.nebius.cloud", None)]
 
 
+API, STORAGE = "api.tokenfactory.nebius.com", "storage.eu-west2.nebius.cloud"
+REFUSED = "token_factory bad_request 307: refused redirect: https only, at most 3 hops"
+
+
+def redirect(to: str) -> httpx.Response:
+    return httpx.Response(307, headers={"location": to}, stream=httpx.ByteStream(b""))  # unread until closed
+
+
+@pytest.mark.parametrize("target", [f"https://{API}:8443/f", f"http://{API}/f", f"http://{STORAGE}/f"])
+def test_content_hops_only_over_https_and_never_with_the_key(replay, target):
+    http, seen = replay(redirect(target), httpx.Response(200, content=b"x"))
+    if target.startswith("https:"):  # the same host on another port is another origin
+        assert TokenFactory(http=http).files.content("file-a") == b"x"
+        assert seen[1].headers.get("authorization") is None
+    else:
+        with pytest.raises(ProviderError) as e:
+            TokenFactory(http=http).files.content("file-a")
+        assert (str(e.value), len(seen)) == (REFUSED, 1)
+
+
+def test_content_chain_back_to_token_factory_never_regains_the_key(replay):
+    http, seen = replay(redirect(f"https://{STORAGE}/f?X-Amz-Signature=s"), redirect(f"https://{API}/v1/raw/f"),
+                        httpx.Response(200, content=b"x"))
+    assert TokenFactory(http=http).files.content("file-a") == b"x"
+    assert [(r.url.host, r.headers.get("authorization")) for r in seen] == [
+        (API, "Bearer tf-key"), (STORAGE, None), (API, None)]
+
+
+def test_content_redirect_loop_is_refused_after_3_hops(replay):
+    hops = [redirect(f"https://{STORAGE}/f") for _ in range(4)]
+    http, seen = replay(*hops)
+    with pytest.raises(ProviderError) as e:
+        TokenFactory(http=http).files.content("file-a")
+    assert (str(e.value), len(seen)) == (REFUSED, 4)
+    assert all(r.is_closed for r in hops)
+
+
+def test_content_redirect_target_error_body_is_not_echoed(replay):
+    s3 = "<Error><Code>SignatureDoesNotMatch</Code><SignatureProvided>c2ln</SignatureProvided></Error>"
+    http, _ = replay(redirect(f"https://{STORAGE}/f?X-Amz-Signature=c2ln"), httpx.Response(403, text=s3))
+    with pytest.raises(ProviderError) as e:
+        TokenFactory(http=http).files.content("file-a")
+    assert str(e.value) == "token_factory auth 403: the redirect target answered 403"
+
+
+def test_content_deadline_stops_any_further_send(replay, monkeypatch, sleeps):
+    now = [0.0]
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+
+    class Stall(httpx.SyncByteStream):  # a read that times out after the deadline
+        def __iter__(self):
+            now[0] += 700
+            raise httpx.ReadTimeout("stalled")
+
+    http, seen = replay(httpx.Response(200, stream=Stall()))
+    with pytest.raises(ProviderError) as e:
+        TokenFactory(http=http).files.content("file-a")
+    assert (e.value.kind, len(seen), sleeps) == ("server", 1, [])  # no backoff, no second send
+
+    sent = []
+
+    def slow_307(request):  # the deadline passes while Token Factory answers
+        sent.append(request)
+        now[0] += 700
+        return redirect(f"https://{STORAGE}/f")
+
+    with pytest.raises(ProviderError) as e:
+        TokenFactory(http=httpx.Client(transport=httpx.MockTransport(slow_307))).files.content("file-a")
+    assert (str(e.value), len(sent)) == ("token_factory server None: deadline passed before the next send", 1)
+
+
 def test_content_cut_off_mid_body_is_retried_like_any_timeout(replay, sleeps):
     class Cut(httpx.SyncByteStream):
         def __iter__(self):
@@ -356,12 +427,20 @@ def test_content_cut_off_mid_body_is_retried_like_any_timeout(replay, sleeps):
 
 def test_content_is_bounded_in_size_and_time(replay, monkeypatch):
     monkeypatch.setattr(tokenfactory, "FILE_MAX_BYTES", 4)
-    http, _ = replay(httpx.Response(200, content=b"1234"), httpx.Response(200, content=b"12345"))
+    pulled = []
+
+    class Long(httpx.SyncByteStream):  # aborting mid-stream stops pulling; reading it all, then checking, would not
+        def __iter__(self):
+            for i in range(1000):
+                pulled.append(i)
+                yield b"xx"
+
+    http, _ = replay(httpx.Response(200, content=b"1234"), httpx.Response(200, stream=Long()))
     tf = TokenFactory(http=http)
     assert tf.files.content("file-a") == b"1234"
     with pytest.raises(ProviderError) as e:
         tf.files.content("file-a")
-    assert e.value.kind == "bad_output"
+    assert (e.value.kind, len(pulled)) == ("bad_output", 3)
 
     now = [0.0]
 

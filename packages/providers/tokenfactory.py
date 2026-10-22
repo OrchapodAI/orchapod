@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import os
-import random
 import time
 from pathlib import Path
 from typing import Iterator
@@ -19,7 +18,7 @@ from typing import Iterator
 import httpx
 
 from orchapod.prices import PRICES
-from packages.providers.base import ProviderError, http_client, json_of, request, stub_hash
+from packages.providers.base import ProviderError, backoff, http_client, json_of, request, stub_hash
 
 TF_BASE = "https://api.tokenfactory.nebius.com/v1"
 SUPER = "nvidia/nemotron-3-super-120b-a12b"
@@ -27,8 +26,8 @@ ULTRA = "nvidia/Nemotron-3-Ultra-550b-a55b"
 LIGHTNING = "nvidia/Nemotron-3_5-Lightning"
 NANO = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B"
 P = "token_factory"
-FILE_MAX_BYTES = 2 * 1024**3  # ponytail: held in memory (spike 1's largest result file: 42 MB); stream to disk past it
-FILE_TIMEOUT_S = 600  # a whole file; each read still has the client's 120 s
+FILE_MAX_BYTES = 512 * 1024**2  # ponytail: in memory, peak 2× (spike 1's largest file: 42 MB); stream to disk past it
+FILE_TIMEOUT_S = 600  # a whole file, checked before every send and after every chunk: overrun ≤ one connect + read timeout
 
 
 class TokenFactory:
@@ -148,10 +147,12 @@ class _Files(_Part):
 
     def content(self, file_id: str) -> bytes:
         """At most FILE_MAX_BYTES within FILE_TIMEOUT_S. A large file answers 307 to a presigned object-storage URL
-        (spike 1), followed without the key: httpx drops Authorization on a cross-origin hop."""
+        (spike 1), followed over https only, at most base.MAX_HOPS hops, without the key (httpx drops Authorization
+        on a cross-origin hop)."""
         deadline = time.monotonic() + FILE_TIMEOUT_S
         for attempt in range(4):
-            resp = self._tf._call("GET", f"/files/{file_id}/content", raw=True, stream=True, follow_redirects=True)
+            resp = self._tf._call("GET", f"/files/{file_id}/content", raw=True, stream=True, follow_redirects=True,
+                                  deadline=deadline)
             size, chunks = 0, []
             try:
                 for chunk in resp.iter_bytes():
@@ -165,11 +166,11 @@ class _Files(_Part):
             except httpx.DecodingError as e:
                 raise ProviderError(P, "bad_output", resp.status_code, repr(e)) from e
             except httpx.TransportError as e:  # cut off mid-body: retried like a timeout before the reply (free GET)
-                if attempt == 3:
+                if attempt == 3 or time.monotonic() > deadline:
                     raise ProviderError(P, "server", None, repr(e)) from e
             finally:
                 resp.close()
-            time.sleep(2 ** attempt + random.random())
+            time.sleep(backoff(attempt))
 
 
 class _FineTuning(_Part):

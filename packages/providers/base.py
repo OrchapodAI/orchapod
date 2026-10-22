@@ -8,6 +8,7 @@ Target: 3-day task per new provider (Hyperstack, Lambda, Salad, etc.)
 
 from __future__ import annotations
 import hashlib
+import logging
 import os
 import random
 import time
@@ -104,6 +105,10 @@ class NoCapacity(Exception):
 
 # --- HTTP API clients (tokenfactory.py, tavily.py): one error, one retry policy, one STUB switch ---
 
+logging.getLogger("httpx").setLevel(logging.WARNING)  # its INFO line logs every URL, a presigned hop's signature too
+MAX_HOPS = 3  # redirects a follow_redirects call follows
+
+
 class ProviderError(Exception):
     """kind ∈ rate_limit | quota | auth | bad_request | bad_output | unsupported | server.
     str() = "<provider> <kind> <status>: <message>", which the node logs as its last ERROR line."""
@@ -137,16 +142,36 @@ def _kind(status: int) -> str:
     return "server" if status >= 500 else "bad_request"
 
 
+def backoff(attempt: int) -> float:
+    """1, 2, 4 s plus up to 1 s of jitter."""
+    return 2 ** attempt + random.random()
+
+
 def request(http: httpx.Client, provider: str, method: str, url: str, *, create: bool = False,
-            stream: bool = False, follow_redirects: bool = False, **kwargs) -> httpx.Response:
+            stream: bool = False, follow_redirects: bool = False, deadline: float | None = None,
+            **kwargs) -> httpx.Response:
     """Send with up to 3 retries on 429 (Retry-After, capped at 60 s), 500/502/503/504, timeouts and connection
     errors, backing off 1, 2, 4 s plus up to 1 s of jitter. A create retries only on 429 and connect errors, so a
     lost response never starts a second paid job. stream=True returns the open response (the caller closes it).
-    A 3xx is an error unless follow_redirects=True (httpx drops Authorization on a cross-origin hop)."""
+    A 3xx is an error unless follow_redirects=True, which follows at most MAX_HOPS hops, https only. GET only: on a
+    307 httpx re-sends the body and every header but Authorization, which it drops only on a cross-origin hop.
+    No send or backoff starts after `deadline` (a time.monotonic() value)."""
+    host = httpx.URL(url).host
     for attempt in range(4):
         wait = None
         try:
-            resp = http.send(http.build_request(method, url, **kwargs), stream=stream, follow_redirects=follow_redirects)
+            req = http.build_request(method, url, **kwargs)
+            for hop in range(MAX_HOPS + 1):
+                if deadline is not None and time.monotonic() > deadline:
+                    raise ProviderError(provider, "server", None, "deadline passed before the next send")
+                resp = http.send(req, stream=stream, follow_redirects=False)
+                if not (follow_redirects and resp.next_request):
+                    break
+                resp.close()
+                req = resp.next_request  # httpx built it without Authorization if it leaves the origin
+                if req.url.scheme != "https" or hop == MAX_HOPS:
+                    raise ProviderError(provider, "bad_request", resp.status_code,
+                                        f"refused redirect: https only, at most {MAX_HOPS} hops")
             if resp.is_success:
                 return resp
             resp.read()
@@ -156,8 +181,9 @@ def request(http: httpx.Client, provider: str, method: str, url: str, *, create:
             err = ProviderError(provider, "server", None, repr(e))
             if create and not isinstance(e, (httpx.ConnectError, httpx.ConnectTimeout)):  # it may have landed
                 raise err from e
-        else:
-            err = ProviderError(provider, _kind(resp.status_code), resp.status_code, resp.text[:500])
+        else:  # a redirect target's own error body (an S3 error can carry the signature) never reaches a log line
+            text = resp.text[:500] if resp.url.host == host else f"the redirect target answered {resp.status_code}"
+            err = ProviderError(provider, _kind(resp.status_code), resp.status_code, text)
             if resp.status_code == 429:
                 try:
                     wait = min(max(float(resp.headers.get("retry-after", "")), 0.0), 60.0)
@@ -165,9 +191,9 @@ def request(http: httpx.Client, provider: str, method: str, url: str, *, create:
                     pass
             elif create or resp.status_code not in (500, 502, 503, 504):
                 raise err
-        if attempt == 3:
+        if attempt == 3 or (deadline is not None and time.monotonic() > deadline):
             raise err
-        time.sleep(wait if wait is not None else 2 ** attempt + random.random())
+        time.sleep(wait if wait is not None else backoff(attempt))
 
 
 def json_of(resp: httpx.Response, provider: str) -> dict:

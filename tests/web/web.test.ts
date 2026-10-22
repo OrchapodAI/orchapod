@@ -184,9 +184,10 @@ test("Retry node is enabled only once the run has stopped (failed or cancelled)"
   assert.deepEqual(statuses.filter(finished), ["succeeded", "failed", "cancelled"]); // the loss chart's and artifact list's "this run is over"
 });
 
-test("dropped nodes start from contract defaults: no teacher_kind, vllm-serve keep-alive 30 min", () => {
+test("dropped nodes start from contract defaults: no teacher_kind, vllm-serve keep-alive 30 min, unsloth-train on R25's student", () => {
   assert.equal("teacher_kind" in defaultInputs("synth-distilabel"), false);
   assert.equal(defaultInputs("vllm-serve").keep_alive_min, 30);
+  assert.equal(defaultInputs("unsloth-train").model, "nvidia/Llama-3.1-Nemotron-Nano-8B-v1"); // as the palette says
   assert.equal(defaultInputs("judge-eval").max_samples, 60);
 });
 
@@ -209,6 +210,22 @@ test("tf-finetune's timeout_min stops at 85, under the executor's 90-minute back
   const timeout = NODE_FORMS["tf-finetune"]?.find((f) => f.key === "timeout_min");
   assert.equal(timeout?.max, 85);
   assert.match(timeout?.help ?? "", /85/);
+});
+
+test("quantize takes lora_adapter and judge-eval tuned_lora, both optional and in the contract's words; tf-deploy's help says it is retired", () => {
+  const help = (type: "quantize" | "judge-eval", key: string) => NODE_FORMS[type]?.find((f) => f.key === key)?.help;
+  assert.equal(help("quantize", "lora_adapter"), "An r2 PEFT LoRA dir trained on model, such as unsloth-train's or tf-finetune's lora_adapter.");
+  assert.equal(help("judge-eval", "tuned_lora"), "quantize's gguf_lora, which the tuned side's llama-server applies with --lora over tuned_model_ref's GGUF, "
+    + "so tuned = the base GGUF plus the adapter; a tuned ref that is not a GGUF, or a LoRA file that is not GGUF, → exit 1; "
+    + "the summary's tuned ModelRef then has model = the LoRA's URI and base_model = the GGUF's.");
+  // no default: a dropped node sends neither until it is filled in, and quantize keeps the inputs it had
+  assert.deepEqual(defaultInputs("quantize"), { model: "", method: "gguf", precision: "q4_k_m" });
+  assert.equal("tuned_lora" in defaultInputs("judge-eval"), false);
+  // a form replaces the generic input list, so it must cover every input of the node's model (packages/workflow_schema/models.py)
+  assert.deepEqual(NODE_FORMS.quantize?.map((f) => f.key), ["model", "method", "precision", "bits", "keep_f16", "lora_adapter"]);
+  assert.equal(NODE_FORMS["tf-deploy"]?.length, 2);
+  for (const f of NODE_FORMS["tf-deploy"] ?? []) assert.match(f.help, /^Retired, kept for old workflows only/, f.key);
+  assert.doesNotMatch(NODE_FORMS["judge-eval"]?.find((f) => f.key === "tuned_model_ref")?.help ?? "", /tf-deploy/);
 });
 
 test("the palette lists the golden path first (R25) and no node the registry hides: tf-deploy is retired (R24)", () => {

@@ -2,6 +2,10 @@
 
 Dated, user-facing changes made during the Nebius × NVIDIA hackathon submission period (Aug 26 – Oct 30, 2026). Orchapod's first commit is May 4, 2026 (367c605); this file becomes the Devpost "what changed" write-up.
 
+## 2026-10-24
+- Live: the golden path's data half ran on real services. Tavily extracted 20 Nebius docs pages, Nemotron 3 Super wrote 300 grounded Q&A pairs from them (each with its source passage and URL), and data prep validated them: 154 s, $0.07 in all.
+- Tavily spike: all 20 docs pages extract cleanly into 98 passages for 4 credits; an advanced search costs 2.
+
 ## 2026-10-22
 - First live run: intent #2 through the Orchapod Agent on real Token Factory. Nemotron 3 Super planned it, synthetic data and data prep ran, and Super wrote the report (928 rows, 446 s, $0.10 in all).
 - Nemotron 3 Super writes run reports in the background when a run ends (one call, 30 s, template fallback).

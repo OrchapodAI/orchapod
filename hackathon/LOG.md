@@ -650,3 +650,8 @@ worktrees:
   - Tavily extract of template 4's 20 seed URLs: 20 ok, 0 failed, 0.2 s; web-research chunker → 98 passages (179k chars), no empty page.
   - Advanced search: 10 results, 5.7 s. 6 credits (≈ $0.048), matching the contract.
   - Report: hackathon/briefs/2026-10-24-spike3-report.md. Stale spike3 worktree removed.
+- 2026-10-24T16:08Z LIVE RUN #4 PASS: the golden path's data half (free text, `make agent-e2e … MAX_COST=0.5`).
+  - Super planned 'nebius-docs-grounded-qa' live: web_research → synth_distilabel → data_prep; estimate $0.122 / 8.5 min.
+  - Run bf0ddb21-2dee-4002-9aa2-c10bb069a9cf succeeded in 154 s; cost $0.0609; total $0.0653 (planner/reporter $0.0044).
+  - 300 grounded Q&A rows (messages + context + source_url); synth: teacher Super, grounded, 76 calls, 0 failed, 0 invalid.
+  - Tavily + Super + data-prep proven live end to end.

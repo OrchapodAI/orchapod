@@ -1,5 +1,5 @@
 # STATE — Orchapod × Nebius hackathon
-Updated: 2026-10-22T10:32Z by orchestrator · Phase: P1 · G1 MET 2026-10-22 · Next gate: G2 Oct 25 (GPU quota) · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
+Updated: 2026-10-24T16:08Z by orchestrator · Phase: P1 · G1 MET 2026-10-22 · Next gate: G2 Oct 25 (GPU quota) · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
 1. Hari — G2 (Oct 25): follow hackathon/G2-CHECKLIST.md (Nebius project + quotas 1×H100, 1×L40S, VM vCPU; bucket; compute service account; VM .env incl. ORCHAPOD_ADMIN_TOKEN, ORCHAPOD_ENDPOINT_TOKEN, TAVILY_API_KEY; GHCR packages public (Purva); DNS app./api.orchapod.dev). Then the orchestrator runs `make e2e API=https://api.orchapod.dev`. Also: TAVILY_API_KEY in the Mac's .env (spike 3); OPEN DECISION below on a GPU-free fallback; AI disclosure; vast.ai instances; golden-run topic is the docs specialist unless Hari says otherwise.
@@ -141,8 +141,10 @@ Updated: 2026-10-22T10:32Z by orchestrator · Phase: P1 · G1 MET 2026-10-22 · 
 - jsonschema in the shared venv (data-w2; also pinned in requirements-dev.txt) · images to rebuild after data-w2 merges: orchapod/synth-distilabel:dev (5 months stale), orchapod/web-research:dev (new), orchapod/data-prep:dev
 ## Spend to date (per day, per key)
 - 2026-10-20: $1.29 (vast.ai A100 SXM4 80 GB at $1.2485/h, 48 min, spike 4; instance destroyed)
+- 2026-10-24: ≈ $0.11 (Tavily 6 credits $0.048 spike 3; live run #4 $0.0653)
 - 2026-10-22: ≈ $0.16 Token Factory (spike 1 ≤ $0.03 fine-tune of 50 rows; spike 2 $0.0055; live runs $0.1007 + $0.0034 + $0.0175; key validation $0)
 ## Golden path status (last real run: id, date, cost, result)
+- 2026-10-24T16:08Z: LIVE golden-path data half PASS — run bf0ddb21 (Super's plan nebius-docs-grounded-qa: Tavily research → grounded synth → prep), 154 s, $0.0653 total, 300 grounded rows. The GPU half (unsloth-train → vllm-serve → judge-eval) waits on the nebius CLI login + quota + hosting.
 - 2026-10-22T07:58Z: STUB golden path = template 4 (R25) green: e2e_agent golden path PASS (run 298cf7be, full plan) + ui-smoke golden test (template 4 card, reduced plan) on 3b7bf07.
 - 2026-10-22T07:34Z: LIVE intent #3 through the Agent API PASS — run 59786797 (Super's plan quantize-math-expert; CPU quantize; Nemotron 3 Ultra judged live), 255 s, $0.0175 total. The earlier attempt cf49d0f1 failed on a missing HF config ($0.0034) → data-prep fix 782be76.
 - 2026-10-22T07:01Z: LIVE intent #2 through the Agent API PASS — run 84e57f84 (Super's plan movie-interactions-synthetic: synth → prep), 446 s, $0.0966 run + $0.0041 planner/reporter = $0.1007, 928 rows, Super's report. First live run.

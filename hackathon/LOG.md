@@ -645,3 +645,8 @@ worktrees:
 - 2026-10-22T10:31Z SECURITY: gitleaks over all refs found 11 generic-api-key hits, all false positives (env-var names in tuples, test fixtures, an empty OPENAI_API_KEY= on a May branch).
   - Every non-trivial .env secret (NEBIUS_API_KEY, HF_TOKEN, AWS_*, SECRETS_ENCRYPTION_KEY) appears 0× in `git log -p --all` (checked by value, nothing printed).
   - .gitleaksignore lists the 11 fingerprints; `gitleaks git --log-opts=--all` now exits 0.
+- 2026-10-24T16:05Z Hari added TAVILY_API_KEY and NEBIUS_PROJECT_ID to .env (names/lengths checked only). nebius CLI not installed yet, so no IAM token and no Jobs/Endpoints/hosting calls.
+- 2026-10-24T16:05Z SPIKE 3 DONE (orchestrator).
+  - Tavily extract of template 4's 20 seed URLs: 20 ok, 0 failed, 0.2 s; web-research chunker → 98 passages (179k chars), no empty page.
+  - Advanced search: 10 results, 5.7 s. 6 credits (≈ $0.048), matching the contract.
+  - Report: hackathon/briefs/2026-10-24-spike3-report.md. Stale spike3 worktree removed.

@@ -17,7 +17,7 @@ Updated: 2026-10-22T10:32Z by orchestrator · Phase: P1 · G1 MET 2026-10-22 · 
 - [x] P0 D1 TF client: api.tokenfactory.nebius.com, retries, guided JSON, per-call token + $ accounting — DONE (e0fa9a2)
 - [x] P0 D1 fine-tuning client: files, LoRA job, poll status/events, checkpoints, best by val loss — DONE (e0fa9a2)
 - [x] P0 D1 LoRA deploy client: POST /v0/models (unsupported path explicit), poll to active, delete — DONE (e0fa9a2; live behaviour = spike 1)
-- [ ] P0 D2 spike 3 (Tavily extract of 10 docs.nebius.com pages) — BLOCKED(TAVILY_API_KEY); Tavily client DONE (packages/providers/tavily.py)
+- [x] P0 D2 spike 3: Tavily extract of template 4's 20 docs pages 20/20 → 98 passages; advanced search 10 results; 6 credits — DONE (2026-10-24, hackathon/briefs/2026-10-24-spike3-report.md)
 - [x] P0 D2 ORCHAPOD_IMAGE_PREFIX: executor, local provider and build script read it; CI pushes ghcr.io/<repo owner> = the default — DONE
 - [x] P0 D1 one Token Factory client in packages/providers; zero-caller service deleted — DONE (e0fa9a2; synth and lm-eval switch in their tasks)
 - [x] P0 D2 SPEND SAFETY: provider_selector defaults gpu nodes to ["runpod", "vastai"] (apps/api/services/provider_selector.py:74), so a set VASTAI_API_KEY rents a vast.ai GPU silently — default must be ["nebius"] and vastai only when named — DONE (platform-w2)

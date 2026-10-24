@@ -655,3 +655,6 @@ worktrees:
   - Run bf0ddb21-2dee-4002-9aa2-c10bb069a9cf succeeded in 154 s; cost $0.0609; total $0.0653 (planner/reporter $0.0044).
   - 300 grounded Q&A rows (messages + context + source_url); synth: teacher Super, grounded, 76 calls, 0 failed, 0 invalid.
   - Tavily + Super + data-prep proven live end to end.
+- 2026-10-24T16:12Z DECISION (Hari, chat): raise the hosted day cap to $10 for G2.
+  - Applied when the orchestrator writes the VM's /opt/orchapod/.env (ORCHAPOD_MAX_DAY_USD=10); back to 5 after the golden run (`dc up -d api`, between runs).
+  - G2-CHECKLIST.md and STATE updated. The project-wide $15/day cap still bounds all spend that day.

@@ -2,7 +2,7 @@
 
 From qa-w9's report (hackathon/briefs/2026-10-22-qa-w9-report.md), reviewed twice. One command runs it once everything below is true:
 `caffeinate -i make e2e API=https://api.<domain> MAX_COST=3` with `ORCHAPOD_ADMIN_TOKEN` in the shell (the orchestrator runs it).
-At the hosted $5 day cap there is one attempt per UTC day: Hari may raise ORCHAPOD_MAX_DAY_USD (≤ $15, the project cap) for G2 day.
+Day cap: Hari raised ORCHAPOD_MAX_DAY_USD to **10 for G2 day** (2026-10-24), so two attempts fit ($2.92 worst case each, plus at most $1 of visitors at scale 0.1). Set it back to 5 after the golden run (`dc up -d api`, between runs).
 
 Sources: `docs/HOSTING.md` (bring-up steps are cited as "HOSTING n"), `.env.example`, `infra/docker-compose.prod.yml`,
 `hackathon/briefs/2026-10-22-hosting-proposal.md`, contracts R14/R15/R25. A box is something that must be true before `make e2e` runs.
@@ -35,7 +35,7 @@ Sources: `docs/HOSTING.md` (bring-up steps are cited as "HOSTING n"), `.env.exam
 | `ORCHAPOD_R2_ENDPOINT` = `https://storage.eu-north1.nebius.cloud`, `ORCHAPOD_R2_REGION` = `eu-north1` | HOSTING 4 | artifacts; the Job and the endpoint mount the bucket, and the clients refuse a non-https endpoint |
 | `ORCHAPOD_R2_ACCESS_KEY`, `ORCHAPOD_R2_SECRET_KEY`, `ORCHAPOD_R2_BUCKET` | the storage service account and bucket above | same |
 | `NEBIUS_PROJECT_ID` | the project id above | **New:** gpu nodes |
-| `ORCHAPOD_MAX_DAY_USD` = `5`, `ORCHAPOD_ANON_SCALE` = `0.1` | Hari's decision 5 | the day cap this run lives under |
+| `ORCHAPOD_MAX_DAY_USD` = `10` on G2 day, then `5`; `ORCHAPOD_ANON_SCALE` = `0.1` | Hari, 2026-10-24 (G2 day) and decision 5 | the day cap this run lives under |
 - Leave at their defaults: `ORCHAPOD_MAX_RUN_USD` 3 (the compose default; the template is estimated at $2.6627), `ORCHAPOD_KILL_SWITCH` 0,
   `ORCHAPOD_NODE_TIMEOUT_S` 5400. **`STUB` must be blank:** a stubbed API runs the plan at $0 with a `stub-*` endpoint, and the script
   fails it for both. `VASTAI_API_KEY` is never on the VM.

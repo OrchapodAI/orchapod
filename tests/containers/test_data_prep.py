@@ -378,7 +378,8 @@ def test_quality_filter_without_a_key_fails_before_any_request(run_node, lightni
     monkeypatch.delenv("NEBIUS_API_KEY")
     with pytest.raises(SystemExit):
         run_node([json.dumps(chat(QUESTIONS[0]))], quality_filter=True)
-    assert seen == [] and dp.log.error.call_args.args[0] == "token_factory auth None: NEBIUS_API_KEY is not set"
+    assert seen == [] and dp.log.error.call_args.args[0] == (
+        "token_factory auth None: NEBIUS_API_KEY is not set; with no key, set STUB=1 in .env to run on stubs")
 
 
 @pytest.mark.parametrize("stub, fmt, said", [("1", "chatml", "STUB"), (None, "structured", "chat rows only")])

@@ -30,7 +30,7 @@ from api.models.db import AgentRun
 from api.services import budget
 from api.services.provider_selector import get_providers
 from orchapod.prices import PRICES
-from packages.providers.tokenfactory import SUPER, ULTRA
+from packages.providers.tokenfactory import NO_KEY, SUPER, ULTRA
 from packages.workflow_schema.models import NODE_REGISTRY, ResourceSpec
 
 log = logging.getLogger("api.agent")
@@ -369,7 +369,7 @@ async def make_plan(intent: str, db: AsyncSession, scale: float) -> dict:
         return {"plan": t["plan"], "rationale": f"STUB=1: the canonical plan '{t['slug']}'. {t['rationale']}",
                 "estimate": est, "warnings": warnings, "errors": _shown(errors, gpu), "admin_only": gpu}
     if not config.env("NEBIUS_API_KEY").strip():
-        raise HTTPException(status_code=503, detail="NEBIUS_API_KEY is not set")
+        raise HTTPException(status_code=503, detail=NO_KEY)
     if left[0] <= 0:
         raise HTTPException(status_code=402, detail=f"{left[1]} cap ${left[2]:g}: nothing left")
     messages = [{"role": "system", "content": _system_prompt()}, {"role": "user", "content": intent}]

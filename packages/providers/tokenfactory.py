@@ -26,6 +26,9 @@ ULTRA = "nvidia/Nemotron-3-Ultra-550b-a55b"
 LIGHTNING = "nvidia/Nemotron-3_5-Lightning"
 NANO = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B"
 P = "token_factory"
+# What a node shows as its error, and POST /agent/plan as its 503 detail, when no key is set. The hint is for whoever runs the
+# app from a fresh clone (README: STUB=1 runs everything on stubs, with no key).
+NO_KEY = "NEBIUS_API_KEY is not set; with no key, set STUB=1 in .env to run on stubs"
 FILE_MAX_BYTES = 512 * 1024**2  # ponytail: in memory, peak 2× (spike 1's largest file: 42 MB); stream to disk past it
 FILE_TIMEOUT_S = 600  # a whole file, checked before every send and after every chunk: overrun ≤ one connect + read timeout
 
@@ -98,7 +101,7 @@ class TokenFactory:
         price = PRICES["token_factory"].get(model) or PRICES["token_factory"].get(base_model)
         if on_tf and not self.stub:
             if not key:
-                raise ProviderError(P, "auth", None, "NEBIUS_API_KEY is not set")
+                raise ProviderError(P, "auth", None, NO_KEY)
             if price is None:
                 raise ProviderError(P, "bad_request", None, f"no price for {model} (base_model {base_model}) in "
                                                             "orchapod.prices.PRICES; nothing is sent unpriced")
@@ -124,7 +127,7 @@ class TokenFactory:
     def _call(self, method: str, path: str, *, v0: bool = False, create: bool = False, raw: bool = False, **kwargs):
         """The reply's JSON object (raw=True: the httpx.Response)."""
         if not self.api_key and not self.stub:
-            raise ProviderError(P, "auth", None, "NEBIUS_API_KEY is not set")
+            raise ProviderError(P, "auth", None, NO_KEY)
         base = self.base_url.removesuffix("/v1") if v0 else self.base_url
         resp = request(self.http, P, method, base + path, create=create,
                        headers={"Authorization": f"Bearer {self.api_key}"}, **kwargs)

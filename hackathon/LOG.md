@@ -862,3 +862,11 @@ worktrees:
   - L1 (/internal/* public behind one shared bearer) and L4 (no artifact tenant isolation): by design (R17, D6). Accepted.
   - L2 (every node gets the full secret set), L3 (/inference/deploy hardcodes vastai; harmless, VASTAI unset and GPU admin-only), L5 (TF client pair check misses ORCHAPOD_ENDPOINT_TOKEN; unreachable): parked until after the hackathon. Changing the executor's env before the freeze is the bigger risk.
   - Sound: the ModelRef pairing at 4 points, GPU admin-only, the budget guard, redaction, fencing, cancel tokens, YAML limits, CORS, CI, no XSS sink in the web app.
+- 2026-10-25T10:11Z qa-w11 DONE (ae3c65befef5dcb2b): a fresh clone is green in 3 min 35 s (warm caches; qa-w10 6 min 38 s).
+  - make check 1171 + web 50; E2E 4 PASS in 121 s.
+  - make demo: the seeded golden run renders 17/17 checks (15 log lines, 7/22/1, report, Compare expired). No delete attempt (deleted_at holds).
+  - All 12 docs/img files are referenced; both hosted run links 200.
+  - 10 frictions, none failing. P1 is the private repo (Hari's G3 step).
+  - Extras: docs/Jira.csv holds Hari's name and Atlassian id in 21 rows (Hari decides); gitleaks dir mode flagged the fixture's docs example → .gitleaksignore (all clean).
+  - WAVE 8 dispatched on f7c8caa: devrel-w11 (README: where to look after make demo, STUB=1 first, timings, the uvicorn graceful shutdown, a Python 3.12 hint), backend-w11 (the seed says where it seeded; a STUB=1 hint in the no-key errors), frontend-w12 (pluralised eval counts; the canvas cost modal for CPU-only plans).
+  - Skipped (P3, ruling): the console 404 for a canvas run's report fetch, and the Node MODULE_TYPELESS warning in make check.

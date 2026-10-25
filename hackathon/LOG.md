@@ -888,3 +888,8 @@ worktrees:
   - /etc/cron.d/orchapod has the nightly backup at 03:15 UTC (14 slots). It had never run: the VM was created at 05:01Z.
   - Ran it by hand: backups/pg/orchapod-03.dump, 38,861 bytes. `pg_restore -l` lists the data of all 9 tables (agent_run, artifact, cancel_token, model, node_log, noderun, run, spend, workflow).
   - The anonymous G3-B check is re-armed for 2026-10-26T00:10Z: footage/checks/anon-check.cjs, outside the wiped scratchpad.
+- 2026-10-25T16:28Z DECISION (Hari, chat): hosted day cap $10 for a data-collection plan trial, then back to $5.
+  - Applied: /opt/orchapod/.env ORCHAPOD_MAX_DAY_USD=10, `dc up -d api`, health ok.
+  - Spent today $3.8156. Admin left: $3.00 a run, $6.18 for the day.
+  - A browser (visitor) has −$2.82 left: the share is 10 × 0.1 = $1.00 less the day's spend. So the browser still can't plan or run until 00:00 UTC unless ORCHAPOD_ANON_SCALE is raised, or the orchestrator runs the trial as the admin.
+  - The Oct 29 timer (→ $20) is unaffected.

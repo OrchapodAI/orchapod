@@ -16,3 +16,5 @@ c2bc9f7a10a64631411a1225d2ea2a35794f1f50:.env.example:generic-api-key:38
 # the golden-run fixture (2026-10-25): Nebius docs' own 'Authorization: Bearer $NEBIUS_API_KEY' examples in generated Q&A
 60b071320095c4162cd858f9cd2eaea17fbffd62:scripts/golden-run.json:curl-auth-header:1402
 60b071320095c4162cd858f9cd2eaea17fbffd62:scripts/golden-run.json:curl-auth-header:1402
+# 2026-10-25: a docstring example (NEBIUS_API_KEY=sk-1) in the redactor, not a key
+8d29c48db21bb2ac6230d51afac5e4742714f97b:apps/api/services/redact.py:generic-api-key:38

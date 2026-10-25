@@ -75,6 +75,14 @@ def no_stub(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_nebius(monkeypatch):
+    """The summary reads a running Nebius node's state through runs._serverless(): no test reaches the real API (nor the
+    nebius CLI that signs its token). pytest.fail is no Exception, so the summary's `except Exception` cannot swallow it;
+    a test that wants a state fakes the client (tests/api/test_executor.py `nebius`)."""
+    monkeypatch.setattr("api.routes.runs._serverless", lambda: pytest.fail("a test reached the real Nebius API"))
+
+
+@pytest.fixture(autouse=True)
 def no_rate_limits(monkeypatch):
     """Tests post from one address, so the per-IP buckets (services/ratelimit) are endless here;
     tests/api/test_hardening.py puts the real ones back."""

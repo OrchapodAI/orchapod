@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
 import uuid
+from datetime import datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -1034,12 +1036,143 @@ async def test_summary_rolls_up_nodes_cost_and_artifacts(client, db):
     assert (s["run_id"], s["status"], s["cost_usd"], s["error"]) == (str(run.id), "failed", 0.5, "exit 1: boom")
     assert [(n["node_id"], n["type"], n["status"], n["usd"]) for n in s["nodes"]] == [
         ("a", "data-prep", "succeeded", 0.1), ("b", "data-prep", "failed", 0.4), ("c", "data-prep", "pending", 0)]
-    assert {k for k in s["nodes"][0]} == {"node_id", "type", "status", "usd", "error", "started_at", "finished_at"}
+    assert {k for k in s["nodes"][0]} == {"node_id", "type", "status", "usd", "error", "started_at", "finished_at",
+                                          "provider", "resource"}
     by_name = {(x["node_id"], x["name"]): x for x in s["artifacts"]}
     assert by_name[("a", "dataset")]["download_url"] == f"/artifacts/{arts[1].id}/download"
     assert by_name[("a", "dataset")]["meta"] == {"rows": 9}
     assert by_name[("b", "endpoint_url")]["download_url"] is None
     assert (await client.get(f"/runs/{uuid.uuid4()}/summary")).status_code == 404
+
+
+class Serverless:
+    """NebiusServerless as the summary reads it (contracts "NebiusServerless"): jobs.get(id) and endpoints.get(id) answer
+    {"state": states[id]}, and an id with no state raises; `gate` (a threading.Event) holds every call until it is set."""
+
+    def __init__(self):
+        self.calls, self.states, self.gate = [], {}, None
+        self.jobs = self.endpoints = self
+
+    def get(self, id):
+        self.calls.append(id)
+        if self.gate:
+            self.gate.wait(10)
+        return {"id": id, "state": self.states[id]}
+
+
+@pytest.fixture
+def nebius(monkeypatch):
+    from api.routes import runs
+    fake, clock = Serverless(), [1000.0]
+    fake.clock = clock
+    monkeypatch.setattr(runs, "_serverless", lambda: fake)
+    monkeypatch.setattr(runs, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(runs, "_states", {})
+    return fake
+
+
+async def train_state(client, db):
+    """A run whose train node runs as Nebius job aijob-1 → a coroutine function reading that node's state from the summary."""
+    run = await seed(db, status=RunStatus.RUNNING)
+    db.add(NodeRun(run_id=run.id, node_id="train", node_type="unsloth-train", status=NodeStatus.RUNNING,
+                   gpu_provider="nebius", gpu_pod_id="aijob-1"))
+    await db.commit()
+
+    async def state():
+        return (await client.get(f"/runs/{run.id}/summary")).json()["nodes"][0]["resource"]["state"]
+    return state
+
+
+async def test_summary_says_where_each_node_runs(client, db, nebius):
+    """provider = the NodeRun's gpu_provider. resource: a gpu node on nebius → its Job; a node with an endpoint_url artifact
+    → the newest endpoint_id; the live state only for a node that is running."""
+    run = await seed(db, status=RunStatus.RUNNING)
+    prep, train, serve, judge = (NodeRun(run_id=run.id, node_id=i, node_type=t, status=s, gpu_provider=p, gpu_pod_id=pod)
+                                 for i, t, s, p, pod in (
+        ("prep", "data-prep", NodeStatus.SUCCEEDED, "local-docker", "c1"),
+        ("train", "unsloth-train", NodeStatus.RUNNING, "nebius", "aijob-1"),
+        ("serve", "vllm-serve", NodeStatus.SUCCEEDED, "local-docker", "c2"),
+        ("evaluate", "judge-eval", NodeStatus.PENDING, None, None)))
+    db.add_all([prep, train, serve, judge])
+    await db.flush()
+    db.add_all(Artifact(node_run_id=serve.id, name="endpoint_url", kind=ArtifactKind.ENDPOINT, uri="https://ep.example",
+                        meta=meta, created_at=datetime(2026, 10, 25, 10, 0, minute))  # a retry registered a newer one
+               for minute, meta in ((0, {"endpoint_id": "aiendpoint-0"}), (1, {"endpoint_id": "aiendpoint-1"}), (2, {})))
+    await db.commit()
+    nebius.states["aijob-1"] = "IMAGE_PULLING"
+
+    s = (await client.get(f"/runs/{run.id}/summary")).json()
+
+    assert {n["node_id"]: (n["provider"], n["resource"]) for n in s["nodes"]} == {
+        "prep": ("local-docker", None),
+        "train": ("nebius", {"kind": "job", "id": "aijob-1", "state": "IMAGE_PULLING"}),
+        "serve": ("local-docker", {"kind": "endpoint", "id": "aiendpoint-1", "state": None}),  # its node is done: not asked
+        "evaluate": (None, None)}
+    assert nebius.calls == ["aijob-1"]
+
+
+async def test_a_live_state_is_cached_per_id_for_30_s(client, db, nebius):
+    state = await train_state(client, db)
+    nebius.states["aijob-1"] = "IMAGE_PULLING"
+    assert [await state(), await state()] == ["IMAGE_PULLING"] * 2
+
+    nebius.states["aijob-1"] = "RUNNING"
+    nebius.clock[0] += 29
+    assert await state() == "IMAGE_PULLING"  # read 29 s ago: cached
+    nebius.clock[0] += 2
+    assert await state() == "RUNNING"        # 31 s: read again
+    assert nebius.calls == ["aijob-1"] * 2
+
+
+async def test_a_state_that_cannot_be_read_is_null_and_not_asked_again_for_30_s(client, db, nebius):
+    state = await train_state(client, db)
+    assert await state() is None  # jobs.get raised: the summary answers all the same
+    nebius.states["aijob-1"] = "RUNNING"
+    assert await state() is None  # the failure is cached too, so a Nebius that hangs costs one worker thread per 30 s
+    nebius.clock[0] += 31
+    assert await state() == "RUNNING"
+    assert nebius.calls == ["aijob-1"] * 2
+
+
+async def test_the_summary_does_not_wait_longer_than_STATE_WAIT_S_for_nebius(client, db, nebius, monkeypatch):
+    from api.routes import runs
+    assert (runs.STATE_WAIT_S, runs.STATE_TTL_S) == (3, 30)  # the contract's bounds
+    monkeypatch.setattr(runs, "STATE_WAIT_S", 0.05)  # patched down to keep the test fast
+    nebius.gate, nebius.states["aijob-1"] = threading.Event(), "RUNNING"
+    state = await train_state(client, db)
+    try:
+        assert await asyncio.wait_for(state(), 5) is None  # answered while the call is still held at the gate
+        for _ in range(200):  # the worker thread reaches the gate a moment after the wait gave up
+            if nebius.calls:
+                break
+            await asyncio.sleep(0.01)
+        assert await asyncio.wait_for(state(), 5) is None and nebius.calls == ["aijob-1"]  # cached: no second thread
+    finally:
+        nebius.gate.set()
+
+
+async def test_no_live_state_is_read_under_stub(client, db, nebius, monkeypatch):
+    nebius.states["aijob-1"] = "RUNNING"
+    state = await train_state(client, db)
+    monkeypatch.setenv("STUB", "1")
+    assert await state() is None and nebius.calls == []
+
+
+async def test_a_runs_gpu_provider_is_its_first_gpu_nodes_else_null(client, db):
+    """RunOut.gpu_provider was whatever the last node set (the run header read "GPU: local-docker"); it is now the provider
+    of the first node that rents a GPU (by start time), whatever Run.gpu_provider says, else null."""
+    gpu, cpu = [await seed(db, gpu_provider="local-docker") for _ in range(2)]  # the column: the last node's
+    for run, rows in ((gpu, (("prep", "data-prep", "local-docker"), ("train", "unsloth-train", "nebius"),
+                             ("serve", "vllm-serve", "local-docker"), ("evaluate", "judge-eval", "local-docker"))),
+                      (cpu, (("prep", "data-prep", "local-docker"), ("evaluate", "judge-eval", "local-docker")))):
+        db.add_all(NodeRun(run_id=run.id, node_id=i, node_type=t, status=NodeStatus.SUCCEEDED, gpu_provider=p,
+                           started_at=datetime(2026, 10, 25, 10, 0, n)) for n, (i, t, p) in enumerate(rows))
+    await db.commit()
+
+    assert (await client.get(f"/runs/{gpu.id}")).json()["gpu_provider"] == "nebius"
+    assert (await client.get(f"/runs/{cpu.id}")).json()["gpu_provider"] is None
+    assert {r["id"]: r["gpu_provider"] for r in (await client.get("/runs")).json()} == {
+        str(gpu.id): "nebius", str(cpu.id): None}
 
 
 async def test_artifact_download_redirects_to_a_presigned_url(client, db, seeded_node_run):

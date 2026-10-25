@@ -241,8 +241,9 @@ export default function CanvasPage() {
         </div>
         <span className="muted mono" style={{ fontSize: 11 }}>v{workflow.version} · {nodes.length} nodes</span>
         {runId && (
-          <Link href={`/runs/${runId}`} className="pill mono" style={{ textDecoration: "none" }}>
-            Viewing run {runId.slice(0, 8)} · {runSummary ? runSummary.status.replace(/_/g, " ") : "loading"}
+          <Link href={`/runs/${runId}`} title="Open the run" style={{ textDecoration: "none" }}
+            className={`pill ${runSummary ? runSummary.status.replace("provisioning_gpu", "provisioning") : "pending"}`}>
+            <span className="dot" />Viewing run {runId.slice(0, 8)} · {runSummary ? runSummary.status.replace(/_/g, " ") : "loading"}
           </Link>
         )}
         <div className="spacer" />

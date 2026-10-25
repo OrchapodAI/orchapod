@@ -23,7 +23,7 @@ export function NodeTimeline({ nodes, activeNodeId, onSelect, canRetry, retrying
           <button
             onClick={() => onSelect(node.node_id)}
             className={clsx(
-              "w-full flex items-center justify-between px-3 py-2.5 rounded text-left transition-colors text-sm border",
+              "w-full grid grid-cols-[1fr_auto] items-center px-3 py-2.5 rounded text-left transition-colors text-sm border",
               activeNodeId === node.node_id
                 ? "bg-[#DEEBFF] border-[#0052CC] text-[#0052CC]"
                 : "bg-white border-[#DFE1E6] hover:bg-[#F4F5F7] text-[#172B4D]"
@@ -36,10 +36,10 @@ export function NodeTimeline({ nodes, activeNodeId, onSelect, canRetry, retrying
                 <p className="text-[10px] text-[#6B778C] capitalize">
                   {node.type.replace(/-/g, " ")}{node.usd > 0 && ` · $${node.usd.toFixed(3)}`}
                 </p>
-                {whereRuns(node) && <p className="text-[10px] text-[#6B778C] truncate" title={whereRuns(node)}>{whereRuns(node)}</p>}
               </div>
             </div>
             <StatusBadge status={node.status} />
+            {whereRuns(node) && <p className="col-span-2 mt-1 pl-[26px] text-[10px] text-[#6B778C] break-words">{whereRuns(node)}</p>}
           </button>
           {node.status === "failed" && (
             <div className="px-3 pt-1.5 pb-2 space-y-2">

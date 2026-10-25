@@ -30,7 +30,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, func, update
+from sqlalchemy import func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -39,12 +39,12 @@ from api.database import get_session, AsyncSessionLocal
 from api.models.db import (
     Artifact, ArtifactKind,
     Model, ModelFormat,
-    NodeLog, NodeRun, NodeStatus,
+    NodeRun, NodeStatus,
     Run,
 )
-from api.services import budget
+from api.services import budget, logs
 from api.services.events import event_bus
-from api.services.redact import redact, redact_text
+from api.services.redact import redact
 
 # endpoint_url artifact id (str) → the task that deletes its endpoint at expiry; asyncio keeps only weak references.
 _ttl_tasks: dict[str, asyncio.Task] = {}
@@ -52,7 +52,6 @@ DELETE_RETRY_S = 300  # a failed delete is tried again: the endpoint bills until
 # A Nebius resource id; it becomes a REST path segment, so /endpoints/../jobs/x could otherwise delete any job.
 ENDPOINT_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 STUB_URL = "http://stub.invalid"  # contracts: a STUB endpoint runs here, and nothing exists at Nebius
-LOG_MAX, LOG_KEEP = 2000, 5000  # chars of a stored log line; lines kept per run
 log = logging.getLogger("api.internal")
 
 router = APIRouter()
@@ -112,23 +111,17 @@ class RegisterTTLRequest(BaseModel):
 @router.post("/log", status_code=204, dependencies=[Depends(_verify_secret)])
 async def receive_log(event: LogEvent, db: Session):
     """
-    Receive a log line from a container, keep it (GET /runs/{id}/logs: the last LOG_KEEP lines of its run) and forward it to
-    the WebSocket subscribers. The line is cut at LOG_MAX chars and redacted (R22) in the store, the event and NodeRun.error.
-    The last ERROR line is also NodeRun.error: a failed node's error is "exit <code>: <that line>".
+    Receive a log line from a container, keep it (GET /runs/{id}/logs) and forward it to the WebSocket subscribers. The line
+    is cut and redacted (R22) by services/logs, which also trims the run to its last lines: the store, the event and
+    NodeRun.error carry the same text. The last ERROR line is also NodeRun.error: a failed node's error is "exit <code>: <that line>".
     """
     from fastapi import Response
-    # cut first, so the regex never reads a huge line, and again: "[redacted]" can be longer than the value it replaces
-    message = redact_text(event.message[:LOG_MAX])[:LOG_MAX]
+    message = logs.clean(event.message)
     if event.level == "ERROR":
         node_run = await db.scalar(select(NodeRun).where(NodeRun.run_id == event.run_id, NodeRun.node_id == event.node_id))
         if node_run and node_run.status == NodeStatus.RUNNING:  # a late line must not replace "cancelled"
             node_run.error = message
-    db.add(NodeLog(run_id=event.run_id, node_id=event.node_id, ts=event.ts, level=event.level, message=message))
-    drop = await db.scalar(select(NodeLog.id).where(NodeLog.run_id == event.run_id)
-                           .order_by(NodeLog.id.desc()).offset(LOG_KEEP).limit(1))  # the newest line beyond the last LOG_KEEP
-    if drop is not None:
-        await db.execute(delete(NodeLog).where(NodeLog.run_id == event.run_id, NodeLog.id <= drop)
-                         .execution_options(synchronize_session=False))
+    await logs.keep(db, event.run_id, [(event.node_id, event.ts, event.level, message)])
     await db.commit()  # before the event, like every other announced change: a client that saw the line finds it in the store
     await event_bus.publish(event.run_id, {
         "type": "log",

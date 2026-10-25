@@ -195,8 +195,7 @@ async def test_only_the_last_lines_of_each_run_are_kept(client, db, seeded_node_
     from sqlalchemy import func
     from sqlmodel import select
     from api.models.db import NodeLog, Run
-    from api.routes import internal
-    monkeypatch.setattr(internal, "LOG_KEEP", 3)
+    monkeypatch.setattr("api.services.logs.LOG_KEEP", 3)
     run, _ = seeded_node_run
     other = Run(user_id=uuid.uuid4())
     db.add(other)

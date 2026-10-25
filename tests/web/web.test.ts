@@ -496,18 +496,26 @@ const template = (usd: number, fits?: boolean) => {
            reduced: { plan, estimate: { usd, minutes: 20, by_node: {} } }, ...(fits === undefined ? {} : { fits }) };
 };
 
-test("a template above the caller's run cap (fits: false) says why, from its reduced estimate, and links to the golden run", () => {
-  assert.deepEqual(capNote(template(0.88, false)),
-    { text: "about $0.88 — above the public demo's per-run cap", href: "/runs?q=real-estate-compliance-llama-3b" });
-  assert.equal(capNote(template(0.15, true)), null);
-  assert.equal(capNote(template(0.15)), null); // no `fits` (an API before backend-w3's fix round): runnable
+const ran = (workflow_name: string | null, status = "succeeded") => ({ workflow_name, status }) as never;
+
+test("a template above the caller's run cap (fits: false) says why, from its reduced estimate, and links to its golden run only if this API has a succeeded one", () => {
+  const name = "real-estate-compliance-llama-3b", text = "about $0.88 — above the public demo's per-run cap";
+  assert.deepEqual(capNote(template(0.88, false), [ran("other"), ran(name)]), { text, href: `/runs?q=${name}` });
+  // a link to an empty list is worse than none: no run, one still going or failed, another workflow's, a copy's, or the list not loaded yet
+  for (const runs of [[], [ran(name, "running")], [ran(name, "failed")], [ran("other")], [ran(null)], [ran(`${name} (copy)`)], undefined]) {
+    assert.deepEqual(capNote(template(0.88, false), runs), { text, href: null });
+  }
+  assert.equal(capNote(template(0.15, true), [ran(name)]), null);
+  assert.equal(capNote(template(0.15), [ran(name)]), null); // no `fits` (an API before backend-w3's fix round): runnable
 });
 
 test("the demo banner says what a run costs (the estimates one-click Run uses) and that public runs are capped", () => {
-  assert.equal(demoNote(null), "Every run shows its estimated cost before you press Run. Public runs are capped per run and per day.");
-  assert.equal(demoNote([template(0.15, true), template(0.88, false), template(0.02)]),
-    "Every run shows its estimated cost before you press Run: $0.02 to $0.88 for the templates below. "
-    + "Public runs are capped per run and per day; a template above the per-run cap links to its golden run instead.");
+  const head = "Every run shows its estimated cost before you press Run";
+  assert.equal(demoNote(null), `${head}. Public runs are capped per run and per day.`);
+  const templates = [template(0.15, true), template(0.88, false), template(0.02)];
+  assert.equal(demoNote(templates, [ran("real-estate-compliance-llama-3b")]),
+    `${head}: $0.02 to $0.88 for the templates below. Public runs are capped per run and per day; a template above the per-run cap links to its golden run instead.`);
+  assert.equal(demoNote(templates), `${head}: $0.02 to $0.88 for the templates below. Public runs are capped per run and per day.`); // no golden run to link to
 });
 
 test("the report card polls until the report is ready, also after the run ended, and gives up 60 s after it ended", () => {

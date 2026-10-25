@@ -736,3 +736,6 @@ worktrees:
     (3) README/Devpost screenshots (docs/img).
     (4) G3 freeze: tag v0.1-hackathon on Oct 27.
     (5) Hari: repo public, video upload, Devpost submit (his yes).
+- 2026-10-25T06:58Z The golden run's endpoint was deleted by the API's TTL (expiry 06:55:26Z; gone at 06:58Z): the TTL works on Nebius.
+  - No Jobs or Endpoints are left (0/0).
+  - Hosted ORCHAPOD_MAX_DAY_USD back to 5 (Hari's decision), API restarted, health ok.

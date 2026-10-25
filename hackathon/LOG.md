@@ -703,3 +703,12 @@ worktrees:
   - VM docker logged in with an IAM token (GPU SA); probe image cr.eu-north1.nebius.cloud/e00zbsmf901a9v6504/probe:1 pushed OK.
   - Full unsloth-train (CUDA stage) build + push running detached on the VM (/tmp/unsloth-build.log).
   - Next: ORCHAPOD_IMAGE_PREFIX=cr.eu-north1.nebius.cloud/e00zbsmf901a9v6504 in /opt/orchapod/.env → `dc up -d api` → `make e2e API=https://api.orchapod.dev MAX_COST=3`.
+- 2026-10-25T06:02Z GOLDEN RUN #1 FAIL (run fa20d166, hosted, 583 s, $0.5842 of the $3 cap).
+  - research 3 s $0.032; synth 2.6 min $0.0296; prep 3 s; train FAILED after 7.0 min, $0.5227 (H100).
+  - Nebius Job states: IMAGE_PULLING ~6 min (the 44 GB image from our registry: plan B's pull WORKS), RUNNING ~1 min, then exit 1.
+  - Root cause (`nebius ai job logs`): import unsloth → transformers is_mamba_2_ssm_available (on CUDA) → import mamba_ssm → tilelang 0.1.8's TVM vs the lock's apache-tvm-ffi 0.1.15.post0 → AttributeError '__dict__' of 'type' objects is not writable.
+    - Reproduced on the VM's CPU with `import mamba_ssm`.
+    - The image had never run before (it can't be built on the Mac). Spike 4 installed the Mamba wheels only for the NemotronH 30B.
+  - FIX 69cafd1: drop the Mamba-2 wheels and the tvm-ffi restore. DECISION: the unsloth-train image trains Llama-architecture students only (NemotronH 30B unsupported). Deployed.
+  - Rebuild + a mamba-absent check + push running on the VM; then golden run #2.
+  - Note: the hosted API has no REST route for node logs. The node's `logs` artifact keeps only the final ERROR line; the traceback is in the Job's console (`nebius ai job logs <id>`).

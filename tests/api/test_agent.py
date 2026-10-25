@@ -676,6 +676,23 @@ async def test_the_report_is_written_as_the_run_ends(client, db, provider, launc
     assert stored.report_md.startswith("## qa-data: succeeded")  # before any GET asked for it
 
 
+async def test_the_report_gets_the_metrics_even_when_the_plan_is_long(client, db, tf, reports):
+    """Run ca9838b7 (2026-10-25): a 15-query plan and 33 artifacts pushed the judge's metrics past the facts' cut, and Super
+    wrote that the run had no win rate. Each node's metrics now come first and the plan last."""
+    run = await agent_run(db, RunStatus.SUCCEEDED)
+    agent = await db.get(AgentRun, run.id)
+    agent.plan = {**GOOD, "nodes": [{**GOOD["nodes"][0], "inputs": {**GOOD["nodes"][0]["inputs"], "instructions": "x" * 60_000}},
+                                    GOOD["nodes"][1]]}
+    prep = await db.scalar(select(NodeRun).where(NodeRun.run_id == run.id, NodeRun.node_id == "prep"))
+    db.add(Artifact(node_run_id=prep.id, name="metrics_json", kind=ArtifactKind.METRICS, uri="r2://b/runs/x/prep/metrics_json",
+                    meta={"win_rate": 0.6833, "wins": 11}))
+    await db.commit()
+    tf.replies = [(200, "## Results\nwin rate 0.68")]
+    await polled(client, reports, run.id)
+    facts = tf.requests[0]["messages"][1]["content"]
+    assert '"win_rate": 0.6833' in facts and len(facts) <= 40_000
+
+
 async def test_the_report_call_is_sent_once_then_the_template_stands_in(client, db, tf, reports):
     """create=True: a call that may have landed is never re-sent (each send may bill; Lightning once took 4 x 120 s)."""
     for reply in ((None, httpx.ReadTimeout("no reply in 30 s")), (503, "busy")):

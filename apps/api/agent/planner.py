@@ -403,8 +403,8 @@ async def make_plan(intent: str, db: AsyncSession, scale: float) -> dict:
 REPORT_PROMPT = """You write the report of one Orchapod Agent run for the person who asked for it: Markdown, at most 250
 words, with the sections "## What ran" (one line per node), "## Results" (the metrics that matter, such as win rate,
 rows, loss), "## Cost" (spent against the estimate) and "## How to use it" (download links from the artifacts'
-download_url, or the model to call). Use only the facts given. If the run failed, name the failed node and its error,
-and say that Retry node resumes from it."""
+download_url, or the model to call). Use only the facts given: name only artifacts and files they list. If the run
+failed, name the failed node and its error, and say that Retry node resumes from it."""
 
 
 REPORT_TIMEOUT_S = 30  # spike 2: Super wrote this report in 2.1 s; Lightning took 16-110 s and once 4 x 120 s
@@ -415,8 +415,11 @@ async def write_report(agent_run: AgentRun, summary: dict, db: AsyncSession, sca
     may have landed (create=True) with a REPORT_TIMEOUT_S read timeout; STUB=1, the kill switch, an empty day budget or
     a failed call fall back to the template."""
     if config.env("STUB") != "1" and not budget.kill_switch() and (await budget.left(db, None, scale))[0] > 0:
-        facts = json.dumps({"intent": agent_run.intent, "plan": agent_run.plan, "estimate": agent_run.estimate,
-                            "run": summary}, default=str)[:20_000]
+        # each node's metrics first and the plan last: a long plan (15 queries) and 33 artifacts once cut the judge's win
+        # rate off the end of the facts, and Super reported that there was none (run ca9838b7, 2026-10-25)
+        metrics = {a.get("node_id"): a.get("meta") for a in summary.get("artifacts", []) if a.get("name") == "metrics_json"}
+        facts = json.dumps({"intent": agent_run.intent, "metrics": metrics, "estimate": agent_run.estimate,
+                            "run": summary, "plan": agent_run.plan}, default=str)[:40_000]
         try:
             out = await budget.control_plane(db, "reporter", lambda tf: tf.chat(
                 [{"role": "system", "content": REPORT_PROMPT}, {"role": "user", "content": facts}], SUPER, create=True,

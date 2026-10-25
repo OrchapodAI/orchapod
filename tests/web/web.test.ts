@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { yamlValue, buildYamlFromGraph, planYaml, STARTER_YAML } from "../../apps/web/lib/workflowYaml.ts";
 import { api, apiDate, cancelToken, capNote, demoNote, explainError, mergeLogs, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
-import { applyCompareEvent, applyRunEvent, canRetry, finished, nodeStyle, providerName, REPORT_WAIT_MS, reportNext, runIdOf, runShown, seenFinishedAt, splitReport, whereRuns } from "../../apps/web/lib/runEvents.ts";
+import { applyCompareEvent, applyRunEvent, canRetry, finished, nodeStyle, providerName, REPORT_WAIT_MS, reportBlocks, reportNext, runIdOf, runShown, seenFinishedAt, splitReport, whereRuns } from "../../apps/web/lib/runEvents.ts";
 import { defaultInputs, NODE_FORMS } from "../../apps/web/lib/nodeForms.ts";
 import { datasetOf, evalOf, lossPoints, lossSources, modelRefsOf, refName, resultTab, stepTicks } from "../../apps/web/lib/results.ts";
 
@@ -560,6 +560,38 @@ test("the report's first line, ## <plan>: <status>, is its title; the rest stays
   assert.deepEqual(splitReport("## only a title"), { title: "only a title", body: "" });
   assert.deepEqual(splitReport("no title\n## Cost"), { title: null, body: "no title\n## Cost" }); // only the first line is the title
   assert.equal(splitReport("### Cost\nx").title, null); // and only `## `, the level the API writes
+});
+
+const AID = "ad88aff2-700b-4a3c-9563-ae181e6dadfa", API = "https://api.example";
+const download = (text = `/artifacts/${AID}/download`) => ({ href: `${API}/artifacts/${AID}/download`, text });
+
+test("the report is headings, lines (each on its own line: they end in two spaces), bullets and artifact links, in blocks split by blank lines", () => {
+  const md = ["## What ran", "web_research  ", "judge_eval", "", "## How to use it",
+    "Endpoint URL: https://port8000-x.tunnel.example/v1  ", `Download LoRA adapter: /artifacts/${AID}/download  `, `- [Eval summary](/artifacts/${AID}/download)`,
+    "- a plain bullet", "", "last line"].join("\n"); // the live report of run 0ee1e20a has this shape
+  assert.deepEqual(reportBlocks(md, API), [
+    { type: "h", text: "What ran" },
+    { type: "p", lines: [["web_research"], ["judge_eval"]] },
+    { type: "h", text: "How to use it" },
+    { type: "p", lines: [["Endpoint URL: https://port8000-x.tunnel.example/v1"], ["Download LoRA adapter: ", download()]] },
+    { type: "ul", lines: [[download("Eval summary")], ["a plain bullet"]] }, // a bullet after a line starts its own block
+    { type: "p", lines: [["last line"]] },
+  ]);
+  assert.deepEqual(reportBlocks("a  \nb\n\nc\n## H\nd", API), [ // a blank line and a heading each end a block
+    { type: "p", lines: [["a"], ["b"]] }, { type: "p", lines: [["c"]] }, { type: "h", text: "H" }, { type: "p", lines: [["d"]] }]);
+  assert.deepEqual(reportBlocks("", API), []);
+  assert.deepEqual(reportBlocks("\r\n \r\n", API), []);
+  assert.deepEqual(reportBlocks("#hashtag\r\n### Deeper  \r\n  * nested  \r\n-dash", API),
+    [{ type: "p", lines: [["#hashtag"]] }, { type: "h", text: "Deeper" }, { type: "ul", lines: [["nested"]] }, { type: "p", lines: [["-dash"]] }]);
+});
+
+test("only an artifact's download path becomes a link, to the API; any other URL, path or Markdown link stays text", () => {
+  assert.deepEqual(reportBlocks(`a /artifacts/${AID}/download, b [x](/artifacts/${AID}/download) c [](/artifacts/${AID}/download)`, API),
+    [{ type: "p", lines: [["a ", download(), ", b ", download("x"), " c ", download()]] }]);
+  for (const s of ["see https://evil.example/x", "[click](https://evil.example)", "[x](javascript:alert(1))", "/artifacts/abc/download", `/artifacts/${AID}/other`,
+    `/artifacts/${AID}/downloads`, `/artifacts/${AID}`, '<a href="/artifacts">x</a>', `[x](//evil.example/artifacts/${AID}/downloads`, `${API}/artifacts/${AID}/download`]) {
+    assert.deepEqual(reportBlocks(s, API), [{ type: "p", lines: [[s]] }], s);
+  }
 });
 
 test("a failed fetch with no error display of its own raises one readable toast", () => {

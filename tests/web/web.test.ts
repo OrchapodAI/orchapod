@@ -7,7 +7,7 @@ import { yamlValue, buildYamlFromGraph, planYaml, STARTER_YAML } from "../../app
 import { api, apiDate, cancelToken, capNote, demoNote, explainError, mergeLogs, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
 import { applyCompareEvent, applyRunEvent, canRetry, finished, nodeStyle, providerName, REPORT_WAIT_MS, reportNext, runIdOf, runShown, seenFinishedAt, splitReport, whereRuns } from "../../apps/web/lib/runEvents.ts";
 import { defaultInputs, NODE_FORMS } from "../../apps/web/lib/nodeForms.ts";
-import { datasetOf, evalOf, lossPoints, lossSources, modelRefsOf, refName, resultTab } from "../../apps/web/lib/results.ts";
+import { datasetOf, evalOf, lossPoints, lossSources, modelRefsOf, refName, resultTab, stepTicks } from "../../apps/web/lib/results.ts";
 
 const node = (id: string, node_type: string, inputs: Record<string, unknown>) =>
   ({ id, position: { x: 0, y: 0 }, data: { label: id, node_type, inputs, resources: {} } }) as never;
@@ -516,6 +516,16 @@ test("the demo banner says what a run costs (the estimates one-click Run uses) a
   assert.equal(demoNote(templates, [ran("real-estate-compliance-llama-3b")]),
     `${head}: $0.02 to $0.88 for the templates below. Public runs are capped per run and per day; a template above the per-run cap links to its golden run instead.`);
   assert.equal(demoNote(templates), `${head}: $0.02 to $0.88 for the templates below. Public runs are capped per run and per day.`); // no golden run to link to
+});
+
+test("the loss chart's x ticks are multiples of a round step, so a 60-step curve reads 0, 10 … 60", () => {
+  assert.deepEqual(stepTicks(60), [0, 10, 20, 30, 40, 50, 60]);
+  assert.deepEqual(stepTicks(100), [0, 20, 40, 60, 80, 100]);
+  assert.deepEqual(stepTicks(30), [0, 5, 10, 15, 20, 25, 30]);
+  assert.deepEqual(stepTicks(45), [0, 10, 20, 30, 40]); // never past the last step
+  assert.deepEqual(stepTicks(1200), [0, 200, 400, 600, 800, 1000, 1200]);
+  assert.deepEqual(stepTicks(3), [0, 1, 2, 3]); // steps are whole numbers
+  assert.deepEqual(stepTicks(0), [0]);
 });
 
 test("the report card polls until the report is ready, also after the run ended, and gives up 60 s after it ended", () => {

@@ -5,7 +5,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
 import { api, toastError } from "@/lib/api";
-import { lossPoints, lossSources, TRAINERS } from "@/lib/results";
+import { lossPoints, lossSources, stepTicks, TRAINERS } from "@/lib/results";
 import { finished } from "@/lib/runEvents";
 import type { RunSummary, WsEvent } from "@/lib/types";
 
@@ -54,9 +54,12 @@ export function LossChart({ summary, events }: { summary: RunSummary; events: Ws
   return (
     <ResponsiveContainer width="100%" height="100%">
       <LineChart data={data} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+        <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="#1e293b" />
         <XAxis
           dataKey="step"
+          type="number"
+          domain={[0, "dataMax"]}
+          ticks={stepTicks(data[data.length - 1].step)}
           tick={{ fill: "#64748b", fontSize: 10 }}
           tickLine={false}
           axisLine={{ stroke: "#1e293b" }}

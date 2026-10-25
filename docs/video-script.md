@@ -85,4 +85,5 @@ Capture from the production build or the hosted app (`pnpm build && pnpm start`)
 | `docs/img/eval-sample.png` | the eval view, sample #0 open | question, reference, both answers, the judge's reasoning | Results (linked) | done: 0ee1e20a |
 | `docs/img/playground.png` | the Compare tab inside the keep-alive | base and tuned on held-out sample #0, side by side | Results | done: 0ee1e20a |
 | `docs/img/run-report.png` | /runs/{id}, Report tab | Super's report: what ran, results, cost, how to use it | Run the demo (linked) | done: 0ee1e20a |
+| `docs/img/multistate-eval.png` | /runs/{id}, Eval tab, of the multi-state run | win rate 68%, 11 wins, 19 ties, 0 losses, consistency 70%; base and tuned are GGUFs judged on CPU | Results (linked) | done: ca9838b7 |
 | `docs/img/architecture.png` | a drawing, not a screenshot | control plane, node containers, providers, Nebius services | How it works | no |

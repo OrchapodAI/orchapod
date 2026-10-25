@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 
-from tests.docs.test_readme import STALE, _read
+from tests.docs.test_readme import ROOT, STALE, _read
 
 SCRIPT = _read("docs", "video-script.md")
 LIMIT_S = 175  # Devpost wants a video under 3:00; keep 5 s of margin
@@ -39,7 +39,8 @@ def test_every_shot_has_a_caption_and_a_voice_over_that_fits_its_time():
 
 def test_live_shots_are_marked_todo():
     for n, _, _, vo, caption, live in shots():
-        assert live.lower() == "no" or "TODO(D8)" in live, f"shot {n}: say 'no', or TODO(D8) and what the shot needs"
+        assert live.lower() == "no" or "TODO(D8)" in live or live.startswith("recorded"), \
+            f"shot {n}: say 'no', 'recorded' and where, or TODO(D8) and what the shot needs"
         if "{" in vo + caption:
             assert "TODO(D8)" in live, f"shot {n}: a placeholder is filled from a live run"
 
@@ -56,4 +57,7 @@ def test_screenshots_are_listed_once_and_live_ones_are_marked_todo():
     assert len(files) == len(set(files)) and all(re.fullmatch(r"docs/img/[\w-]+\.png", f) for f in files)
     for kind in ("plan", "run", "eval", "playground"):  # the README's Results TODO names these four
         assert any(kind in f for f in files), f"no screenshot for the {kind}"
-    assert [f for f, r in zip(files, rows) if not (r[-1].lower() == "no" or "TODO(D8)" in r[-1])] == []
+    assert [f for f, r in zip(files, rows) if not (r[-1].lower() == "no" or "TODO(D8)" in r[-1] or r[-1].startswith("done"))] == []
+    # A row marked done is a committed file, and every committed screenshot has a row.
+    assert [f for f, r in zip(files, rows) if r[-1].startswith("done") and not (ROOT / f).exists()] == []
+    assert sorted(set(p.relative_to(ROOT).as_posix() for p in ROOT.glob("docs/img/*.png")) - set(files)) == []

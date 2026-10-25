@@ -754,3 +754,10 @@ worktrees:
   - Dedupe, polling cleanup and text-only rendering verified.
   - Ruling (I4): logs come from backend-w9 round 2 seeding node_log from the fixture's logs artifacts + a reseed on the VM; no frontend fallback.
   - Fix round → a0b588992b033feb4 (I1–I3 + M1–M5, M7).
+- 2026-10-25T07:29Z backend-w9 round 2 done (8d236a5, 5e532f3, f7867b4, b3f0c61, 8a508d4; merged NebiusHackathon 22a6ee7).
+  - Endpoint state by name while provisioning (endpoints.list, not find's 45 s sleep) and through keep-alive.
+  - orchapod.names.endpoint_name shared with vllm-serve.
+  - The seed stores the fixture's logs through the live path; 15 lines over 6 nodes.
+  - 1138 passed; 17 mutants.
+  - DECISION (backend-w9): seeded logs leave out PROGRESS lines (live history never stores them).
+  - Full-branch review dispatched (sonnet). Trial merge clean.

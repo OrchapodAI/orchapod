@@ -42,7 +42,7 @@ export const NODE_META: Record<NodeType, {
   "vllm-serve":           { label: "Serve",          icon: Globe,     accent: "#DE350B", iconBg: "#FFEBE6" },
 };
 
-export function OrchaNode({ data, selected }: NodeProps<Node<OrchaNodeData>>) {
+export function OrchaNode({ data, selected, isConnectable }: NodeProps<Node<OrchaNodeData>>) { // isConnectable: React Flow's nodesConnectable, which a Handle only follows if told
   const meta = NODE_META[data.node_type] ?? NODE_META["data-prep"];
   const Icon = meta.icon;
   const style = nodeStyle(data.status);
@@ -53,13 +53,13 @@ export function OrchaNode({ data, selected }: NodeProps<Node<OrchaNodeData>>) {
         "min-w-[160px] bg-white rounded shadow-md cursor-pointer select-none transition-all",
         "border border-[#DFE1E6]",
         selected && "ring-2 ring-[#0052CC] ring-offset-1",
-        style?.ring,
-        style?.pulse && "animate-pulse"
+        style?.ring
       )}
       style={{ borderLeft: `3px solid ${meta.accent}` }}
     >
       <Handle
         type="target"
+        isConnectable={isConnectable}
         position={Position.Left}
         className="!w-2.5 !h-2.5 !border-2 !border-[#DFE1E6] !bg-white"
       />
@@ -79,13 +79,14 @@ export function OrchaNode({ data, selected }: NodeProps<Node<OrchaNodeData>>) {
 
       {style && (
         <div className="px-3 pb-2 flex items-center gap-1.5">
-          <div className={clsx("w-1.5 h-1.5 rounded-full", style.pulse && "animate-pulse")} style={{ backgroundColor: style.dot }} />
+          <div className={clsx("w-1.5 h-1.5 rounded-full", style.pulse && "motion-safe:animate-pulse")} style={{ backgroundColor: style.dot }} />
           <span className="text-[10px] text-[#6B778C] capitalize">{data.status}</span>
         </div>
       )}
 
       <Handle
         type="source"
+        isConnectable={isConnectable}
         position={Position.Right}
         className="!w-2.5 !h-2.5 !border-2 !border-[#DFE1E6] !bg-white"
       />

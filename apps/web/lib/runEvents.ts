@@ -40,6 +40,9 @@ export function splitReport(md: string): { title: string | null; body: string } 
   return m ? { title: m[1], body: m[2].trim() } : { title: null, body: md };
 }
 
+/** `?run=` on the canvas: a run id (a UUID) or nothing, so no other text reaches an API path. */
+export const runIdOf = (raw: string | null) => (raw && /^[0-9a-f-]{36}$/i.test(raw) ? raw : null);
+
 /** How often the run page (and the canvas of a run) read the summary while the run is on: a Nebius Job or Endpoint changes state with no event. */
 export const POLL_MS = 5000;
 
@@ -48,12 +51,13 @@ const PROVIDER_NAMES: Record<string, string> = { "local-docker": "Local Docker",
 /** A provider as shown: "local-docker" is "Local Docker"; any other as it is. */
 export const providerName = (provider: string) => PROVIDER_NAMES[provider] ?? provider;
 
-/** Where a node's step runs, for its card: "Local Docker", or for a Nebius resource its kind, short id and, while the node runs, the resource's
- *  state: "Nebius Job …k8m3p7r2 · IMAGE_PULLING". Empty before the node has run, and on an API that predates the fields. */
+/** Where a node's step runs, for its card: a Nebius resource's kind, short id and, while it is asked, its state ("Nebius Job …k8m3p7r2 ·
+ *  IMAGE_PULLING"), else the provider ("Local Docker"). The resource says it whatever the provider: vllm-serve's container runs on
+ *  local-docker, and the endpoint it created is the Nebius resource. Empty before the node has run, and on an API without the fields. */
 export function whereRuns({ provider, resource }: Pick<RunSummary["nodes"][number], "provider" | "resource">): string {
-  if (!provider) return "";
-  const id = resource && (resource.id.length > 14 ? `…${resource.id.slice(-8)}` : resource.id);
-  return providerName(provider) + (resource ? ` ${resource.kind === "job" ? "Job" : "Endpoint"} ${id}` : "") + (resource?.state ? ` · ${resource.state}` : "");
+  if (!resource) return provider ? providerName(provider) : "";
+  const id = resource.id.length > 14 ? `…${resource.id.slice(-8)}` : resource.id;
+  return `Nebius ${resource.kind === "job" ? "Job" : "Endpoint"} ${id}${resource.state ? ` · ${resource.state}` : ""}`;
 }
 
 const NODE_STYLES = {

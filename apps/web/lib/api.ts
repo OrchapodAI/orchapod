@@ -33,7 +33,8 @@ const logKey = (l: LogLine) => `${logMs(l)}\0${l.node_id}\0${l.level}\0${l.messa
 
 /** The Logs tab's lines: the stored history (GET /runs/{id}/logs) and the live ones from the socket, which also hold what was stored while the
  *  page loaded. A live line the history already has is dropped, one copy per stored copy, so two real lines that look alike both show. The rest
- *  is in time order, because a socket open longer than the stored window has older lines too. */
+ *  stays in arrival order, since nodes keep their own clocks; only a live line older than the first stored one goes in front of it, because a
+ *  socket open longer than the stored window has older lines too. */
 export function mergeLogs(history: LogLine[], live: LogLine[]): LogLine[] {
   const held = new Map<string, number>();
   for (const l of history) held.set(logKey(l), (held.get(logKey(l)) ?? 0) + 1);
@@ -42,7 +43,8 @@ export function mergeLogs(history: LogLine[], live: LogLine[]): LogLine[] {
     if (n) held.set(k, n - 1);
     return !n;
   });
-  return [...history, ...fresh].map((l) => [logMs(l), l] as const).sort((a, b) => a[0] - b[0]).map(([, l]) => l); // stable
+  const first = history.length ? logMs(history[0]) : -Infinity;
+  return [...fresh.filter((l) => logMs(l) < first), ...history, ...fresh.filter((l) => logMs(l) >= first)];
 }
 
 /** One readable sentence for a failed call: the /agent page's error state. */
@@ -170,9 +172,9 @@ export const api = {
     summary(id: string): Promise<RunSummary> {
       return req(`/runs/${id}/summary`);
     },
-    /** The stored log lines, oldest first: the last 500 of the run, or of one node (docs/contracts.md, backend-w9). */
+    /** The stored log lines, oldest first: the last 2000 (the most the API gives) of the run, or of one node (docs/contracts.md, backend-w9). */
     logs(id: string, nodeId?: string): Promise<LogLine[]> {
-      return req(`/runs/${id}/logs${nodeId ? `?node_id=${encodeURIComponent(nodeId)}` : ""}`);
+      return req(`/runs/${id}/logs?limit=2000${nodeId ? `&node_id=${encodeURIComponent(nodeId)}` : ""}`);
     },
     costEstimate(id: string): Promise<{ nodes: { node_id: string; node_type: NodeType; quotes: unknown[] }[] }> {
       return req(`/runs/${id}/cost-estimate`);

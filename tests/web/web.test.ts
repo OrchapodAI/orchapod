@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { yamlValue, buildYamlFromGraph, planYaml, STARTER_YAML } from "../../apps/web/lib/workflowYaml.ts";
 import { api, apiDate, cancelToken, capNote, demoNote, explainError, mergeLogs, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
-import { applyCompareEvent, applyRunEvent, canRetry, finished, nodeStyle, providerName, REPORT_WAIT_MS, reportNext, runShown, seenFinishedAt, splitReport, whereRuns } from "../../apps/web/lib/runEvents.ts";
+import { applyCompareEvent, applyRunEvent, canRetry, finished, nodeStyle, providerName, REPORT_WAIT_MS, reportNext, runIdOf, runShown, seenFinishedAt, splitReport, whereRuns } from "../../apps/web/lib/runEvents.ts";
 import { defaultInputs, NODE_FORMS } from "../../apps/web/lib/nodeForms.ts";
 import { datasetOf, evalOf, lossPoints, lossSources, modelRefsOf, refName } from "../../apps/web/lib/results.ts";
 
@@ -184,15 +184,15 @@ test("Retry node is enabled only once the run has stopped (failed or cancelled)"
   assert.deepEqual(statuses.filter(finished), ["succeeded", "failed", "cancelled"]); // the loss chart's and artifact list's "this run is over"
 });
 
-test("the Logs tab reads GET /runs/{id}/logs, of the selected node when there is one", async () => {
+test("the Logs tab reads GET /runs/{id}/logs?limit=2000, of the selected node when there is one", async () => {
   const calls: string[] = [];
   globalThis.fetch = async (url: string) => { calls.push(url); return new Response('[{"ts":"2026-10-25T10:00:00","level":"INFO","node_id":"train","message":"hi"}]'); };
   assert.equal((await api.runs.logs("r1"))[0].message, "hi");
   await api.runs.logs("r1", "train step");
-  assert.deepEqual(calls, ["http://localhost:8001/runs/r1/logs", "http://localhost:8001/runs/r1/logs?node_id=train%20step"]);
+  assert.deepEqual(calls, ["http://localhost:8001/runs/r1/logs?limit=2000", "http://localhost:8001/runs/r1/logs?limit=2000&node_id=train%20step"]);
 });
 
-test("stored log lines and live ones merge without duplicates, oldest first (backend-w9's contract, mocked)", () => {
+test("stored log lines and live ones merge without duplicates, in arrival order (backend-w9's contract, mocked)", () => {
   const line = (ts: string, message: string, node_id = "train") => ({ ts, level: "INFO", node_id, message });
   // the API's naive UTC against the SDK's own stamp (microseconds, +00:00): one line, whatever the notation
   const stored = [line("2026-10-25T10:00:00.100000", "loading"), line("2026-10-25T10:00:01.500000", "step 1")];
@@ -210,6 +210,14 @@ test("stored log lines and live ones merge without duplicates, oldest first (bac
   // a socket open longer than the stored window has older lines too: they go before the stored ones, not after
   assert.deepEqual(mergeLogs([line("2026-10-25T10:05:00Z", "new")], [line("2026-10-25T10:01:00Z", "old")]).map((l) => l.message), ["old", "new"]);
   assert.equal(stored.length, 2); // the inputs are not touched
+  // nodes keep their own clocks, so the rest is not sorted: a line that arrived later stays later even when its stamp is earlier
+  const [a5, b3] = [line("2026-10-25T10:00:05Z", "a", "a"), line("2026-10-25T10:00:03Z", "b", "b")];
+  assert.deepEqual(mergeLogs([], [a5, b3]).map((l) => l.message), ["a", "b"]);
+  const first = line("2026-10-25T10:00:01Z", "first", "a");
+  assert.deepEqual(mergeLogs([first], [a5, b3]).map((l) => l.message), ["first", "a", "b"]);
+  // only the live lines older than the first stored one move to the front, in the order they arrived
+  const [o1, o2] = [line("2026-10-25T09:59:50Z", "o1", "a"), line("2026-10-25T09:59:40Z", "o2", "a")];
+  assert.deepEqual(mergeLogs([first], [o1, a5, o2]).map((l) => l.message), ["o1", "o2", "first", "a"]);
 });
 
 test("a node card says where its step runs: a Nebius resource adds its kind, short id and live state (backend-w9's contract, mocked)", () => {
@@ -220,10 +228,24 @@ test("a node card says where its step runs: a Nebius resource adds its kind, sho
   assert.equal(whereRuns({ provider: "nebius", resource: { kind: "job", id, state: "IMAGE_PULLING" } }), "Nebius Job …k8m3p7r2 · IMAGE_PULLING");
   assert.equal(whereRuns({ provider: "nebius", resource: { kind: "endpoint", id: "ep-1", state: "RUNNING" } }), "Nebius Endpoint ep-1 · RUNNING"); // a short id whole
   assert.equal(whereRuns({ provider: "nebius", resource: { kind: "job", id, state: null } }), "Nebius Job …k8m3p7r2"); // the state is live only while the node runs
+  // the real shape of vllm-serve: its container runs on local-docker, and the endpoint it created is the Nebius resource (tests/api/test_executor.py)
+  const ep = "aiendpoint-e00zz9y8x7w6";
+  assert.equal(whereRuns({ provider: "local-docker", resource: { kind: "endpoint", id: ep, state: "RUNNING" } }), "Nebius Endpoint …z9y8x7w6 · RUNNING");
+  assert.equal(whereRuns({ provider: "local-docker", resource: { kind: "endpoint", id: ep, state: null } }), "Nebius Endpoint …z9y8x7w6"); // done, not asked
+  assert.equal(whereRuns({ provider: null, resource: { kind: "job", id, state: "RUNNING" } }), "Nebius Job …k8m3p7r2 · RUNNING"); // the resource says it
   assert.equal(whereRuns({ provider: "nebius", resource: null }), "Nebius"); // its Job is not created yet
   assert.equal(whereRuns({ provider: "local-docker", resource: null }), "Local Docker");
   assert.equal(whereRuns({ provider: null, resource: null }), ""); // not started
   assert.equal(whereRuns({}), ""); // an API that predates the fields
+});
+
+test("the canvas takes ?run= only when it is a run id, so nothing else reaches an API path", () => {
+  const id = "d20d30f3-768f-4989-b974-cac3d9b47495";
+  assert.equal(runIdOf(id), id);
+  assert.equal(runIdOf(id.toUpperCase()), id.toUpperCase());
+  for (const bad of [null, "", "abc", `${id}0`, id.slice(1), "../../admin/x".padEnd(36, "a"), `${id.slice(0, 35)}/`, `${id.slice(0, 35)}?`, id.replace("-", " ")]) {
+    assert.equal(runIdOf(bad), null, String(bad));
+  }
 });
 
 test("a canvas node is drawn by its run status: pending grey, running blue and pulsing, succeeded green, failed red; no run, no style", () => {

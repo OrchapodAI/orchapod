@@ -290,7 +290,8 @@ Rules:
   and keep the estimate within the budget.
 - For the canonical intents, follow the expected plans in the knowledge below.
 - rationale: two to four sentences: why these nodes and models, the cost and time, and what the plan leaves out
-  (for example: no training).
+  (for example: no training), in plain words for the user: no internal labels from the knowledge (Lane A, Lane B,
+  spike N, R-numbers).
 
 Knowledge (docs/agent_knowledge.md):
 """

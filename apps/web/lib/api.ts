@@ -97,19 +97,21 @@ function keepCancelToken<T extends { cancel_token?: string }>(runId: string, { c
 
 // What a run costs, worded from GET /agent/templates: one-click Run posts a template's reduced plan when the API has one.
 
-/** Why a template's Run is disabled: `fits: false` = its reduced plan is above this caller's per-run cap (undefined = runnable). */
-export function capNote(t: AgentTemplate): { text: string; href: string } | null {
+/** Why a template's Run is disabled: `fits: false` = its reduced plan is above this caller's per-run cap (undefined = runnable).
+ *  `href` lists its golden run, and only if `runs` (GET /runs) has a succeeded one of that workflow: else the link would open an empty list. */
+export function capNote(t: AgentTemplate, runs: Pick<Run, "workflow_name" | "status">[] = []): { text: string; href: string | null } | null {
   if (t.fits !== false) return null;
+  const golden = runs.some((r) => r.workflow_name === t.plan.name && r.status === "succeeded");
   return { text: `about ${usd((t.reduced ?? t).estimate?.usd)} — above the public demo's per-run cap`,
-           href: `/runs?q=${encodeURIComponent(t.plan.name)}` }; // /runs filters on RunOut.workflow_name; make demo seeds the golden run under the plan's name
+           href: golden ? `/runs?q=${encodeURIComponent(t.plan.name)}` : null }; // /runs filters on RunOut.workflow_name; make demo seeds the golden run under the plan's name
 }
 
 /** The demo-mode banner on /agent: the estimate comes before Run, and public runs are capped. */
-export function demoNote(templates: AgentTemplate[] | null): string {
+export function demoNote(templates: AgentTemplate[] | null, runs?: Pick<Run, "workflow_name" | "status">[]): string {
   const costs = (templates ?? []).map((t) => (t.reduced ?? t).estimate?.usd).filter((n): n is number => typeof n === "number");
   const low = usd(Math.min(...costs)), high = usd(Math.max(...costs));
   const range = costs.length ? `: ${low === high ? low : `${low} to ${high}`} for the templates below` : "";
-  const over = templates?.some((t) => t.fits === false) ? "; a template above the per-run cap links to its golden run instead" : "";
+  const over = templates?.some((t) => capNote(t, runs)?.href) ? "; a template above the per-run cap links to its golden run instead" : "";
   return `Every run shows its estimated cost before you press Run${range}. Public runs are capped per run and per day${over}.`;
 }
 

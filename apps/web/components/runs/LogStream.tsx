@@ -30,6 +30,7 @@ export function LogStream({ lines, activeNodeId, connected, loading, done }: Pro
     if (box) box.scrollTop = box.scrollHeight;
   }, [lines.length]);
 
+  const state = done ? "Ended" : connected ? "Live" : "Disconnected"; // the API keeps a finished run's socket open: it is not live
   const filtered = activeNodeId
     ? lines.filter((l) => l.node_id === activeNodeId)
     : lines;
@@ -41,9 +42,9 @@ export function LogStream({ lines, activeNodeId, connected, loading, done }: Pro
         <div className="flex items-center gap-1.5">
           <div className={clsx(
             "w-1.5 h-1.5 rounded-full",
-            connected ? "bg-[#00875A] animate-pulse" : "bg-[#C1C7D0]"
+            state === "Live" ? "bg-[#00875A] animate-pulse" : "bg-[#C1C7D0]"
           )} />
-          <span className="text-[11px] text-[#6B778C]">{connected ? "Live" : "Disconnected"}</span>
+          <span className="text-[11px] text-[#6B778C]">{state}</span>
         </div>
       </div>
 

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, capNote, demoNote, explainError, usd } from "@/lib/api";
-import type { AgentPlan, AgentReport, AgentTemplate } from "@/lib/types";
+import type { AgentPlan, AgentReport, AgentTemplate, Run } from "@/lib/types";
 import { reportNext, seenFinishedAt, splitReport } from "@/lib/runEvents";
 import { planYaml } from "@/lib/workflowYaml";
 import { NODE_META } from "@/components/canvas/OrchaNode";
@@ -40,6 +40,7 @@ export default function AgentPage() {
   const [runId, setRunId] = useState<string | null>(null);
   const [templates, setTemplates] = useState<AgentTemplate[] | null>(null);
   const [templatesError, setTemplatesError] = useState("");
+  const [runs, setRuns] = useState<Run[]>([]); // which golden runs this API has to link to
   const planRef = useRef<HTMLDivElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const runRef = useRef<HTMLDivElement>(null);
@@ -53,6 +54,11 @@ export default function AgentPage() {
   useEffect(() => {
     api.agent.templates().then(setTemplates).catch((err) => setTemplatesError(explainError(err)));
   }, []);
+
+  // A template above the cap links to its golden run only if this API has one (the newest 500 runs, as the runs page reads them): no list, no link.
+  useEffect(() => {
+    if (templates?.some((t) => t.fits === false)) api.runs.list(undefined, 500).then(setRuns).catch(() => {});
+  }, [templates]);
 
   async function handlePlan(e: React.FormEvent) {
     e.preventDefault();
@@ -117,7 +123,7 @@ export default function AgentPage() {
             padding: "8px 12px", borderRadius: 6, fontSize: 12.5, lineHeight: 1.5, fontWeight: 400,
             background: "var(--sky-soft)", border: "1px solid var(--sky)", color: "var(--sky-ink)",
           }}>
-            <b>Demo mode.</b> {demoNote(templates)}
+            <b>Demo mode.</b> {demoNote(templates, runs)}
           </p>
 
           <form onSubmit={handlePlan} className="card" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -156,7 +162,7 @@ export default function AgentPage() {
                   No templates are available yet. Describe what you want above and press Plan.
                 </p>
               )
-              : templates.map((t) => { const cap = capNote(t); return (
+              : templates.map((t) => { const cap = capNote(t, runs); return (
                 <div key={t.slug} className="card col" style={{ padding: 14, gap: 6 }}>
                   <span style={{ fontWeight: 600, fontSize: 13.5 }}>{t.title}</span>
                   <span className="dim" style={{ fontSize: 12.5, flex: 1 }}>{t.intent}</span>
@@ -171,7 +177,7 @@ export default function AgentPage() {
                   </div>
                   {cap && (
                     <p id={`cap-${t.slug}`} style={{ fontSize: 12, fontWeight: 400, color: "var(--amber-ink)" }}>
-                      {cap.text}; <Link href={cap.href} style={{ color: "var(--brand)", textDecoration: "underline" }}>watch the golden run</Link>
+                      {cap.text}{cap.href && <>; <Link href={cap.href} style={{ color: "var(--brand)", textDecoration: "underline" }}>watch the golden run</Link></>}
                     </p>
                   )}
                 </div>

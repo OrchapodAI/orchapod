@@ -72,6 +72,15 @@ export function lossSources(s: RunSummary): LossSource[] {
   });
 }
 
+/** The loss chart's x ticks: 0 and the multiples of a round step (1, 2 or 5 × 10ⁿ) up to `last`, at most `max` steps apart,
+ *  so a 60-step curve reads 0, 10 … 60 and the labels never skip unevenly. */
+export function stepTicks(last: number, max = 7): number[] {
+  const raw = Math.max(last / max, 1); // steps are whole numbers
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 5, 10].map((m) => m * mag).find((s) => s >= raw) ?? raw;
+  return Array.from({ length: Math.floor(last / step) + 1 }, (_, i) => i * step);
+}
+
 const point = (node_id: string, step: number, loss: unknown, valid_loss?: unknown): ProgressPoint => ({
   node_id, step, ...(typeof loss === "number" ? { loss } : {}), ...(typeof valid_loss === "number" ? { valid_loss } : {}),
 });

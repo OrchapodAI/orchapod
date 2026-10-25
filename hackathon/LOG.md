@@ -658,3 +658,10 @@ worktrees:
 - 2026-10-24T16:12Z DECISION (Hari, chat): raise the hosted day cap to $10 for G2.
   - Applied when the orchestrator writes the VM's /opt/orchapod/.env (ORCHAPOD_MAX_DAY_USD=10); back to 5 after the golden run (`dc up -d api`, between runs).
   - G2-CHECKLIST.md and STATE updated. The project-wide $15/day cap still bounds all spend that day.
+- 2026-10-25T00:12Z Nebius MCP server set up for Claude Code, following github.com/nebius/mcp-server AGENT_SETUP.md (Hari's request).
+  - Nebius CLI 0.12.294 → ~/.nebius/bin (official installer, read first; its PATH line added to ~/.zshrc).
+  - uv-managed Python 3.13.13 installed.
+  - `claude mcp add --scope user nebius` with SAFE_MODE=true.
+  - Upstream bug: nebius-mcp-server caps mcp ≤ 1.16.0, but uv resolved pydantic 2.14.1, which lacks eval_type_backport, so the server failed on import. Worked around with `uvx --with "pydantic<2.12"`; `claude mcp list`: nebius ✓ Connected.
+  - Pending: Hari completes `nebius profile create` (browser login, terminal tab c7), then a session restart loads the MCP tools.
+  - Hostinger: DNS only (Hari). Its connector is installed. The only Hostinger VPS is complychip's (not used).

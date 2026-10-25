@@ -134,6 +134,7 @@ Updated: 2026-10-24T16:09Z by orchestrator · Phase: P1 · G1 MET 2026-10-22 · 
 - [ ] Before the repo goes public (G3): gitleaks clean over all refs — DONE 2026-10-22 (.gitleaksignore, 11 triaged false positives; no .env secret in history); keys rotated; docs/Jira.csv reviewed for personal data (Hari)
 
 ## Tooling (installed skills/plugins/MCP, with install command)
+- Nebius MCP (user scope): `claude mcp add --env SAFE_MODE=true --transport stdio --scope user nebius -- uvx --refresh-package nebius-mcp-server --with "pydantic<2.12" "nebius-mcp-server@git+https://github.com/nebius/mcp-server@main"` (the pydantic pin works around an upstream dependency clash); Nebius CLI 0.12.294 in ~/.nebius/bin; Hostinger Connector plugin (DNS only)
 - python 3.12.13 venv (`uv venv --python 3.12 .venv`; `uv pip install -r requirements-dev.txt -r apps/api/requirements.txt pyyaml boto3 redis huggingface_hub ruff`)
 - uv 0.11.12 · node 26.5 · pnpm 11.0.9 · docker 28.1.1 (Docker Desktop; colima not needed) · gh 2.88.1 (cannot see this repo; use git) · jq 1.7.1 · tmux 3.6a · make 3.81
 - ruff 0.17.1 (`uv tool install ruff`) · gitleaks 8.30.1 (`brew install gitleaks`)

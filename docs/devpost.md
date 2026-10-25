@@ -21,7 +21,7 @@ Orchapod is an open-source platform for the whole post-training lifecycle of a l
 
 A finished run shows what it made: an eval view (win rate; wins, ties and losses; the judge's consistency between the two answer orders; exact match where it applies; every judged sample with the judge's reasoning), a dataset card with a download link and per-field stats and, when the run serves a model, a compare playground that streams one prompt to the base and tuned models side by side, with the keys kept on the server.
 
-Three intents define "done", and each must run from the chat box with no manual edits: a Llama 3B fine-tuned on US real-estate compliance, synthetic data of movie likes, shares and subscribes, and a quantized maths model. Two more templates distil a Nebius docs specialist from the Nebius AI Cloud and Token Factory docs: the golden path. It ran live twice on the hosted demo, https://app.orchapod.dev, on 2026-10-25: 24.2 and 23.5 min, $1.61 and $1.58, against a $2.66 estimate. The second run was typed on the hosted /agent page as a rehearsal of the demo. Intents #2 and #3 have run live through the Agent on real Token Factory: 928 rows of movie events for $0.1007, and a maths model quantized and judged by Nemotron 3 Ultra for $0.0175. On stubs (deterministic stubs, no keys, $0), the three intents and the golden path pass end to end through the Agent API (4 PASS). A Playwright smoke of the web app passes 5 of 5 tests. One of them clicks the golden path's template card, which runs its reduced plan, through the run, the eval view and the compare playground.
+Three intents define "done", and each must run from the chat box with no manual edits: a Llama 3B fine-tuned on US real-estate compliance, synthetic data of movie likes, shares and subscribes, and a quantized maths model. Two more templates distil a Nebius docs specialist from the Nebius AI Cloud and Token Factory docs: the golden path. It ran live twice on the hosted demo, https://app.orchapod.dev, on 2026-10-25: 24.2 and 23.5 min, $1.61 and $1.58, against a $2.66 estimate. The second run was typed on the hosted /agent page as a rehearsal of the demo. Intents #2 and #3 have run live through the Agent on real Token Factory: 928 rows of movie events for $0.1007, and a maths model quantized and judged by Nemotron 3 Ultra for $0.0175. A third live run, on real-estate compliance in five states, was the first to quantize the 8B student and judge it on CPU, with no endpoint. It took 50.7 min and cost $1.35. Ultra scored it 11 wins, 19 ties and 0 losses on 30 held-out questions. Those questions are held-out rows of its own synthetic set, so this measures how well the model learned the collected corpus, not legal knowledge, and none of it is legal advice. On stubs (deterministic stubs, no keys, $0), the three intents and the golden path pass end to end through the Agent API (4 PASS). A Playwright smoke of the web app passes 5 of 5 tests. One of them clicks the golden path's template card, which runs its reduced plan, through the run, the eval view and the compare playground.
 
 ### Why
 
@@ -68,7 +68,7 @@ Best Apps and Agents
 
 ## Gallery
 
-Upload these in this order, each with its caption. All but the first come from the rehearsal run 0ee1e20a on the hosted app.
+Upload these in this order, each with its caption. Items 2 to 12 come from the rehearsal run 0ee1e20a on the hosted app, and item 13 from the multi-state run ca9838b7.
 
 1. `docs/img/templates.png`: the public template gallery on app.orchapod.dev, each template with its estimate.
 2. `docs/img/agent-plan.png`: Nemotron 3 Super's live plan for the golden sentence: six nodes, $2.66, no errors.
@@ -82,6 +82,7 @@ Upload these in this order, each with its caption. All but the first come from t
 10. `docs/img/run-finished.png`: the finished run: $1.581 against the $2.66 estimate, and its artifacts.
 11. `docs/img/canvas.png`: the plan on the canvas, each node coloured by its status.
 12. `docs/img/run-logs.png`: every node's log lines, kept after the run.
+13. `docs/img/multistate-eval.png`: the multi-state run judged on CPU: 11 wins, 19 ties, 0 losses on held-out rows of its own synthetic set.
 
 ## What changed during the submission period
 

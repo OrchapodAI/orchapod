@@ -11,6 +11,7 @@ Dated, user-facing changes made during the Nebius × NVIDIA hackathon submission
 - The compare tab keeps the tab you picked while a run finishes. Before, the finished run's eval view could take it over mid-stream.
 - The planner no longer adds a made-up "report" node: the Agent writes the report itself. Plan rationales are in plain words.
 - On the public demo, a plan that needs rented GPUs comes back as planned, marked admin-only, with a link to its golden run, instead of being shrunk to fit a budget it can never fit. When the day's public budget is spent, the page says so and when it resets.
+- A third live run, on real-estate compliance in five states, quantized the trained Nemotron Nano 8B and judged it on CPU, with no endpoint: Nemotron 3 Ultra gave 11 wins, 19 ties and 0 losses on 30 held-out questions from its own synthetic set. 51 minutes, $1.35.
 - Smaller polish: the loss chart reads cleanly, finished runs say "ended", an expired endpoint's compare tab explains why, and "watch the golden run" links appear only where a golden run exists.
 
 ## 2026-10-24

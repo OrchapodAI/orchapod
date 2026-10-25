@@ -844,3 +844,13 @@ worktrees:
   - The playground question (fixed before the run) was a tie: neither model gave the docs' field. Honest, but weak.
   - A slow tour of the finished run (eval and report) was recorded with GETs only.
   - Tools: ffmpeg 9.0.2 (brew, no drawtext), so captions are PIL overlays.
+- 2026-10-25T09:36Z WAVE 7 MERGED + DEPLOYED.
+  - backend-w10 f893b3a: admin_only; no budget repairs for an anonymous GPU plan.
+  - frontend-w11 a7c07f9: an amber admin-only note with a golden-run link; a plain 402.
+  - devrel-w10 5d53d28: README/Devpost with both live runs and 7 inline + 5 linked shots; the video script filled from 0ee1e20a; HOSTING.md bans admin runs during judging.
+  - Checks: make check 1170 + web 50; ui-smoke 5/5 on the merged tree; tests/docs 27; deployed a7c07f9 at 09:33Z (docs-only commits after it).
+  - Hosted check (anonymous, public share used up): POST /agent/plan → 402. The page reads "The public demo's budget for today is used up; it resets at 00:00 UTC." and links /runs?q=nebius-docs-specialist-nemotron-nano-8b. $0.
+  - gitleaks over all refs: 1 new false positive (a docstring example NEBIUS_API_KEY=sk-1 in redact.py, 8d29c48) → .gitleaksignore. All refs clean (163da8c).
+  - CHANGELOG 2026-10-25 updated (57c9b5a).
+  - qa-w11 dispatched (ae3c65befef5dcb2b): a fresh-clone retest + make demo + links, before G3. No e2e or ui-smoke by others meanwhile.
+  - RULING (orchestrator): no more D8 rehearsals. The golden path passed live twice (d20d30f3, 0ee1e20a). Another admin run on hosted costs about $1.6 and uses up the public's day share.

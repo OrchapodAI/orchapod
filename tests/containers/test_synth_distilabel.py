@@ -358,7 +358,7 @@ def test_auth_bad_request_and_quota_are_fatal(teacher, synth, mock_orchapod_io, 
 
 
 @pytest.mark.parametrize("env_change, inputs, error", [
-    ({"NEBIUS_API_KEY": None}, {}, "NEBIUS_API_KEY is not set"),             # no STUB: a missing key is fatal
+    ({"NEBIUS_API_KEY": None}, {}, "NEBIUS_API_KEY is not set; with no key, set STUB=1 in .env to run on stubs"),  # no STUB: a missing key is fatal
     ({}, {"teacher_model": "acme/unpriced-1b"}, "no price for acme/unpriced-1b"),  # nothing is sent unpriced
 ])
 def test_missing_key_and_unpriced_teacher_fail_before_any_request(monkeypatch, teacher, synth, env_change, inputs, error):

@@ -6,11 +6,15 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import sys
+import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import func, select
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.models.db import AgentRun, Artifact, ArtifactKind, CancelToken, Model, NodeRun, Run, Spend
@@ -81,6 +85,26 @@ async def test_the_golden_run_renders_from_the_seed_alone(client, db, s3):
     verdicts = json.loads(s3.objects["hosted-bucket", r.headers["location"].split("/hosted-bucket/")[1]])
     assert verdicts["samples"] and {"n", "judged", "wins", "ties", "losses", "win_rate", "consistency"} <= set(verdicts)
     assert await db.scalar(select(func.count()).select_from(Spend)) == 0
+
+
+@pytest.mark.parametrize("url, shown", [
+    ("postgresql+asyncpg://orc_user:s3cret@db.internal:5432/orchapod?sslmode=require", "postgresql+asyncpg://db.internal:5432/orchapod"),
+    ("sqlite+aiosqlite:///./orchapod_dev.db", "sqlite+aiosqlite:///./orchapod_dev.db"),  # the file an API on .env would never read
+])
+def test_the_seed_says_where_it_seeded_and_never_with_the_credentials(monkeypatch, capsys, url, shown):
+    """`make demo` without .env seeds a SQLite file and the default bucket and prints success all the same: the line names the
+    database (driver, host, name) and the bucket, so a judge sees at once that it is not the one the API reads."""
+    monkeypatch.setattr(sys, "argv", ["seed-golden-run.py"])
+    monkeypatch.setenv("ORCHAPOD_R2_BUCKET", "hosted-bucket")
+    monkeypatch.setattr(golden.database, "engine", SimpleNamespace(url=make_url(url), dispose=AsyncMock()))
+    run = "d20d30f3-768f-4989-b974-cac3d9b47495"
+    monkeypatch.setattr(golden, "seed", AsyncMock(return_value=uuid.UUID(run)))
+
+    assert golden.main() == 0
+
+    out = capsys.readouterr().out
+    assert out == f"golden run seeded into {shown}, bucket hosted-bucket: /runs/{run}, /agent/runs/{run}/report\n"
+    assert "s3cret" not in out and "orc_user" not in out and "sslmode" not in out
 
 
 def moved(fixture):

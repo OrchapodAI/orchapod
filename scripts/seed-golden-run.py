@@ -32,6 +32,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "apps"), str(ROOT / "packages/sdk-py")]
 
 from sqlalchemy import delete, select  # noqa: E402
+from sqlalchemy.engine import URL  # noqa: E402
 
 from api import database  # noqa: E402
 from api.models.db import AgentRun, Artifact, CancelToken, Model, NodeLog, NodeRun, Run, RunStatus, Workflow  # noqa: E402
@@ -125,6 +126,14 @@ async def _then_dispose(work):
         await database.engine.dispose()
 
 
+def where_seeded() -> str:
+    """Where `seed` writes, for its success line: the database (its driver, host and name, built from those alone: no user, no
+    password, no query) and the bucket. Without .env loaded this is a SQLite file the API never reads, and the line is how a
+    judge sees it."""
+    u = database.engine.url
+    return f"{URL.create(u.drivername, host=u.host, port=u.port, database=u.database)}, bucket {storage._bucket()}"
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--export", metavar="RUN_ID", type=uuid.UUID, help="write this finished run to the fixture instead")
@@ -135,7 +144,7 @@ def main() -> int:
         print(f"run {args.export} → {FIXTURE}: {len(fixture['artifacts'])} artifacts, {len(fixture['objects'])} files")
     else:
         run_id = asyncio.run(_then_dispose(seed(json.loads(FIXTURE.read_text()))))
-        print(f"golden run seeded: /runs/{run_id}, /agent/runs/{run_id}/report")
+        print(f"golden run seeded into {where_seeded()}: /runs/{run_id}, /agent/runs/{run_id}/report")
     return 0
 
 

@@ -194,12 +194,15 @@ def test_lora_is_priced_by_its_base_model(replay):
     assert TokenFactory(http=http).chat(MSGS, "my-lora", base_model=SUPER)["usd"] == pytest.approx(SUPER_USD)
 
 
-def test_missing_key_is_auth_error_before_send(replay, monkeypatch):
+@pytest.mark.parametrize("call", [lambda tf: tf.chat(MSGS), lambda tf: tf.fine_tuning.get("ftjob-1")], ids=["chat", "jobs"])
+def test_missing_key_is_auth_error_before_send(replay, monkeypatch, call):
     monkeypatch.delenv("NEBIUS_API_KEY")
     http, seen = replay()
     with pytest.raises(ProviderError) as e:
-        TokenFactory(http=http).chat(MSGS)
+        call(TokenFactory(http=http))
     assert e.value.kind == "auth" and seen == []
+    # what a node shows as its error; the hint is for someone who runs the app without a key (README: STUB=1)
+    assert str(e.value) == "token_factory auth None: NEBIUS_API_KEY is not set; with no key, set STUB=1 in .env to run on stubs"
 
 
 # --- chat -----------------------------------------------------------------

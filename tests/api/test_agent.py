@@ -211,7 +211,7 @@ async def test_plan_refuses_bad_intents_the_kill_switch_and_a_missing_key(client
     monkeypatch.delenv("ORCHAPOD_KILL_SWITCH")
     monkeypatch.setenv("NEBIUS_API_KEY", " ")
     r = await client.post("/agent/plan", json={"intent": INTENTS[1]})
-    assert r.status_code == 503 and "NEBIUS_API_KEY" in r.json()["detail"]
+    assert (r.status_code, r.json()["detail"]) == (503, "NEBIUS_API_KEY is not set; with no key, set STUB=1 in .env to run on stubs")  # what the plan card shows
 
 
 # --- the planner on Token Factory ---------------------------------------------

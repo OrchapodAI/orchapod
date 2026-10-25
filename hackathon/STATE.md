@@ -4,7 +4,7 @@ Updated: 2026-10-25T09:30Z by orchestrator · Phase: P3 · G1 MET 10-22 · G2 ME
 ## Next actions (in order)
 1. IN FLIGHT:
    - qa-w11 (ae3c65befef5dcb2b): a fresh-clone retest + make demo + links, before G3. No e2e or ui-smoke by others meanwhile.
-   - Security review (a1da27f787c5458bd): read-only, static, before the repo goes public.
+   - Security review DONE: H1 and M1 refuted (live test; datasets 5.1.0); L1/L4 by design; L2/L3/L5 parked until after the hackathon. Nothing blocks G3.
    - Wave 7 is merged and deployed (a7c07f9); the docs are up to date (5d53d28).
 2. DONE 10-25:
    - D8 rehearsal PASS: 0ee1e20a, from the hosted UI, 23.5 min, $1.58, Ultra 7/20/3 (win rate 0.57).

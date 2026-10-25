@@ -855,3 +855,10 @@ worktrees:
   - qa-w11 dispatched (ae3c65befef5dcb2b): a fresh-clone retest + make demo + links, before G3. No e2e or ui-smoke by others meanwhile.
   - RULING (orchestrator): no more D8 rehearsals. The golden path passed live twice (d20d30f3, 0ee1e20a). Another admin run on hosted costs about $1.6 and uses up the public's day share.
 - 2026-10-25T09:36Z SECURITY REVIEW dispatched (general-purpose, opus, read-only, static; id a1da27f787c5458bd) of the public API, web app, providers, infra and CI before the repo goes public (G3) → hackathon/briefs/2026-10-25-security-review.md.
+- 2026-10-25T09:52Z SECURITY REVIEW done (a1da27f787c5458bd; hackathon/briefs/2026-10-25-security-review.md): 0 critical, 1 high, 1 medium, 5 low. Rulings (orchestrator):
+  - H1 (X-Forwarded-For spoofing defeats the per-IP limits) is REFUTED on the hosted app. 7 POST /agent/plan, each with a different spoofed X-Forwarded-For: 402 402 402 402 402 429 429, so the limiter keys on the real client.
+    - Caddy 2.10 ignores a client's X-Forwarded-For without trusted_proxies, and the image is pinned (caddy:2.10.2-alpine). No change; the Caddyfile comment already says so.
+  - M1 (load_dataset remote code) is REFUTED for the deployed image: data-prep has datasets 5.1.0, and dataset scripts were removed in datasets 4.0. No change.
+  - L1 (/internal/* public behind one shared bearer) and L4 (no artifact tenant isolation): by design (R17, D6). Accepted.
+  - L2 (every node gets the full secret set), L3 (/inference/deploy hardcodes vastai; harmless, VASTAI unset and GPU admin-only), L5 (TF client pair check misses ORCHAPOD_ENDPOINT_TOKEN; unreachable): parked until after the hackathon. Changing the executor's env before the freeze is the bigger risk.
+  - Sound: the ModelRef pairing at 4 points, GPU admin-only, the budget guard, redaction, fencing, cancel tokens, YAML limits, CORS, CI, no XSS sink in the web app.

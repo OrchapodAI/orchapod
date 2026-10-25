@@ -16,7 +16,7 @@ import { NodePalette } from "@/components/canvas/NodePalette";
 import { NodePanel } from "@/components/canvas/NodePanel";
 import Link from "next/link";
 import { buildYamlFromGraph } from "@/lib/workflowYaml";
-import { finished, POLL_MS } from "@/lib/runEvents";
+import { finished, POLL_MS, runIdOf } from "@/lib/runEvents";
 import { defaultInputs } from "@/lib/nodeForms";
 
 const nodeTypes: NodeTypes = { orchapodNode: OrchaNode as NodeTypes[string] };
@@ -51,18 +51,27 @@ export default function CanvasPage() {
   const [loadError, setLoadError] = useState("");
   const nodeCounter = useRef(0);
 
-  // ?run=<id> opens the canvas of that run: its summary is read every few seconds until the run is over, and the nodes are drawn by their status in it.
-  const runId = useSearchParams().get("run");
+  // ?run=<id> opens the canvas of that run, read-only: its summary is read every few seconds until the run is over (again after a failure, unless it
+  // is a 4xx, which will not change), and the nodes are drawn by their status in it.
+  const runId = runIdOf(useSearchParams().get("run"));
   const [runSummary, setRunSummary] = useState<RunSummary | null>(null);
+  const [unavailable, setUnavailable] = useState(false); // the last read failed
   useEffect(() => {
     if (!runId) return;
     let current = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const read = () => api.runs.summary(runId).then((s) => {
       if (!current) return;
+      setUnavailable(false);
       setRunSummary(s);
       if (!finished(s.status)) timer = setTimeout(read, POLL_MS);
-    }).catch(toastError("Couldn't load the run"));
+    }).catch((err) => {
+      if (!current) return;
+      setUnavailable(true);
+      toastError("Couldn't load the run")(err); // the toaster shows a repeated failure once
+      const status = (err as { status?: number }).status ?? 0;
+      if (status < 400 || status >= 500) timer = setTimeout(read, POLL_MS);
+    });
     read();
     return () => { current = false; clearTimeout(timer); };
   }, [runId]);
@@ -242,18 +251,18 @@ export default function CanvasPage() {
         <span className="muted mono" style={{ fontSize: 11 }}>v{workflow.version} · {nodes.length} nodes</span>
         {runId && (
           <Link href={`/runs/${runId}`} title="Open the run" style={{ textDecoration: "none" }}
-            className={`pill ${runSummary ? runSummary.status.replace("provisioning_gpu", "provisioning") : "pending"}`}>
-            <span className="dot" />Viewing run {runId.slice(0, 8)} · {runSummary ? runSummary.status.replace(/_/g, " ") : "loading"}
+            className={`pill ${unavailable ? "failed" : runSummary ? runSummary.status.replace("provisioning_gpu", "provisioning") : "pending"}`}>
+            <span className="dot" />Viewing run {runId.slice(0, 8)} · {unavailable ? "unavailable" : runSummary ? runSummary.status.replace(/_/g, " ") : "loading"}
           </Link>
         )}
         <div className="spacer" />
         {/* always mounted, so the note is announced when a 409 fills it */}
         <span id="read-only-note" role="status" style={{ fontSize: 12, color: "var(--amber-ink)" }}>
-          {readOnly && "This workflow has runs, so it is read-only"}
+          {runId ? "Viewing a run: Save a copy to edit." : readOnly && "This workflow has runs, so it is read-only"}
         </span>
-        <button onClick={readOnly ? handleSaveCopy : handleSave} disabled={saving} className="btn btn-sm"
-          aria-describedby={readOnly ? "read-only-note" : undefined}>
-          {saving ? "Saving…" : readOnly ? "Save a copy" : saved ? "Saved ✓" : "Save draft"}
+        <button onClick={readOnly || runId ? handleSaveCopy : handleSave} disabled={saving} className="btn btn-sm"
+          aria-describedby={readOnly || runId ? "read-only-note" : undefined}>
+          {saving ? "Saving…" : readOnly || runId ? "Save a copy" : saved ? "Saved ✓" : "Save draft"}
         </button>
         <button
           onClick={handleRun}
@@ -266,7 +275,7 @@ export default function CanvasPage() {
 
       {/* Canvas area */}
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-        <NodePalette onDragStart={onDragStart} />
+        {!runId && <NodePalette onDragStart={onDragStart} />}
 
         <div style={{ flex: 1, minWidth: 0 }} onDrop={onDrop} onDragOver={onDragOver}>
           <ReactFlow<Node<OrchaNodeData>, Edge>
@@ -282,7 +291,8 @@ export default function CanvasPage() {
             fitView
             fitViewOptions={{ padding: 0.2 }}
             style={{ background: "var(--bg-2)" }}
-            deleteKeyCode="Backspace"
+            nodesConnectable={!runId}
+            deleteKeyCode={runId ? null : "Backspace"}
           >
             <Background color="oklch(0.86 0.010 280)" gap={20} size={1} />
             <Controls />

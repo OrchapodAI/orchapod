@@ -134,9 +134,9 @@ test("templates: at ORCHAPOD_ANON_SCALE=0.1 a template above the per-run cap can
     const usdOver = (t.reduced ?? t).estimate.usd;
     expect(usdOver, `${t.slug}: its card says it is above the $${PUBLIC_RUN_CAP.toFixed(2)} cap`).toBeGreaterThan(PUBLIC_RUN_CAP);
     await expect(run).toBeDisabled();
-    await expect(run).toHaveAccessibleDescription(`about ${usd(usdOver)} — above the public demo's per-run cap; watch the golden run`);
-    await expect(page.locator(`#cap-${t.slug}`).getByRole("link", { name: "watch the golden run" }))
-      .toHaveAttribute("href", `/runs?q=${encodeURIComponent(t.plan.name)}`);
+    // frontend-w9: the page's own API has no succeeded run of this plan (its runs are intent #2's), and a golden-run link to an empty list is gone
+    await expect(run).toHaveAccessibleDescription(`about ${usd(usdOver)} — above the public demo's per-run cap`);
+    await expect(page.locator(`#cap-${t.slug}`).getByRole("link")).toHaveCount(0);
   }
   expect(problems).toEqual([]);
 });

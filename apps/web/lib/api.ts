@@ -57,6 +57,7 @@ export function explainError(err: unknown): string {
   const detail = Array.isArray(raw) ? raw.map((d) => d?.msg ?? JSON.stringify(d)).join("; ")
     : typeof raw === "string" ? raw : JSON.stringify(raw);
   if (status === 404 && detail === "Not Found") return `The API at ${BASE} has no ${path} route yet (404).`;
+  if (status === 402 && path === "/agent/plan") return "The public demo's budget for today is used up; it resets at 00:00 UTC.";
   if (status === 402) return `Over budget: ${detail}`;
   if (status === 403 && path?.endsWith("/cancel")) return "Only the tab that started this run can cancel it (403).";
   // On the agent's routes a 502/503 is the planner or reporter; elsewhere (e.g. /compare) the detail says what failed.
@@ -97,17 +98,39 @@ function keepCancelToken<T extends { cancel_token?: string }>(runId: string, { c
 
 // What a run costs, worded from GET /agent/templates: one-click Run posts a template's reduced plan when the API has one.
 
-/** Why a template's Run is disabled: `fits: false` = its reduced plan is above this caller's per-run cap (undefined = runnable).
- *  `href` lists its golden run, and only if `runs` (GET /runs) has a succeeded one of that workflow: else the link would open an empty list. */
-export function capNote(t: AgentTemplate, runs: Pick<Run, "workflow_name" | "status">[] = []): { text: string; href: string | null } | null {
+type RunLike = Pick<Run, "workflow_name" | "status">;
+
+/** The link to a template's golden run, only if `runs` (GET /runs) has a succeeded one of that workflow: else it would open an empty list.
+ *  /runs filters on RunOut.workflow_name; make demo seeds the golden run under the plan's name. */
+const goldenHref = (t: AgentTemplate, runs: RunLike[]) =>
+  runs.some((r) => r.workflow_name === t.plan.name && r.status === "succeeded") ? `/runs?q=${encodeURIComponent(t.plan.name)}` : null;
+
+/** Why a template's Run is disabled: `fits: false` = its reduced plan is above this caller's per-run cap (undefined = runnable). */
+export function capNote(t: AgentTemplate, runs: RunLike[] = []): { text: string; href: string | null } | null {
   if (t.fits !== false) return null;
-  const golden = runs.some((r) => r.workflow_name === t.plan.name && r.status === "succeeded");
-  return { text: `about ${usd((t.reduced ?? t).estimate?.usd)} — above the public demo's per-run cap`,
-           href: golden ? `/runs?q=${encodeURIComponent(t.plan.name)}` : null }; // /runs filters on RunOut.workflow_name; make demo seeds the golden run under the plan's name
+  return { text: `about ${usd((t.reduced ?? t).estimate?.usd)} — above the public demo's per-run cap`, href: goldenHref(t, runs) };
 }
 
+/** The golden run of the pipeline a plan describes: a template with the same node types in the same order. */
+export const goldenOf = (plan: Plan, templates: AgentTemplate[] | null, runs: RunLike[]): string | null => {
+  const types = (p: Plan) => p.nodes.map((n) => n.type).join();
+  return (templates ?? []).filter((t) => types(t.plan) === types(plan)).map((t) => goldenHref(t, runs)).find(Boolean) ?? null;
+};
+
+/** A golden run to watch when no plan is to be had: the first template above this caller's cap (the ones it cannot run) that has one. */
+export const goldenOver = (templates: AgentTemplate[] | null, runs: RunLike[]): string | null =>
+  (templates ?? []).map((t) => capNote(t, runs)?.href).find(Boolean) ?? null;
+
+/** The amber callout of a plan that only the admin can start (docs/contracts.md "POST /agent/plan": admin_only). */
+export const adminOnlyNote = (n: number) =>
+  `${n === 1 ? "1 of its nodes rents a GPU" : `${n} of its nodes rent GPUs`}, billed by the hour, so only the admin can start this plan here.`;
+
+/** The errors for the rose box: the API puts one plain line about the GPUs in `errors` too, for a client that only lists them; the callout says it. */
+export const planErrors = ({ errors, admin_only }: Pick<AgentPlan, "errors" | "admin_only">) =>
+  admin_only?.length ? errors.filter((e) => !e.includes("billed by the hour")) : errors;
+
 /** The demo-mode banner on /agent: the estimate comes before Run, and public runs are capped. */
-export function demoNote(templates: AgentTemplate[] | null, runs?: Pick<Run, "workflow_name" | "status">[]): string {
+export function demoNote(templates: AgentTemplate[] | null, runs?: RunLike[]): string {
   const costs = (templates ?? []).map((t) => (t.reduced ?? t).estimate?.usd).filter((n): n is number => typeof n === "number");
   const low = usd(Math.min(...costs)), high = usd(Math.max(...costs));
   const range = costs.length ? `: ${low === high ? low : `${low} to ${high}`} for the templates below` : "";

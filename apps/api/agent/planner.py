@@ -184,6 +184,27 @@ def review(plan: Any, budget_left: tuple[float, str, float] | None = None) -> tu
     return errors, warnings, est
 
 
+ADMIN_ONLY = "{} rent GPUs billed by the hour: on the public demo only the admin can start them."
+
+
+def _review(plan: Any, left: tuple[float, str, float], scale: float) -> tuple[list[str], list[str], dict, list[str]]:
+    """(errors, warnings, estimate, admin_only) for a caller at `scale`. admin_only = the ids of the plan's nodes that rent
+    a GPU (budget.gpu_nodes, the rule gpu_guard uses) when the caller is below admin scale, else []. The public cannot start
+    such a plan however it is cut, so its estimate is not held against the budget left: a repair could only mangle it."""
+    try:
+        nodes = Plan.model_validate(plan).nodes if scale < 1 else []
+    except ValidationError:
+        nodes = []  # review() reports the plan's shape
+    rent = budget.gpu_nodes(n.type for n in nodes)
+    gpu = [n.id for n in nodes if n.type in rent]
+    return (*review(plan, None if gpu else left), gpu)
+
+
+def _shown(errors: list[str], admin_only: list[str]) -> list[str]:
+    """The errors the caller sees: the plan's, then, in place of its budget error, one plain line for admin_only."""
+    return errors + [ADMIN_ONLY.format(", ".join(admin_only))] * bool(admin_only)
+
+
 def _where(err: dict) -> str:
     return ".".join(map(str, err["loc"])) + ": " if err["loc"] else ""
 
@@ -337,15 +358,16 @@ def _words(text: str) -> set[str]:
 
 async def make_plan(intent: str, db: AsyncSession, scale: float) -> dict:
     """POST /agent/plan (and /workflows/from-prompt): Nemotron 3 Super drafts, and validation errors go back to it
-    for up to 2 repairs. 503: kill switch or no NEBIUS_API_KEY; 402: no budget left today; 502: Token Factory failed."""
+    for up to 2 repairs, its budget error too unless the plan is admin_only for this caller (_review). 503: kill switch or
+    no NEBIUS_API_KEY; 402: no budget left today; 502: Token Factory failed."""
     if budget.kill_switch():
         raise HTTPException(status_code=503, detail="the kill switch is on (ORCHAPOD_KILL_SWITCH)")
     left = await budget.left(db, None, scale)
     if config.env("STUB") == "1":  # the closest canonical template; no model call
         t = max(templates(), key=lambda t: len(_words(intent) & _words(f"{t['intent']} {t['title']}")))
-        errors, warnings, est = review(t["plan"], left)
+        errors, warnings, est, gpu = _review(t["plan"], left, scale)
         return {"plan": t["plan"], "rationale": f"STUB=1: the canonical plan '{t['slug']}'. {t['rationale']}",
-                "estimate": est, "warnings": warnings, "errors": errors}
+                "estimate": est, "warnings": warnings, "errors": _shown(errors, gpu), "admin_only": gpu}
     if not config.env("NEBIUS_API_KEY").strip():
         raise HTTPException(status_code=503, detail="NEBIUS_API_KEY is not set")
     if left[0] <= 0:
@@ -361,14 +383,14 @@ async def make_plan(intent: str, db: AsyncSession, scale: float) -> dict:
             raise HTTPException(status_code=502, detail=TF_FAILED)
         answer = out["parsed"] if isinstance(out["parsed"], dict) else {}
         plan = answer.get("plan") if isinstance(answer.get("plan"), dict) else {"name": "", "nodes": []}
-        errors, warnings, est = review(plan, left)
+        errors, warnings, est, gpu = _review(plan, left, scale)
         if not errors or attempt == 2:
             break
         messages += [{"role": "assistant", "content": out["text"]},
                      {"role": "user", "content": "Fix these errors and answer with the whole corrected JSON:\n"
                                                  + "\n".join(f"- {e}" for e in errors)}]
     return {"plan": plan, "rationale": str(answer.get("rationale") or ""), "estimate": est,
-            "warnings": warnings, "errors": errors}
+            "warnings": warnings, "errors": _shown(errors, gpu), "admin_only": gpu}
 
 
 # ---------------------------------------------------------------------------

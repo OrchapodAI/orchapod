@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { api, capNote, demoNote, explainError, usd } from "@/lib/api";
+import { adminOnlyNote, api, capNote, demoNote, explainError, goldenOf, goldenOver, planErrors, usd } from "@/lib/api";
 import type { AgentPlan, AgentReport, AgentTemplate, Run } from "@/lib/types";
 import { reportNext, seenFinishedAt } from "@/lib/runEvents";
 import { planYaml } from "@/lib/workflowYaml";
@@ -27,6 +27,8 @@ function modelsOf(inputs: Record<string, unknown> = {}): string[] {
   });
 }
 
+const watch = (href: string, text: string) => <Link href={href} style={{ color: "var(--brand)", textDecoration: "underline" }}>{text}</Link>;
+
 const list = (items: string[]) => (
   <ul style={{ margin: 0, paddingLeft: 18 }}>{items.map((t, i) => <li key={i}>{t}</li>)}</ul>
 );
@@ -36,7 +38,7 @@ export default function AgentPage() {
   const [intent, setIntent] = useState("");
   const [asked, setAsked] = useState("");
   const [reply, setReply] = useState<AgentPlan | null>(null);
-  const [error, setError] = useState<{ title: string; message: string } | null>(null);
+  const [error, setError] = useState<{ title: string; message: string; budget?: boolean } | null>(null);
   const [busy, setBusy] = useState<"" | "plan" | "edit" | "run">("");
   const [runId, setRunId] = useState<string | null>(null);
   const [templates, setTemplates] = useState<AgentTemplate[] | null>(null);
@@ -69,7 +71,7 @@ export default function AgentPage() {
     try {
       setReply(await api.agent.plan(text));
     } catch (err) {
-      setError({ title: "The agent couldn't plan this", message: explainError(err) });
+      setError({ title: "The agent couldn't plan this", message: explainError(err), budget: (err as { status?: number }).status === 402 });
     } finally {
       setBusy("");
     }
@@ -109,6 +111,11 @@ export default function AgentPage() {
     setAsked(t.intent); setReply(reply); setRunId(null);
     handleRun(t.intent, reply);
   }
+
+  const adminOnly = reply?.admin_only ?? []; // GPU nodes that only the admin can start here
+  const errs = reply ? planErrors(reply) : [];
+  const golden = reply ? goldenOf(reply.plan, templates, runs) : null;
+  const watchable = error?.budget ? goldenOver(templates, runs) : null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -178,7 +185,7 @@ export default function AgentPage() {
                   </div>
                   {cap && (
                     <p id={`cap-${t.slug}`} style={{ fontSize: 12, fontWeight: 400, color: "var(--amber-ink)" }}>
-                      {cap.text}{cap.href && <>; <Link href={cap.href} style={{ color: "var(--brand)", textDecoration: "underline" }}>watch the golden run</Link></>}
+                      {cap.text}{cap.href && <>; {watch(cap.href, "watch the golden run")}</>}
                     </p>
                   )}
                 </div>
@@ -197,7 +204,7 @@ export default function AgentPage() {
           {/* Always rendered, so screen readers announce planning and the plan that arrives. */}
           <p role="status" className={busy === "plan" ? "muted" : "sr-only"} style={{ fontSize: 13 }}>
             {busy === "plan" ? "Nemotron is planning…"
-              : reply ? `Plan ready: ${reply.plan.name}, ${reply.plan.nodes.length} nodes, ${reply.errors.length} errors.` : ""}
+              : reply ? `Plan ready: ${reply.plan.name}, ${reply.plan.nodes.length} nodes, ${errs.length} errors${adminOnly.length ? ", admin-only on the public demo" : ""}.` : ""}
           </p>
 
           {reply && (
@@ -233,9 +240,14 @@ export default function AgentPage() {
                 </tbody>
               </table>
               {reply.warnings.length > 0 && <Callout tone="amber" title="Warnings">{list(reply.warnings)}</Callout>}
-              {reply.errors.length > 0 && <Callout tone="rose" title="Errors">{list(reply.errors)}</Callout>}
+              {adminOnly.length > 0 && (
+                <Callout tone="amber" title="Admin-only on the public demo">
+                  {adminOnlyNote(adminOnly.length)}{golden && <> {watch(golden, "watch the golden run of this pipeline")}</>}
+                </Callout>
+              )}
+              {errs.length > 0 && <Callout tone="rose" title="Errors">{list(errs)}</Callout>}
               <div className="row">
-                {reply.errors.length > 0 && (
+                {errs.length > 0 && (
                   <span style={{ fontSize: 12, color: "var(--rose-ink)" }}>Run stays disabled until the plan has no errors.</span>
                 )}
                 <div className="spacer" />
@@ -243,14 +255,14 @@ export default function AgentPage() {
                   {busy === "edit" ? "Opening…" : "Edit on canvas"}
                 </button>
                 <button className="btn btn-primary" onClick={() => handleRun(asked, reply)}
-                  disabled={reply.errors.length > 0 || busy !== "" || runId !== null}>
+                  disabled={reply.errors.length > 0 || adminOnly.length > 0 || busy !== "" || runId !== null}>
                   {busy === "run" ? "Starting…" : "▶ Run"}
                 </button>
               </div>
             </div>
           )}
 
-          {error && <div ref={errorRef} role="alert"><Callout tone="rose" title={error.title}>{error.message}</Callout></div>}
+          {error && <div ref={errorRef} role="alert"><Callout tone="rose" title={error.title}>{error.message}{watchable && <> {watch(watchable, "watch the golden run")}</>}</Callout></div>}
 
           {runId && (
             <>

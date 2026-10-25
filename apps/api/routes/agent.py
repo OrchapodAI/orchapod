@@ -52,7 +52,7 @@ class RunRequest(BaseModel):
 
 @router.post("/plan", dependencies=[Depends(ratelimit.limit("plan"))])
 async def plan(body: PlanRequest, db: Session, scale: Scale):
-    """→ {plan, rationale, estimate, warnings, errors}; the UI disables Run while errors is non-empty."""
+    """→ {plan, rationale, estimate, warnings, errors, admin_only}; the UI disables Run while errors is non-empty."""
     return await planner.make_plan(body.intent, db, scale)
 
 

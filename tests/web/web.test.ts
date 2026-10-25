@@ -7,7 +7,7 @@ import { yamlValue, buildYamlFromGraph, planYaml, STARTER_YAML } from "../../app
 import { api, apiDate, cancelToken, capNote, demoNote, explainError, mergeLogs, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
 import { applyCompareEvent, applyRunEvent, canRetry, finished, nodeStyle, providerName, REPORT_WAIT_MS, reportNext, runIdOf, runShown, seenFinishedAt, splitReport, whereRuns } from "../../apps/web/lib/runEvents.ts";
 import { defaultInputs, NODE_FORMS } from "../../apps/web/lib/nodeForms.ts";
-import { datasetOf, evalOf, lossPoints, lossSources, modelRefsOf, refName } from "../../apps/web/lib/results.ts";
+import { datasetOf, evalOf, lossPoints, lossSources, modelRefsOf, refName, resultTab } from "../../apps/web/lib/results.ts";
 
 const node = (id: string, node_type: string, inputs: Record<string, unknown>) =>
   ({ id, position: { x: 0, y: 0 }, data: { label: id, node_type, inputs, resources: {} } }) as never;
@@ -424,6 +424,17 @@ test("the dataset card is the last data-prep node's dataset and metrics, never s
     [art("synth", "dataset"), art("prep", "dataset"), art("prep", "metrics_json", { total: 3, train: 3, fields })]);
   assert.deepEqual(datasetOf(run), { downloadUrl: "/artifacts/prep-dataset/download", metrics: { total: 3, train: 3, fields } });
   assert.equal(datasetOf(summary([nodeRun("synth", "synth-distilabel")], [art("synth", "dataset")])), null);
+});
+
+test("a succeeded run opens on its eval, else its dataset, and a snapshot never takes back a tab the user picked", () => {
+  const prep = [nodeRun("prep", "data-prep")];
+  const judged = summary([...prep, nodeRun("judge", "judge-eval")],
+    [art("prep", "dataset"), art("judge", "eval_summary"), art("judge", "metrics_json", { win_rate: 0.5 })]);
+  assert.equal(resultTab(judged, false), "eval");
+  assert.equal(resultTab(summary(prep, [art("prep", "dataset")]), false), "dataset");
+  assert.equal(resultTab(summary(prep, []), false), null); // nothing to show yet
+  assert.equal(resultTab({ ...judged, status: "running" }, false), null); // the eval tab exists a moment before the run ends: not opened
+  assert.equal(resultTab(judged, true), null); // the user is on the compare tab when the last snapshot lands: it stays
 });
 
 test("the playground offers the run's ModelRefs: base and tuned first, deduped, endpoint expiry kept, never judge-eval's own llama-server", () => {

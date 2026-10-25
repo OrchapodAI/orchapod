@@ -18,6 +18,11 @@ export function datasetOf(s: RunSummary): { downloadUrl: string | null; metrics:
   return file ? { downloadUrl: file.download_url, metrics: (artifact(s, file.node_id, "metrics_json")?.meta ?? {}) as Partial<DataPrepMetrics> } : null;
 }
 
+/** The tab a succeeded run opens on: its eval, else its dataset. Once the user has picked a tab (`picked`) no snapshot takes it back. */
+export function resultTab(s: RunSummary, picked: boolean): "eval" | "dataset" | null {
+  return picked || s.status !== "succeeded" ? null : evalOf(s) ? "eval" : datasetOf(s) ? "dataset" : null;
+}
+
 export interface RunModelRef extends ModelRef {
   label: string;
   expires_at?: string; // vllm-serve endpoints are deleted at expiry

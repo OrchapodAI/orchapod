@@ -14,7 +14,7 @@ import { ArtifactList } from "@/components/runs/ArtifactList";
 import { EvalView } from "@/components/runs/EvalView";
 import { DatasetCard } from "@/components/runs/DatasetCard";
 import { ComparePlayground } from "@/components/runs/ComparePlayground";
-import { datasetOf, evalOf, modelRefsOf } from "@/lib/results";
+import { datasetOf, evalOf, modelRefsOf, resultTab } from "@/lib/results";
 
 type Tab = "logs" | "chart" | "artifacts" | "eval" | "dataset" | "compare";
 
@@ -35,7 +35,7 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
   // Snapshot = GET /runs/{id} + GET /runs/{id}/summary. Events have no replay, so the page snapshots on mount,
   // whenever the socket opens or closes (a retry's reconnect, the end of the run) and when an artifact lands.
   const loads = useRef(0);
-  const shownResult = useRef(false);
+  const picked = useRef(false); // a tab was chosen, by the user or as the finished run's result: from then on the tab is the user's
   const load = useCallback(() => {
     const n = ++loads.current;
     Promise.all([api.runs.get(id), api.runs.summary(id)])
@@ -43,12 +43,8 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
         if (n !== loads.current) return; // a newer snapshot is on its way
         setView({ run, summary });
         setLoadError("");
-        // Once a run has succeeded, open its result (the eval, else the dataset); after that the tab is the user's.
-        const result = evalOf(summary) ? "eval" : datasetOf(summary) ? "dataset" : null;
-        if (summary.status === "succeeded" && result && !shownResult.current) {
-          shownResult.current = true;
-          setTab(result);
-        }
+        const result = resultTab(summary, picked.current);
+        if (result) { picked.current = true; setTab(result); }
       })
       .catch((err) => { if (n === loads.current) setLoadError(explainError(err)); });
   }, [id]);
@@ -206,7 +202,7 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
             {tabs.map((t) => (
               <button
                 key={t}
-                onClick={() => setTab(t)}
+                onClick={() => { picked.current = true; setTab(t); }}
                 style={{
                   padding: "10px 8px", border: "none", background: "transparent",
                   borderBottom: tab === t ? "2px solid var(--brand)" : "2px solid transparent",

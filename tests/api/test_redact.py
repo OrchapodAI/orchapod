@@ -6,29 +6,46 @@ from __future__ import annotations
 from sqlalchemy import select
 
 from api.models.db import AgentRun, Artifact, ArtifactKind
-from api.services.redact import REDACTED, redact
+from api.services.redact import REDACTED, redact, redact_text
+
+
+SECRETS = {"api_key", "API_KEY", "apiKey", "apikey", "x-api-key", "openai_api_key", "token", "accessToken",
+           "endpoint_token", "Authorization", "client_secret", "secret_key", "password",
+           "hf_token_env",  # an _env key whose value is not an env var's name is the secret itself
+           "HFToken", "APIToken", "APIKey", "OAuthToken",  # acronyms in camelCase
+           "access_key", "accessKey", "aws_access_key_id", "AWSAccessKeyId"}
+ALIKE = {"api_key_env": "ORCHAPOD_ENDPOINT_TOKEN", "max_tokens": 512, "trained_tokens": 9, "in_tokens": 1,
+         "tokenizer": "bpe", "keep_alive_min": 30, "token_count": 3,  # a ModelRef's env var name, counts, settings
+         "usd_by_provider": {"token_factory": 0.12},  # ... and Token Factory's provider name stay
+         "maxTokens": 9, "GPUHours": 0.5, "HFModel": "m", "TokenFactory": "tf"}  # acronyms that are no secret
 
 
 def test_secret_looking_keys_are_redacted_at_any_depth():
-    secrets = {"api_key", "API_KEY", "apiKey", "apikey", "x-api-key", "openai_api_key", "token", "accessToken",
-               "endpoint_token", "Authorization", "client_secret", "secret_key", "password",
-               "hf_token_env",  # an _env key whose value is not an env var's name is the secret itself
-               "HFToken", "APIToken", "APIKey", "OAuthToken",  # acronyms in camelCase
-               "access_key", "accessKey", "aws_access_key_id", "AWSAccessKeyId"}
-    alike = {"api_key_env": "ORCHAPOD_ENDPOINT_TOKEN", "max_tokens": 512, "trained_tokens": 9, "in_tokens": 1,
-             "tokenizer": "bpe", "keep_alive_min": 30, "token_count": 3,  # a ModelRef's env var name, counts, settings
-             "usd_by_provider": {"token_factory": 0.12},  # ... and Token Factory's provider name stay
-             "maxTokens": 9, "GPUHours": 0.5, "HFModel": "m", "TokenFactory": "tf"}  # acronyms that are no secret
-    meta = {**{k: "sk-live" for k in secrets}, **alike,
+    meta = {**{k: "sk-live" for k in SECRETS}, **ALIKE,
             "nested": {"rows": [{"secret": {"x": 1}, "ok": 1}], "url": "https://e.example/v1"}}
 
     out = redact(meta)
 
-    assert {k for k, v in out.items() if v == REDACTED} == secrets
-    assert {k: out[k] for k in alike} == alike
+    assert {k for k, v in out.items() if v == REDACTED} == SECRETS
+    assert {k: out[k] for k in ALIKE} == ALIKE
     assert out["nested"] == {"rows": [{"secret": REDACTED, "ok": 1}], "url": "https://e.example/v1"}
     assert meta["api_key"] == "sk-live" and redact("text") == "text"  # the input stays as it was
     assert redact({"api_key_env": "sk-live-1"}) == {"api_key_env": REDACTED}
+
+
+def test_redact_text_applies_the_same_key_rule_to_pairs_in_free_text():
+    """A log line is free text: its key=value, key: value and "key": "value" pairs go by redact()'s rule, key by key."""
+    plain = {k: v for k, v in ALIKE.items() if not isinstance(v, dict)}
+    shapes = (lambda k, v: f"go {k}={v} on", lambda k, v: f"go {k}: {v} on", lambda k, v: f'go {{"{k}": "{v}"}} on')
+    for shape in shapes:
+        for k in SECRETS:
+            assert redact_text(shape(k, "sk-live")) == shape(k, REDACTED), k
+        for k, v in plain.items():
+            assert redact_text(shape(k, v)) == shape(k, v), k
+    assert redact_text("Authorization: Bearer abc.def-1 ok") == f"Authorization: {REDACTED} ok"
+    assert redact_text("GET /v1?model=m&token=abc&x=1") == f"GET /v1?model=m&token={REDACTED}&x=1"
+    assert redact_text(redact_text("api_key=a")) == f"api_key={REDACTED}"  # again changes nothing
+    assert redact_text("no secrets: just words, 1:2 and a=b") == "no secrets: just words, 1:2 and a=b"
 
 
 async def test_no_route_returns_an_artifact_secret(client, db, seeded_node_run):

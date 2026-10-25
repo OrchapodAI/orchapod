@@ -28,6 +28,17 @@ def redact(value):
     return value
 
 
+# `key=value`, `key: value` or `"key": "value"` in free text. A key starts only at a word's start (linear time); the value may
+# follow an auth scheme (Authorization: Bearer abc) and ends at a space, quote, comma, semicolon, & or }.
+_PAIR = re.compile(r"""(?<![\w.-])([\w.-]+)(["']?\s*[:=]\s*["']?)((?:(?i:bearer|basic)\s+)?[^\s"',;&}]+)""")
+
+
+def redact_text(text: str) -> str:
+    """`text` (a log line is free text, which redact() cannot walk) with the value of every secret-looking pair replaced, by
+    redact()'s key rule: NEBIUS_API_KEY=sk-1 and "api_key": "sk-1" lose the value, max_tokens=512 does not."""
+    return _PAIR.sub(lambda m: f"{m[1]}{m[2]}{REDACTED}" if _secret(m[1], m[3]) else m[0], text)
+
+
 def without_secrets(spec):
     """A workflow spec (parsed YAML or a plan) without the node inputs whose key looks like a secret, by the same rule:
     stored, a token would reach the database, the canvas graph, every run's inputs and the UI. Dropped, not redacted, so

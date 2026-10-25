@@ -10,6 +10,7 @@ Routes:
   POST   /runs/{id}/nodes/{node_id}/retry — re-run a failed node, then continue downstream
   GET    /runs/{id}                     — get run + status
   GET    /runs/{id}/summary             — status, cost, per-node usd and errors, artifacts
+  GET    /runs/{id}/logs                — the log lines nodes posted, oldest first (kept after the run ends)
   GET    /runs/{id}/nodes               — list node runs for a run
   GET    /runs/{id}/nodes/{node_id}     — get a single node run
   GET    /runs/{id}/artifacts           — list all artifacts for a run
@@ -36,8 +37,8 @@ from sqlmodel import select
 from api.database import get_session
 from api.executor import run_workflow as executor
 from api.executor.dag import compile_dag
-from api.models.db import (AgentRun, Artifact, ArtifactKind, CancelToken, NodeRun, NodeStatus, Run, RunStatus, Workflow,
-                           utcnow)
+from api.models.db import (AgentRun, Artifact, ArtifactKind, CancelToken, NodeLog, NodeRun, NodeStatus, Run, RunStatus,
+                           Workflow, utcnow)
 from api.services import budget, ratelimit
 from api.services.events import event_bus
 from api.services.redact import redact
@@ -278,6 +279,19 @@ async def run_summary(run_id: uuid.UUID, db: Session):
                        "download_url": f"/artifacts/{a.id}/download" if a.uri.startswith("r2://") else None,
                        "meta": redact(a.meta or {})} for a in artifacts],
     }
+
+
+@router.get("/{run_id}/logs")
+async def run_logs(run_id: uuid.UUID, db: Session, node_id: str | None = None, limit: int = Query(500, ge=1, le=2000)):
+    """The last `limit` lines nodes posted to /internal/log (those of one node with node_id), oldest first. A finished run
+    keeps the last 5,000 of its lines."""
+    if not await db.get(Run, run_id):
+        raise HTTPException(status_code=404, detail="Run not found")
+    stmt = select(NodeLog).where(NodeLog.run_id == run_id).order_by(NodeLog.id.desc()).limit(limit)
+    if node_id:
+        stmt = stmt.where(NodeLog.node_id == node_id)
+    return [{"ts": row.ts, "level": row.level, "node_id": row.node_id, "message": row.message}
+            for row in reversed((await db.scalars(stmt)).all())]
 
 
 @router.get("/{run_id}/nodes", response_model=list[NodeRunOut])

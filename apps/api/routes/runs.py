@@ -26,7 +26,7 @@ import logging
 import secrets
 import uuid
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from time import monotonic
 from typing import Annotated
 
@@ -42,9 +42,11 @@ from api.executor import run_workflow as executor
 from api.executor.dag import compile_dag
 from api.models.db import (AgentRun, Artifact, ArtifactKind, CancelToken, NodeLog, NodeRun, NodeStatus, Run, RunStatus,
                            Workflow, utcnow)
+from api.routes.internal import _expiry
 from api.services import budget, ratelimit
 from api.services.events import event_bus
 from api.services.redact import redact
+from orchapod.names import endpoint_name
 from packages.providers.nebius import NebiusServerless
 
 log = logging.getLogger("api.runs")
@@ -275,12 +277,11 @@ async def run_summary(run_id: uuid.UUID, db: Session):
         if a.name == "cost_json":
             usd[node_ids[a.node_run_id]] += float((a.meta or {}).get("usd", 0))
     failed = next((n for n in nodes if n.status == NodeStatus.FAILED), None)
-    endpoints = {a.node_run_id: a.meta["endpoint_id"] for a in artifacts  # the newest registration wins (created_at order)
-                 if a.kind == ArtifactKind.ENDPOINT and (a.meta or {}).get("endpoint_id")}
-    resources = {n.node_id: _resource(n, endpoints) for n in nodes}
-    running = [r for n in nodes if n.status == NodeStatus.RUNNING and (r := resources[n.node_id])]
-    for r, state in zip(running, await asyncio.gather(*(_live_state(r["kind"], r["id"]) for r in running))):
-        r["state"] = state
+    registered = {a.node_run_id: a.meta for a in artifacts  # the newest registration wins (created_at order)
+                  if a.kind == ArtifactKind.ENDPOINT and (a.meta or {}).get("endpoint_id")}
+    now = datetime.now(timezone.utc)
+    resources = dict(zip((n.node_id for n in nodes),
+                         await asyncio.gather(*(_resource(n, registered.get(n.id), now) for n in nodes))))
     return {
         "run_id": run.id,
         "status": run.status,
@@ -390,21 +391,34 @@ async def _out(db: AsyncSession, run: Run) -> RunOut:
     return _run_out(run, await _workflow_name(db, run), (await _gpu_providers(db, [run.id])).get(run.id))
 
 
-def _resource(n: NodeRun, endpoint_ids: dict[uuid.UUID, str]) -> dict | None:
-    """Where the node's work runs at Nebius: its Job (a gpu node on nebius), or the Endpoint it registered through
-    /internal/ttl. `state` is filled in later, for a node that is running."""
+async def _resource(n: NodeRun, endpoint: dict | None, now: datetime) -> dict | None:
+    """Where the node's work runs at Nebius (contracts "Run control API"): {"kind": "job"|"endpoint", "id", "state"} or None.
+    A gpu node on nebius has its Job. vllm-serve has its endpoint: the one it registered through /internal/ttl (`endpoint` is
+    that artifact's meta), or, while it runs and has not registered yet, the one Nebius lists under the name the node gave it.
+    The state is read for a node that is running, and for a registered endpoint until its expires_at or deleted_at."""
+    running = n.status == NodeStatus.RUNNING
     if n.gpu_provider == "nebius" and n.gpu_pod_id:
-        return {"kind": "job", "id": n.gpu_pod_id, "state": None}
-    if n.id in endpoint_ids:
-        return {"kind": "endpoint", "id": endpoint_ids[n.id], "state": None}
-    return None
+        kind, id_, read = "job", n.gpu_pod_id, running
+    elif endpoint:
+        kind, id_ = "endpoint", endpoint["endpoint_id"]
+        until = _expiry(endpoint)
+        read = running or (until is not None and until > now and not endpoint.get("deleted_at"))
+    elif running and n.node_type == "vllm-serve":
+        name = endpoint_name(str(n.run_id), n.node_id)
+        found = await _read(name, lambda nebius: next(((e["id"], e["state"]) for e in nebius.endpoints.list()
+                                                       if e["name"] == name), None))
+        return {"kind": "endpoint", "id": found[0], "state": found[1]} if found else None
+    else:
+        return None
+    state = await _read(id_, lambda nebius: getattr(nebius, kind + "s").get(id_)["state"]) if read else None
+    return {"kind": kind, "id": id_, "state": state}
 
 
-# The live state of a Nebius Job or Endpoint: read at most once per id in STATE_TTL_S, for at most STATE_WAIT_S.
+# What Nebius reports about a Job or Endpoint is read at most once per key in STATE_TTL_S, and waited for at most STATE_WAIT_S.
 STATE_TTL_S, STATE_WAIT_S = 30, 3
-# id → (when read, state or None). ponytail: in-process, which the one API worker allows; an entry per id read, never evicted
+# key → (when read, value or None). ponytail: in-process, which the one API worker allows; an entry per key read, never evicted
 # (a few per gpu node).
-_states: dict[str, tuple[float, str | None]] = {}
+_states: dict[str, tuple[float, object]] = {}
 _nebius: NebiusServerless | None = None
 
 
@@ -415,24 +429,23 @@ def _serverless() -> NebiusServerless:
     return _nebius
 
 
-async def _live_state(kind: str, id: str) -> str | None:
-    """What jobs.get or endpoints.get (contracts "NebiusServerless") reports as the state of a Job or Endpoint, cached per id
-    for STATE_TTL_S. None on any error, after STATE_WAIT_S, and always under STUB (or for a stub-* id): nothing exists at
-    Nebius. A failed read is cached too, so a Nebius that hangs costs one worker thread per id per STATE_TTL_S, not one per
-    poll of the summary."""
-    if config.env("STUB") == "1" or id.startswith("stub-"):
+async def _read(key: str, fetch):
+    """fetch(NebiusServerless) in a worker thread (jobs.get, endpoints.get, endpoints.list: contracts "NebiusServerless"),
+    cached per key for STATE_TTL_S. None on any error, after STATE_WAIT_S, and always under STUB (or for a stub-* id):
+    nothing exists at Nebius. A failed read is cached too, so a Nebius that hangs costs one worker thread per key per
+    STATE_TTL_S, not one per poll of the summary."""
+    if config.env("STUB") == "1" or key.startswith("stub-"):
         return None
     now = monotonic()
-    if (hit := _states.get(id)) and now - hit[0] < STATE_TTL_S:
+    if (hit := _states.get(key)) and now - hit[0] < STATE_TTL_S:
         return hit[1]
     try:
-        reply = await asyncio.wait_for(asyncio.to_thread(lambda: getattr(_serverless(), kind + "s").get(id)), STATE_WAIT_S)
-        state = reply["state"]
-    except Exception as e:  # a ProviderError, a missing key in the reply, or STATE_WAIT_S
-        log.warning("state of %s %s not read: %r", kind, id, e)
-        state = None
-    _states[id] = (now, state)
-    return state
+        value = await asyncio.wait_for(asyncio.to_thread(lambda: fetch(_serverless())), STATE_WAIT_S)
+    except Exception as e:  # a ProviderError, a reply without a state, or STATE_WAIT_S
+        log.warning("%s not read from Nebius: %r", key, e)
+        value = None
+    _states[key] = (now, value)
+    return value
 
 
 def _run_out(r: Run, workflow_name: str | None, gpu_provider: str | None) -> RunOut:

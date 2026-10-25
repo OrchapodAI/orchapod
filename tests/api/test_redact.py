@@ -3,10 +3,12 @@ so the API redacts secret-looking keys where meta comes in and wherever it goes 
 
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import select
 
 from api.models.db import AgentRun, Artifact, ArtifactKind
 from api.services.redact import REDACTED, redact, redact_text
+from tests.api.test_executor import nebius  # noqa: F401 (fixture)
 
 
 SECRETS = {"api_key", "API_KEY", "apiKey", "apikey", "x-api-key", "openai_api_key", "token", "accessToken",
@@ -48,6 +50,7 @@ def test_redact_text_applies_the_same_key_rule_to_pairs_in_free_text():
     assert redact_text("no secrets: just words, 1:2 and a=b") == "no secrets: just words, 1:2 and a=b"
 
 
+@pytest.mark.usefixtures("nebius")  # the summary looks a running vllm-serve up at Nebius: faked
 async def test_no_route_returns_an_artifact_secret(client, db, seeded_node_run):
     run, node_run = seeded_node_run
     r = await client.post("/internal/artifact", json={"run_id": str(run.id), "node_id": "node", "artifact": {  # old vllm-serve

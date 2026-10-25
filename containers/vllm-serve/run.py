@@ -17,13 +17,13 @@ the endpoint is http://stub.invalid, still registered, so /compare accepts it.
 import contextlib
 import json
 import os
-import re
 import signal
 import sys
 import time
 from datetime import datetime, timedelta, timezone
 
 from orchapod import cost, io, log
+from orchapod.names import endpoint_name
 from orchapod.prices import PRICES
 from packages.providers.base import ProviderError
 from packages.providers.tokenfactory import TokenFactory
@@ -151,7 +151,7 @@ def main():
     run_id, node_id = os.environ.get("ORCHAPOD_RUN_ID", "local"), os.environ.get("ORCHAPOD_NODE_ID", "serve")
     # ponytail: node ids that differ only in case or punctuation, or share their first 45 characters, get one name, so
     # two such vllm-serve nodes in one run would delete each other's endpoint; hash the id in if canvas ids ever do that
-    name = re.sub(r"[^a-z0-9-]+", "-", f"orchapod-{run_id[:8]}-{node_id}".lower())[:63].strip("-")
+    name = endpoint_name(run_id, node_id)  # the API finds the endpoint by it while this node runs
 
     eps, eid, sent, registered, created = None, None, False, False, time.monotonic()
     try:

@@ -7,7 +7,7 @@ import json
 import os
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -1047,10 +1047,11 @@ async def test_summary_rolls_up_nodes_cost_and_artifacts(client, db):
 
 class Serverless:
     """NebiusServerless as the summary reads it (contracts "NebiusServerless"): jobs.get(id) and endpoints.get(id) answer
-    {"state": states[id]}, and an id with no state raises; `gate` (a threading.Event) holds every call until it is set."""
+    {"state": states[id]}, and an id with no state raises; endpoints.list() answers `listing` (and records "list");
+    `gate` (a threading.Event) holds every call until it is set."""
 
     def __init__(self):
-        self.calls, self.states, self.gate = [], {}, None
+        self.calls, self.states, self.listing, self.gate = [], {}, [], None
         self.jobs = self.endpoints = self
 
     def get(self, id):
@@ -1058,6 +1059,12 @@ class Serverless:
         if self.gate:
             self.gate.wait(10)
         return {"id": id, "state": self.states[id]}
+
+    def list(self):
+        self.calls.append("list")
+        if self.gate:
+            self.gate.wait(10)
+        return self.listing
 
 
 @pytest.fixture
@@ -1106,7 +1113,7 @@ async def test_summary_says_where_each_node_runs(client, db, nebius):
     assert {n["node_id"]: (n["provider"], n["resource"]) for n in s["nodes"]} == {
         "prep": ("local-docker", None),
         "train": ("nebius", {"kind": "job", "id": "aijob-1", "state": "IMAGE_PULLING"}),
-        "serve": ("local-docker", {"kind": "endpoint", "id": "aiendpoint-1", "state": None}),  # its node is done: not asked
+        "serve": ("local-docker", {"kind": "endpoint", "id": "aiendpoint-1", "state": None}),  # done, and no expiry: not asked
         "evaluate": (None, None)}
     assert nebius.calls == ["aijob-1"]
 
@@ -1156,6 +1163,96 @@ async def test_no_live_state_is_read_under_stub(client, db, nebius, monkeypatch)
     state = await train_state(client, db)
     monkeypatch.setenv("STUB", "1")
     assert await state() is None and nebius.calls == []
+
+
+async def test_a_serving_node_that_has_not_registered_is_found_by_the_name_vllm_serve_gives_its_endpoint(client, db, nebius):
+    """While vllm-serve waits for its endpoint (about nine minutes) it has registered nothing: its endpoint is the one Nebius
+    lists under the node's name, from the one function the node names it with (an id with a capital and an underscore, so a
+    name derived any other way would not match)."""
+    from orchapod.names import endpoint_name
+    from tests.containers.conftest import load_container
+    assert load_container("vllm-serve").endpoint_name is endpoint_name  # one function: the node and the API never differ
+    run = await seed(db, status=RunStatus.RUNNING)
+    node = NodeRun(run_id=run.id, node_id="Serve_8B", node_type="vllm-serve", status=NodeStatus.RUNNING,
+                   gpu_provider="local-docker", gpu_pod_id="c1")
+    db.add(node)
+    await db.commit()
+    name = endpoint_name(str(run.id), "Serve_8B")
+    assert name == f"orchapod-{str(run.id)[:8]}-serve-8b"  # lowercased, "_" → "-": a name derived by hand would differ
+
+    async def resource():
+        return (await client.get(f"/runs/{run.id}/summary")).json()["nodes"][0]["resource"]
+
+    nebius.listing = [{"id": "aiendpoint-x", "name": "orchapod-12345678-serve", "state": "RUNNING"}]  # another run's
+    assert await resource() is None  # not created yet (the null is cached, like any read)
+    nebius.listing.append({"id": "aiendpoint-9", "name": name, "state": "PROVISIONING"})
+    assert await resource() is None
+    nebius.clock[0] += 31
+    assert await resource() == {"kind": "endpoint", "id": "aiendpoint-9", "state": "PROVISIONING"}
+    nebius.listing[-1]["state"] = "IMAGE_PULLING"
+    assert (await resource())["state"] == "PROVISIONING"  # read 0 s ago
+    nebius.clock[0] += 31
+    assert await resource() == {"kind": "endpoint", "id": "aiendpoint-9", "state": "IMAGE_PULLING"}
+    assert nebius.calls == ["list"] * 3
+
+    nebius.states["aiendpoint-9"] = "RUNNING"  # it registered: by id from now on, while the node still runs
+    db.add(Artifact(node_run_id=node.id, name="endpoint_url", kind=ArtifactKind.ENDPOINT, uri="https://ep.example",
+                    meta={"endpoint_id": "aiendpoint-9"}))
+    await db.commit()
+    nebius.clock[0] += 31
+    assert await resource() == {"kind": "endpoint", "id": "aiendpoint-9", "state": "RUNNING"}
+    assert nebius.calls[3:] == ["aiendpoint-9"]
+
+
+async def test_a_lookup_by_name_waits_at_most_STATE_WAIT_S_and_never_runs_under_stub(client, db, nebius, monkeypatch):
+    from api.routes import runs
+    run = await seed(db, status=RunStatus.RUNNING)
+    db.add(NodeRun(run_id=run.id, node_id="serve", node_type="vllm-serve", status=NodeStatus.RUNNING))
+    await db.commit()
+
+    async def resource():
+        return (await asyncio.wait_for(client.get(f"/runs/{run.id}/summary"), 5)).json()["nodes"][0]["resource"]
+
+    monkeypatch.setenv("STUB", "1")
+    assert await resource() is None and nebius.calls == []  # a STUB endpoint registers as stub-*; nothing exists at Nebius
+    monkeypatch.delenv("STUB")
+    monkeypatch.setattr(runs, "STATE_WAIT_S", 0.05)
+    nebius.gate = threading.Event()
+    try:
+        assert await resource() is None  # the listing hangs at the gate: the summary answers all the same
+    finally:
+        nebius.gate.set()
+
+
+async def test_a_registered_endpoint_is_read_until_its_artifact_expires_or_is_deleted(client, db, nebius):
+    """The keep-alive window: the node is done, the endpoint serves /compare for keep_alive_min. Its state is read until
+    meta.expires_at passes or meta.deleted_at is set (the TTL task sets it)."""
+    run = await seed(db, status=RunStatus.RUNNING)
+    now = datetime.now(timezone.utc)
+    metas = {"live": {"endpoint_id": "ep-live", "expires_at": (now + timedelta(minutes=10)).isoformat()},
+             "expired": {"endpoint_id": "ep-old", "expires_at": (now - timedelta(minutes=1)).isoformat()},
+             "deleted": {"endpoint_id": "ep-gone", "expires_at": (now + timedelta(minutes=10)).isoformat(),
+                         "deleted_at": now.isoformat()},
+             "unreadable": {"endpoint_id": "ep-odd", "expires_at": "soon"}}
+    for node_id, meta in metas.items():
+        node = NodeRun(run_id=run.id, node_id=node_id, node_type="vllm-serve", status=NodeStatus.SUCCEEDED,
+                       gpu_provider="local-docker")
+        db.add(node)
+        await db.flush()
+        db.add(Artifact(node_run_id=node.id, name="endpoint_url", kind=ArtifactKind.ENDPOINT, uri="https://ep.example", meta=meta))
+    await db.commit()
+    nebius.states.update({meta["endpoint_id"]: "RUNNING" for meta in metas.values()})
+
+    s = (await client.get(f"/runs/{run.id}/summary")).json()
+
+    assert {n["node_id"]: (n["resource"]["id"], n["resource"]["state"]) for n in s["nodes"]} == {
+        "live": ("ep-live", "RUNNING"), "expired": ("ep-old", None), "deleted": ("ep-gone", None),
+        "unreadable": ("ep-odd", None)}
+    assert nebius.calls == ["ep-live"]  # the others are not asked
+    nebius.states["ep-live"] = "STOPPING"
+    nebius.clock[0] += 31
+    assert [n["resource"]["state"] for n in (await client.get(f"/runs/{run.id}/summary")).json()["nodes"]
+            if n["node_id"] == "live"] == ["STOPPING"]  # same cache as the rest: read again after 30 s
 
 
 async def test_a_runs_gpu_provider_is_its_first_gpu_nodes_else_null(client, db):

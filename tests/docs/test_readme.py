@@ -49,6 +49,12 @@ STALE = [
     "No pipeline has run live",  # intents #2 and #3 ran live through the Agent on 2026-10-22 (runs 84e57f84, 59786797)
     "no live run yet",
     "drives the real-estate template card",  # the smoke's golden-path test clicks template 4's card since qa-w8
+    # The live golden run (2026-10-25, run d20d30f3) ran on the hosted app, a Nebius Job and Endpoint and a Nebius bucket.
+    "has run on Nebius yet",
+    "nor the golden run exists",
+    "the app is not deployed yet",
+    "only MinIO",
+    "No AI Cloud call has run yet",
 ]
 # Every TODO names when it clears: D8 (a live run, the hosted app) or G3 (the repo and its images go public).
 BARE_TODO = r"TODO(?!\((?:D8|G3)\))"
@@ -63,7 +69,7 @@ def test_models_urls_and_clone_url():
     for model in MODELS:
         assert model in README, f"README must name {model}"
         assert model in CONTRACTS, f"{model} is not in docs/contracts.md"
-    for needle in ("https://api.tokenfactory.nebius.com/v1", "github.com/bangadpurva/orchapod.ai"):
+    for needle in ("https://api.tokenfactory.nebius.com/v1", "github.com/bangadpurva/orchapod.ai", "https://app.orchapod.dev"):
         assert needle in README, f"README must mention {needle}"
     assert not re.search(r"bangadpurva/orchapod(?!\.ai)", README), "the clone URL ends in orchapod.ai"
 
@@ -90,14 +96,6 @@ def test_no_stale_strings():
 
 def test_every_todo_names_its_day():
     assert not re.search(BARE_TODO, README)
-
-
-def test_unbuilt_make_targets_are_marked_todo():
-    # `make e2e API=…` exists since qa-w9 but has not run live (it needs the hosted API and GPU quota). `make agent-e2e` ran
-    # live on 2026-10-22, so it is no longer pinned. Drop this test when `make e2e` has a live result.
-    for line in README.splitlines():
-        if re.search(r"\bmake e2e\b", line):
-            assert "TODO(D8)" in line, f"the target does not work yet: {line[:70]}"
 
 
 def _templates() -> list[dict]:
@@ -133,14 +131,6 @@ def test_node_table_matches_the_registry():
     from packages.workflow_schema.models import NODE_REGISTRY
     visible = {t.value: row["runtime"] for t, row in NODE_REGISTRY.items() if not row.get("hidden")}
     assert dict(re.findall(r"^\| `([a-z-]+)` \| (cpu|gpu|api) \|", README, re.M)) == visible
-
-
-def test_unmeasured_claims_carry_a_todo():
-    # Drop each needle when the golden run measures it (D8).
-    for needle in ("An evaluation you can trust", "The guard checks the estimate"):
-        line = next((ln for ln in README.splitlines() if needle in ln), "")
-        assert line, f"the README line with {needle!r} is missing"
-        assert "TODO(D8)" in line, f"nothing measured yet, so the line needs TODO(D8): {needle}"
 
 
 def test_make_targets_and_env_vars_exist():

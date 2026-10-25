@@ -13,3 +13,6 @@ e7bff8fd0ad2543e9b51e944e480858ea6b587f6:apps/api/executor/run_workflow.py:gener
 ee6227b4d4754ade5fbb417ddb8774de784bf4ce:tests/e2e/test_e2e_demo.py:generic-api-key:190
 # pre-hackathon branch (May 2026): an empty OPENAI_API_KEY= read with the next line STUB_TEACHER=true as its value
 c2bc9f7a10a64631411a1225d2ea2a35794f1f50:.env.example:generic-api-key:38
+# the golden-run fixture (2026-10-25): Nebius docs' own 'Authorization: Bearer $NEBIUS_API_KEY' examples in generated Q&A
+60b071320095c4162cd858f9cd2eaea17fbffd62:scripts/golden-run.json:curl-auth-header:1402
+60b071320095c4162cd858f9cd2eaea17fbffd62:scripts/golden-run.json:curl-auth-header:1402

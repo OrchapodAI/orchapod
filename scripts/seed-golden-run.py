@@ -10,10 +10,11 @@ that run if it is already there (same ids), keeps its timestamps (an old run nev
 moves its r2:// URIs to ORCHAPOD_R2_BUCKET. Directory artifacts (lora_adapter) and binaries (GGUF) are not copied:
 their rows still show, their downloads do not.
 
-The committed fixture is a STUB run of the real-estate template (every metric says "stub": true) until the real golden
-run replaces it: TODO(D8) `--export` that run, commit the file, `make demo` on the hosted app.
-TODO(D8): run `gitleaks detect --no-git --source scripts/golden-run.json` before committing an export: it copies the
-objects' text verbatim (artifact meta is redacted, file contents are not).
+The committed fixture is the live golden run d20d30f3 (template 4, hosted, 2026-10-25: Nemotron Nano 8B trained on an
+H100 Job, served base + LoRA from an L40S endpoint, judged by Nemotron 3 Ultra: 7 wins, 22 ties, 1 loss; $1.61).
+Before committing an export, run `gitleaks detect --no-git --source scripts/golden-run.json`: it copies the objects' text
+verbatim (artifact meta is redacted, file contents are not). The 2026-10-25 export has one known false positive, the docs'
+own `Authorization: Bearer $NEBIUS_API_KEY` examples inside generated Q&A (in .gitleaksignore).
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ import asyncio
 import json
 import sys
 import uuid
+from decimal import Decimal
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -71,7 +73,11 @@ async def export(run_id: uuid.UUID) -> dict:
 
 
 def _dump(row) -> dict | None:
-    return None if row is None else row.model_dump(mode="json")
+    """Decimals are written normalized (1.610043, never 1.6100430000), so an export reads the same from Postgres and SQLite."""
+    if row is None:
+        return None
+    return {**row.model_dump(mode="json"),
+            **{k: format(v.normalize(), "f") for k, v in row.model_dump().items() if isinstance(v, Decimal)}}
 
 
 async def seed(fixture: dict) -> uuid.UUID:

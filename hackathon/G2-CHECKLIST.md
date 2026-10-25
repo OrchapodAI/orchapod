@@ -2,7 +2,7 @@
 
 From qa-w9's report (hackathon/briefs/2026-10-22-qa-w9-report.md), reviewed twice. One command runs it once everything below is true:
 `caffeinate -i make e2e API=https://api.<domain> MAX_COST=3` with `ORCHAPOD_ADMIN_TOKEN` in the shell (the orchestrator runs it).
-Day cap: Hari raised ORCHAPOD_MAX_DAY_USD to **10 for G2 day** (2026-10-24), so two attempts fit ($2.92 worst case each, plus at most $1 of visitors at scale 0.1). Set it back to 5 after the golden run (`dc up -d api`, between runs).
+Day cap: Hari raised ORCHAPOD_MAX_DAY_USD to **10 for G2 day** (2026-10-24), so two attempts fit ($2.92 worst case each, plus at most $1 of visitors at scale 0.1). Set back to 5 after the golden run on 2026-10-25 (done).
 
 Sources: `docs/HOSTING.md` (bring-up steps are cited as "HOSTING n"), `.env.example`, `infra/docker-compose.prod.yml`,
 `hackathon/briefs/2026-10-22-hosting-proposal.md`, contracts R14/R15/R25. A box is something that must be true before `make e2e` runs.

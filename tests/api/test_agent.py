@@ -183,7 +183,7 @@ async def test_stub_plans_with_the_closest_template_and_calls_nothing(client, mo
     for intent, t in zip(INTENTS + [DOCS, DOCS_CPU], templates, strict=True):  # each intent maps to its own template
         r = await client.post("/agent/plan", json={"intent": intent})
         assert r.status_code == 200
-        assert set(r.json()) == {"plan", "rationale", "estimate", "warnings", "errors"}
+        assert set(r.json()) == {"plan", "rationale", "estimate", "warnings", "errors", "admin_only"}
         assert r.json()["plan"] == t["plan"] and r.json()["rationale"].startswith("STUB=1")
     r = await client.post("/agent/plan", json={"intent": "make me a GGUF of a math model"})
     assert r.json()["plan"] == templates[2]["plan"]
@@ -285,10 +285,90 @@ async def test_stub_plans_the_docs_specialist_clean_but_only_the_admin_runs_it(c
     planned = (await client.post("/agent/plan", json={"intent": DOCS}, headers=admin)).json()
     body = {"intent": DOCS, "plan": planned["plan"]}
 
-    assert planned["errors"] == []
+    assert (planned["errors"], planned["admin_only"]) == ([], [])
+    public = (await client.post("/agent/plan", json={"intent": DOCS})).json()  # $2.66 against $0.30: its price is not its error
+    assert (public["plan"], public["estimate"]) == (planned["plan"], planned["estimate"])
+    assert (public["admin_only"], public["errors"]) == (["train", "serve"], [ADMIN_ONLY.format("train, serve")])
     assert (await client.post("/agent/run", json=body)).status_code == 403  # gpu_guard: unchanged, STUB or not
     assert (await client.post("/agent/run", json=body, headers=admin)).status_code == 201
     assert started == [1.0]
+
+
+ADMIN_ONLY = "{} rent GPUs billed by the hour: on the public demo only the admin can start them."
+
+
+def docs_plan():
+    """The golden path's plan (template 4): unsloth-train (train) and vllm-serve (serve) rent GPUs, an estimate of $2.66."""
+    return next(t for t in planner.templates() if t["slug"] == "nebius-docs-specialist")["plan"]
+
+
+async def test_an_anonymous_gpu_plan_comes_back_as_drafted_with_admin_only_and_one_plain_line(client, tf, monkeypatch):
+    """The public cannot start a GPU plan however it is cut, so its price is not sent back to Super: two repairs shrank the
+    golden plan into a mangled one that never fit, under a rationale that said it did."""
+    monkeypatch.setattr(planner, "get_providers", lambda: {"nebius": object()})
+    plan = docs_plan()
+    tf.replies = [answer(plan, "Fine-tune the student, serve it, judge it.")]
+
+    body = (await client.post("/agent/plan", json={"intent": DOCS})).json()  # anonymous: a $0.30 run cap
+
+    assert len(tf.requests) == 1  # no repair
+    assert (body["plan"], body["rationale"]) == (plan, "Fine-tune the student, serve it, judge it.")
+    assert (body["admin_only"], body["errors"]) == (["train", "serve"], [ADMIN_ONLY.format("train, serve")])
+    assert body["estimate"] == planner.estimate(plan)[0] and body["estimate"]["usd"] > 2  # the plan's real price
+
+
+async def test_the_other_errors_of_an_anonymous_gpu_plan_are_repaired_but_its_price_is_not(client, tf, monkeypatch):
+    monkeypatch.setattr(planner, "get_providers", lambda: {"nebius": object()})
+    plan, bad = docs_plan(), copy.deepcopy(docs_plan())
+    next(n for n in bad["nodes"] if n["id"] == "synth")["inputs"]["teacher_model"] = "gpt-4o"
+    tf.replies = [answer(bad), answer(plan)]
+
+    body = (await client.post("/agent/plan", json={"intent": DOCS})).json()
+
+    fix = tf.requests[1]["messages"][-1]["content"]  # what went back to the model
+    assert len(tf.requests) == 2 and "synth: teacher_model" in fix and "estimate" not in fix and "GPU" not in fix
+    assert (body["plan"], body["admin_only"], body["errors"]) == (plan, ["train", "serve"], [ADMIN_ONLY.format("train, serve")])
+
+    tf.requests.clear()
+    tf.replies = [answer(bad)] * 3  # never fixed: its errors, then the one line in place of the budget error
+    body = (await client.post("/agent/plan", json={"intent": DOCS})).json()
+    assert len(tf.requests) == 3 and body["errors"] == [*planner.review(bad)[0], ADMIN_ONLY.format("train, serve")]
+
+
+async def test_an_admin_gpu_plan_over_budget_is_repaired_as_before(client, tf, monkeypatch):
+    monkeypatch.setattr(planner, "get_providers", lambda: {"nebius": object()})
+    monkeypatch.setenv("ORCHAPOD_ADMIN_TOKEN", "s3cret")
+    monkeypatch.setenv("ORCHAPOD_MAX_RUN_USD", "1")  # the golden plan's $2.66 does not fit the admin's cap
+    plan = docs_plan()
+    tf.replies = [answer(plan)] * 3
+
+    body = (await client.post("/agent/plan", json={"intent": DOCS}, headers={"X-Orchapod-Admin": "s3cret"})).json()
+
+    assert len(tf.requests) == 3 and "estimate" in tf.requests[1]["messages"][-1]["content"]  # the budget went back
+    est = planner.estimate(plan)[0]["usd"]
+    assert (body["admin_only"], body["errors"]) == ([], [f"plan: the estimate ${est:.2f} is more than the $1.00 left (run cap $1)"])
+
+
+async def test_a_reply_that_is_no_plan_has_no_admin_only_and_is_not_a_crash(client, tf):
+    tf.replies = [answer({"name": "x", "nodes": "oops"})] * 3  # review() reports its shape; there are no nodes to rent a GPU
+
+    r = await client.post("/agent/plan", json={"intent": "anything"})  # anonymous
+
+    body = r.json()
+    assert (r.status_code, len(tf.requests), body["admin_only"]) == (200, 3, [])
+    assert body["errors"] and all(e.startswith("plan: ") for e in body["errors"])
+
+
+async def test_an_anonymous_cpu_plan_over_budget_still_gets_the_repairs(client, tf):
+    big = {**GOOD, "nodes": [node("synth", "synth-distilabel", pipeline_template="self-instruct", n_samples=10000),
+                             GOOD["nodes"][1]]}  # synth's $1.00 cap against the public's $0.30
+    tf.replies = [answer(big)] * 3
+
+    body = (await client.post("/agent/plan", json={"intent": "Q&A pairs about sourdough baking"})).json()
+
+    est = planner.estimate(big)[0]["usd"]
+    assert len(tf.requests) == 3 and "estimate" in tf.requests[1]["messages"][-1]["content"]
+    assert (body["admin_only"], body["errors"]) == ([], [f"plan: the estimate ${est:.2f} is more than the $0.30 left (run cap $0.3)"])
 
 
 async def test_planning_stops_when_the_day_budget_is_spent(client, db, tf):

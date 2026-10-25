@@ -770,3 +770,8 @@ worktrees:
   - I2: the Nebius reads can pin the default thread pool → a dedicated pool.
   - Minors: NUL/surrogates break the Postgres insert; max_length; superseded_at; fixture in conftest.
   - Fix round 3 → aba8b998661f12a8f.
+- 2026-10-25T08:03Z backend-w9 round 3 done (3ae2786, b23117a, b1a11ff, aab31f2): redactor scan + Bearer/Basic + userinfo; Nebius reads on their own 2-thread pool with single-flight; NUL/surrogates; max_length; superseded; conftest fixture. tests/api 5×259; make check 1158.
+  - Orchestrator check of the redactor/pool code: OK.
+  - MERGED backend-w9 → 6748fe6 and frontend-w8 → a22bacf.
+  - Orchestrator tweak 0865c31: a bare Bearer/Basic is redacted only when token-like ('basic configuration' stays).
+  - make check 1163 + web 43 green. Integration (E2E + ui-smoke) running; then deploy + reseed the golden run on the VM.

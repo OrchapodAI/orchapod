@@ -727,3 +727,12 @@ worktrees:
     - backend-w9 (aba8b998661f12a8f): persisted node logs in Postgres + GET /runs/{id}/logs; summary nodes gain provider + resource {kind, id, state}; the run header's GPU provider semantics.
     - frontend-w8 (a0b588992b033feb4): log history on load, provider/resource on node cards, canvas ?run= live status.
   - Next (orchestrator): the endpoint TTL check → day cap $5; export the golden run fixture; after the merges, deploy + real screenshots; P3 = video footage, D8 rehearsal, G3 freeze tag.
+- 2026-10-25T06:53Z The golden-run fixture = the live run d20d30f3 (exported on the VM; 33 artifacts, 27 files, 1.8 MB).
+  - Fixes: seed-golden-run export normalizes Decimals (Postgres 1.610043 vs SQLite 1.6100430000 broke the round-trip test).
+  - gitleaks: 1 false positive (the Nebius docs' own 'Authorization: Bearer $NEBIUS_API_KEY' examples inside generated Q&A) → .gitleaksignore; history scan clean. Commits 60b0713, 3b68e3d.
+  - P3 PLAN (orchestrator):
+    (1) Merge wave 6 → integration (E2E + ui-smoke) → deploy.
+    (2) D8 rehearsal golden run on Oct 26 (fits the $5 cap): the showcase run with persisted logs; screenshots + video footage while its endpoint lives (the compare playground needs a live endpoint).
+    (3) README/Devpost screenshots (docs/img).
+    (4) G3 freeze: tag v0.1-hackathon on Oct 27.
+    (5) Hari: repo public, video upload, Devpost submit (his yes).

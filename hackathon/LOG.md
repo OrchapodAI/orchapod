@@ -910,3 +910,26 @@ worktrees:
   - VM prep: disk 37 GB → 103 GB free. Removed the VM's local unsloth-train image (42 GB; the Jobs pull the registry copy) and build cache older than 10 h (the morning's unsloth builds). Quantize's peak is about 37 GB.
   - Visitor scale back to 0.1 before the run (Hari's browser trial 25449e0a was done, $0.08).
   - No API restarts until this run ends: a restart would stop its executor.
+- 2026-10-25T19:14Z EXPERIMENT PASS: multi-state real-estate compliance → Nemotron Nano 8B LoRA → q4_k_m GGUF → CPU judge. Run ca9838b7-bd13-4868-91d8-289406a86994.
+  - Totals: 50.7 min wall, $1.3477 (estimate $2.54). It is the first live run of the CPU-variant shape (quantize + judge-eval on CPU).
+  - Nodes:
+    - research 0.8 min $0.24: 15 queries, 60 pages, 704 passages.
+    - synth 10.1 min $0.1507: 600 grounded rows from 610 calls.
+    - prep: 479 / 60 / 60.
+    - train 11.9 min $0.8958: H100 Job, 120 steps; train loss 1.013, valid 1.568.
+    - quantize 21.5 min $0 on the VM CPU: f16 16.07 GB → q4_k_m 4.92 GB; conversion and quantization about 8.5 min each; GGUF LoRA.
+    - judge 6.2 min $0.0612: llama-server on CPU, base 3 min, tuned + LoRA 2 min, then Ultra.
+  - Ultra, n 30: 11 wins / 19 ties / 0 losses, win rate 0.683, consistency 0.70, 0 errors.
+  - Answers: none empty; median 176 chars base vs 100 tuned. Test questions by state: CA 8, TX 6, NY 5, FL 5, IL 3.
+  - Sample win (NY PCDS): base declined; tuned named the $500 credit, though as 'for repairs' (the reference: against the purchase price).
+  - VM during quantize: disk 100 → 82 GB free at the peak, RAM ≥ 10 GB free. The app answered in 0.5 s, except 5.5 s once at the eval's start.
+  - Caveats:
+    - The test rows are held out of the same synthetic set, so the eval measures recall of the collected corpus, not general legal knowledge.
+    - 599 rows: CA 167 / TX 140 / NY 106 / FL 88 / IL 35 (Illinois thin), about 18 naming other states, 32 naming none, a handful off-topic (a bar fight, contacting the state senate). The opt-in quality filter could screen these.
+  - Findings → fixes:
+    - Super's judge base_model_ref was a bare Hub id → a239409, review() refuses an unpriced plain model id.
+    - Super's report missed the win rate: the facts were cut at 20k characters → dfe67d7, metrics first, a 40k cut, and no invented files ('merged GGUF').
+    - A test hung on the real nebius CLI (expired login) → d5b02d9, the fixture hides it.
+    - All deployed (dfe67d7, 19:13Z); make check 1176 + web 51.
+  - Settings back: hosted day cap $5, visitor scale 0.1. Today's hosted spend is about $5.30 (the cap was $10 during the experiment).
+  - Local Docker Desktop is not running since the restart: 1 local test skips; ui-smoke and e2e need it.

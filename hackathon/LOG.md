@@ -829,16 +829,16 @@ worktrees:
   - Knowledge in plain words (149675b).
   - make check 1165 + web 47; ui-smoke 5/5 (agents, worktrees).
   - The rehearsal endpoint was deleted by the API's TTL at 09:12:20Z, before the deploy.
-- 2026-10-25T09:25Z FINDING: admin spend uses up the public's share.
+- 2026-10-25T09:20Z FINDING: admin spend uses up the public's share.
   - Anonymous left = min(run cap × 0.1, day cap × 0.1 − day spend, day cap − day spend), so after today's admin runs ($3.8) the public can't plan or run until 00:00Z (402).
   - Rule for the judging window: no admin runs on the hosted app.
   - OPEN DECISION (Hari): raise ORCHAPOD_MAX_DAY_USD for the judging window? Judge traffic is API-only (GPU stays admin-only), and the public's day share is only $0.50 at $5.
-- 2026-10-25T09:27Z FINDING → wave 7: an anonymous golden-sentence plan gets budget repairs that shrink it (n_samples 100, max_steps 20) and can never fit.
+- 2026-10-25T09:21Z FINDING → wave 7: an anonymous golden-sentence plan gets budget repairs that shrink it (n_samples 100, max_steps 20) and can never fit.
   - unsloth-train's estimate is a flat $1.88 (P2), and Super's rationale then claims it fits.
   - backend-w10 (aba8b998661f12a8f): admin_only + no budget repairs for anonymous GPU plans.
   - frontend-w11 (a0b588992b033feb4): an amber 'admin-only' note with a golden-run link; a plain 402.
   - devrel-w10 (a7b1e898cb32a8e00): README/Devpost with docs/img (082cf60, 12 shots from 0ee1e20a) and both live runs; the video-script recording note.
-- 2026-10-25T09:45Z VIDEO DRAFT (orchestrator): footage/video-draft/orchapod-draft-0ee1e20a.mp4.
+- 2026-10-25T09:28Z VIDEO DRAFT (orchestrator): footage/video-draft/orchapod-draft-0ee1e20a.mp4.
   - 2:16, silent, 1080p, captions burned in, all real footage of run 0ee1e20a.
   - narration-draft.srt is timed to the cut; README.txt says what is left for Hari (voice-over, upload with his yes).
   - The playground question (fixed before the run) was a tie: neither model gave the docs' field. Honest, but weak.

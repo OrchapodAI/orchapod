@@ -721,3 +721,21 @@ worktrees:
     - evaluate 85 s $0.0802 (Ultra: n 30, judged 30, 7 wins / 22 ties / 1 loss, 0 errors, win_rate 0.6, consistency 0.733).
   - Sample win: 'What happens to computing resources and container disk when a Serverless AI job completes?' — base generic, tuned 'the container disk is automatically deleted, and the computing resources are released.'
   - Endpoint expires 06:55:26Z (keep_alive 15); deletion by the API's TTL is being checked.
+- 2026-10-25T06:49Z Hari: 'update README and Devpost and do the UI improvements, I'll be away but keep going'; 'go onto the next phase'.
+  - WAVE 6 dispatched on 8b17ab0 (all resumed):
+    - devrel-w9 (a7b1e898cb32a8e00): docs with the live golden run + bring-up feedback items.
+    - backend-w9 (aba8b998661f12a8f): persisted node logs in Postgres + GET /runs/{id}/logs; summary nodes gain provider + resource {kind, id, state}; the run header's GPU provider semantics.
+    - frontend-w8 (a0b588992b033feb4): log history on load, provider/resource on node cards, canvas ?run= live status.
+  - Next (orchestrator): the endpoint TTL check → day cap $5; export the golden run fixture; after the merges, deploy + real screenshots; P3 = video footage, D8 rehearsal, G3 freeze tag.
+- 2026-10-25T06:53Z The golden-run fixture = the live run d20d30f3 (exported on the VM; 33 artifacts, 27 files, 1.8 MB).
+  - Fixes: seed-golden-run export normalizes Decimals (Postgres 1.610043 vs SQLite 1.6100430000 broke the round-trip test).
+  - gitleaks: 1 false positive (the Nebius docs' own 'Authorization: Bearer $NEBIUS_API_KEY' examples inside generated Q&A) → .gitleaksignore; history scan clean. Commits 60b0713, 3b68e3d.
+  - P3 PLAN (orchestrator):
+    (1) Merge wave 6 → integration (E2E + ui-smoke) → deploy.
+    (2) D8 rehearsal golden run on Oct 26 (fits the $5 cap): the showcase run with persisted logs; screenshots + video footage while its endpoint lives (the compare playground needs a live endpoint).
+    (3) README/Devpost screenshots (docs/img).
+    (4) G3 freeze: tag v0.1-hackathon on Oct 27.
+    (5) Hari: repo public, video upload, Devpost submit (his yes).
+- 2026-10-25T06:58Z The golden run's endpoint was deleted by the API's TTL (expiry 06:55:26Z; gone at 06:58Z): the TTL works on Nebius.
+  - No Jobs or Endpoints are left (0/0).
+  - Hosted ORCHAPOD_MAX_DAY_USD back to 5 (Hari's decision), API restarted, health ok.

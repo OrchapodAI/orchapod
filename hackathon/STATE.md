@@ -1,8 +1,8 @@
 # STATE — Orchapod × Nebius hackathon
-Updated: 2026-10-25T06:42Z by orchestrator · Phase: P1 · G1 MET 2026-10-22 · Next gate: G2 Oct 25 (GPU quota) · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
+Updated: 2026-10-25T06:53Z by orchestrator · Phase: P2→P3 · G1 MET 10-22 · G2 MET 10-25 (live golden run) · Next gate: G3 Oct 27 freeze · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
-1. HOSTED DEMO LIVE: https://app.orchapod.dev + https://api.orchapod.dev (VM orchapod-hosted, eu-west1, 66.201.6.77; bucket orchapod-artifacts-d0c131 eu-north1). First hosted run eeeeb9ff OK ($0.006). BLOCKER for the golden run: Purva makes the GHCR packages public (ghcr.io/bangadpurva/unsloth-train is pulled anonymously by the Nebius Job); Plan B = Nebius Container Registry (build on the VM, push, ORCHAPOD_IMAGE_PREFIX). Then the orchestrator runs `make e2e API=https://api.orchapod.dev` (≈ $2.66; day cap $10 today).
+1. G2 MET: live golden run d20d30f3 PASS on the hosted stack (24.2 min, $1.61; Ultra 7W/22T/1L). Hosted demo live (app/api.orchapod.dev). Wave 6 in progress: devrel-w9 (docs), backend-w9 + frontend-w8 (logs history, where steps run, canvas status). Then deploy, real screenshots, the golden-run fixture export, video footage, a D8 rehearsal, and the G3 freeze tag v0.1-hackathon (Oct 27). Hari: repo public + video upload + Devpost submit need his yes.
 2. Spikes 1 and 2 DONE (R24, R25). Spike 3 waits for TAVILY_API_KEY. Merged 2026-10-22: platform-w7, ml-w6, backend-w7, frontend-w6, qa-w7, devrel-w6, backend-w8, ml-w7, qa-w8, devrel-w7, qa-w9, devrel-w8, frontend-w7 (+ qa-w10 fresh-clone report). Nothing in flight. Integration green: e2e 4 PASS, ui-smoke 5/5, pytest 1123.
 3. After G2 (if quota): `make e2e API=https://api.orchapod.dev` (orchestrator), then screenshots (frontend), video (devrel), D8 rehearsals (qa). If G2 refuses quota: the GPU-free Lane A fallback (OPEN DECISION below). Parked: a millisecond double-click cancel can leave a node unmarked.
 4. G1 MET (2026-10-22, as ruled): template 4 green from the UI on stubs (ui-smoke 5/5, e2e 4 PASS on 3b7bf07) + live intents #2 (84e57f84, $0.10) and #3 (59786797, $0.02, Ultra judged live). Next: G2 Oct 25 — GPU quota + hosted API for the live golden run (Hari's console steps).
@@ -146,6 +146,7 @@ Updated: 2026-10-25T06:42Z by orchestrator · Phase: P1 · G1 MET 2026-10-22 · 
 - 2026-10-24: ≈ $0.11 (Tavily 6 credits $0.048 spike 3; live run #4 $0.0653)
 - 2026-10-22: ≈ $0.16 Token Factory (spike 1 ≤ $0.03 fine-tune of 50 rows; spike 2 $0.0055; live runs $0.1007 + $0.0034 + $0.0175; key validation $0)
 ## Golden path status (last real run: id, date, cost, result)
+- 2026-10-25T06:53Z: scripts/golden-run.json is now the live golden run d20d30f3 (`make demo` seeds it; the hosted DB already has it).
 - 2026-10-25T06:42Z: LIVE GOLDEN RUN PASS on the hosted stack — run d20d30f3: 24.2 min, $1.61 (est $2.66): Tavily → Super grounded synth (300 rows) → Unsloth LoRA of Nemotron Nano 8B on an H100 Job (loss 7.75→1.68) → vLLM base+LoRA on one L40S endpoint → Ultra judge: 7 W / 22 T / 1 L, win rate 0.6, consistency 0.73.
 - 2026-10-24T16:08Z: LIVE golden-path data half PASS — run bf0ddb21 (Super's plan nebius-docs-grounded-qa: Tavily research → grounded synth → prep), 154 s, $0.0653 total, 300 grounded rows. The GPU half (unsloth-train → vllm-serve → judge-eval) waits on the nebius CLI login + quota + hosting.
 - 2026-10-22T07:58Z: STUB golden path = template 4 (R25) green: e2e_agent golden path PASS (run 298cf7be, full plan) + ui-smoke golden test (template 4 card, reduced plan) on 3b7bf07.

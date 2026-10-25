@@ -220,7 +220,7 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
             ))}
             <div className="spacer" />
             <span className="muted" style={{ fontSize: 11.5 }}>
-              {connected ? "● live" : "○ disconnected"}
+              {finished(run.status) ? "○ ended" : connected ? "● live" : "○ disconnected"}
             </span>
           </div>
 

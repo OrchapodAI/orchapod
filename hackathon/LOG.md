@@ -893,3 +893,8 @@ worktrees:
   - Spent today $3.8156. Admin left: $3.00 a run, $6.18 for the day.
   - A browser (visitor) has −$2.82 left: the share is 10 × 0.1 = $1.00 less the day's spend. So the browser still can't plan or run until 00:00 UTC unless ORCHAPOD_ANON_SCALE is raised, or the orchestrator runs the trial as the admin.
   - The Oct 29 timer (→ $20) is unaffected.
+- 2026-10-25T17:13Z Hari's NYC real-estate compliance data trial.
+  - Admin plan (footage/trials/nyc-re-compliance/): web-research → synth-distilabel (grounded, 500 rows) → data-prep; $0.246, ~9.5 min, no errors.
+  - Hari then chose to run it himself from the browser, so ORCHAPOD_ANON_SCALE went 0.1 → 0.5 (the day cap is still $10). A visitor now has $1.18 left today and a $1.50 run cap; GPU nodes stay admin-only.
+  - Fallback: orchapod-trial-reset.timer at 2026-10-26 00:00 UTC restores scale 0.1 and cap $5 if they are still on; idempotent.
+  - The Oct 29 → $20 timer is unchanged.

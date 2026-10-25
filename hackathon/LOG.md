@@ -877,3 +877,8 @@ worktrees:
   - make check 1174 + web 51; ui-smoke 5/5 on the merged tree.
   - Hosted: d20d30f3's eval reads '7 wins, 22 ties, 1 loss'.
   - G3 checklist A: done except the tag, which waits for Hari's repo step.
+- 2026-10-25T16:07Z DECISION (Hari, chat): hosted day cap $20 from Oct 29 (the judging window; the public share × 0.1 = $2 a day). Applied as a one-time systemd timer on the VM:
+  - orchapod-daycap.timer fires at 2026-10-29 00:00 UTC (Persistent=true, so a VM that was down runs it at boot).
+  - orchapod-daycap.service sets ORCHAPOD_MAX_DAY_USD=20 in /opt/orchapod/.env and runs `docker compose up -d api`. It is idempotent.
+  - Dry-run in a systemd context on a temp copy of .env: the sed gives 20 and compose config resolves; the real .env still says 5. Deploys never sync .env, so they keep it.
+  - Restart note: after the session restart (around 16:00Z) ssh-agent was empty → `ssh-add ~/.ssh/orchapod_deploy` (passphrase-free). The anonymous 00:10Z check died with the restart; re-armed.

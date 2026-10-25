@@ -100,6 +100,10 @@ rollback runs the old API against today's nodes.
 - At the defaults ($5 and 0.1) the public's share is $0.50 a day, and one golden run costs about $1.60. After the
   2026-10-25 rehearsal, the public could not run anything until 00:00 UTC.
 - Run GPU work on a local instance instead. The hosted app already holds both live golden runs.
+- From 2026-10-29 00:00 UTC the day cap is $20 (Hari), so the public's share is $2 a day. It is applied by a one-time systemd
+  timer on the VM, `orchapod-daycap.timer` (Persistent=true). Its service sets `ORCHAPOD_MAX_DAY_USD=20` in `/opt/orchapod/.env`,
+  then runs `docker compose up -d api`. Check: `systemctl list-timers orchapod-daycap.timer`; after it fires,
+  `sudo grep MAX_DAY /opt/orchapod/.env`.
 
 ## Backup and restore
 Cron runs `scripts/backup-db.sh` at 03:15 UTC: `pg_dump -Fc` → `s3://<bucket>/backups/pg/orchapod-<NN>.dump`, NN = day

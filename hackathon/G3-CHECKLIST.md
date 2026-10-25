@@ -32,7 +32,8 @@ else the orchestrator runs and logs in LOG.md with its output.
 - [ ] The repo made public (bangadpurva/orchapod.ai). GitHub's default branch is main (pre-hackathon code): Purva switches it to
       NebiusHackathon, or Devpost links the branch.
 - [ ] The video: the voice-over on footage/video-draft's cut (or a re-record), uploaded public on YouTube, under 3:00.
-- [ ] The judging-window day cap: the recommendation is ORCHAPOD_MAX_DAY_USD=20 from Oct 29 (a $2 public share a day).
+- [x] The judging-window day cap: ORCHAPOD_MAX_DAY_USD=20 from Oct 29 (Hari, 2026-10-25). The VM's orchapod-daycap.timer applies it at 00:00 UTC.
+      After it fires, check: `sudo grep MAX_DAY /opt/orchapod/.env` and `systemctl status orchapod-daycap.service`.
 - [ ] Devpost submitted by Oct 29, 6 PM ET, every link checked logged out.
 
 ### E. The tag (orchestrator, after A–C and Hari's yes on D's repo step)

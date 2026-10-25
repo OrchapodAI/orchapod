@@ -122,6 +122,7 @@ Updated: 2026-10-25T10:22Z by orchestrator · Phase: P3 · G1 MET 10-22 · G2 ME
 - DECISION 2026-10-21 (Hari): hosting A-M (Nebius cpu-e2 4 vCPU/16 GB, eu-north1), fallbacks A-W then B2; domain orchapod.dev (registrar Hostinger). Defaults until Hari says otherwise: deploy by Hari, day cap $5, anon scale 0.1, teardown Dec 16.
 - DECISION 2026-10-22 (orchestrator): intent #1 deploy = vllm-serve (spike 1: per-token deploy 410; R24).
 - DECISION 2026-10-22 (orchestrator): G1 = template 4 green from the UI on stubs + live intents #2/#3 through the Agent; PLAN's live Lane A bar is superseded by R24/R25.
+- DECISION 2026-10-25 (Hari): hosted day cap ORCHAPOD_MAX_DAY_USD = $20 from 2026-10-29 00:00 UTC (judging window; public share $2/day). It is applied by the VM's orchapod-daycap.timer.
 - DECISION 2026-10-24 (Hari): hosted day cap ORCHAPOD_MAX_DAY_USD = $10 for G2 day (two golden-run attempts fit), back to $5 after the golden run.
 - DECISION 2026-10-22 (orchestrator): local MinIO image = pgsty/minio pinned by digest (minio/minio is gone from anonymous Docker Hub; qa-w10 P0).
 - DECISION 2026-10-25 (orchestrator): no GPU-free Lane A fallback. G2 passed live on Lane B (d20d30f3).

@@ -1,5 +1,5 @@
 # STATE — Orchapod × Nebius hackathon
-Updated: 2026-10-25T06:53Z by orchestrator · Phase: P2→P3 · G1 MET 10-22 · G2 MET 10-25 (live golden run) · Next gate: G3 Oct 27 freeze · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
+Updated: 2026-10-25T07:03Z by orchestrator · Phase: P2→P3 · G1 MET 10-22 · G2 MET 10-25 (live golden run) · Next gate: G3 Oct 27 freeze · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
 1. G2 MET: live golden run d20d30f3 PASS on the hosted stack (24.2 min, $1.61; Ultra 7W/22T/1L). Hosted demo live (app/api.orchapod.dev). Wave 6 in progress: devrel-w9 (docs), backend-w9 + frontend-w8 (logs history, where steps run, canvas status). Then deploy, real screenshots, the golden-run fixture export, video footage, a D8 rehearsal, and the G3 freeze tag v0.1-hackathon (Oct 27). Hari: repo public + video upload + Devpost submit need his yes.
@@ -130,7 +130,7 @@ Updated: 2026-10-25T06:53Z by orchestrator · Phase: P2→P3 · G1 MET 10-22 · 
 - [ ] vast.ai: two stopped instances from other projects (54041703 rec-l2-bench-2, 54062531 esci-bench-v2), stopped since 2026-10-03, still billing storage (~$0.20/h per the spike agent) — destroy them? Hari's call; agents leave them alone
 - [ ] DECISION: disclose in the README/Devpost that the build used AI coding agents? (Hari's call)
 - [ ] Before submission: GitHub's default branch is `main` (pre-hackathon code) — set it to NebiusHackathon, or link the branch explicitly in Devpost (repo admin: Purva)
-- [ ] DECISION by D6: golden-run topic — the Nebius docs specialist (PLAN's default; template 4 now exists, NOT G1-ready until spike 1 settles tf-deploy) or intent #1 (US real-estate compliance; template 1)?
+- [x] DECISION: golden-run topic = the Nebius docs specialist on NVIDIA Nemotron Nano 8B (R25, Hari) — DONE: live golden run d20d30f3, 2026-10-25
 - [ ] Before the repo goes public (G3): gitleaks clean over all refs — DONE 2026-10-22 (.gitleaksignore, 11 triaged false positives; no .env secret in history); keys rotated; docs/Jira.csv reviewed for personal data (Hari)
 
 ## Tooling (installed skills/plugins/MCP, with install command)

@@ -739,3 +739,6 @@ worktrees:
 - 2026-10-25T06:58Z The golden run's endpoint was deleted by the API's TTL (expiry 06:55:26Z; gone at 06:58Z): the TTL works on Nebius.
   - No Jobs or Endpoints are left (0/0).
   - Hosted ORCHAPOD_MAX_DAY_USD back to 5 (Hari's decision), API restarted, health ok.
+- 2026-10-25T07:03Z Facts observed during golden run #2 (for docs/feedback.md):
+  - The L40S endpoint went STARTING 06:32:08Z → IMAGE_PULLING 06:33:09Z → STARTING 06:35:42Z → RUNNING 06:36:12Z, about 4 min to running.
+  - `nebius ai job logs` refuses --tail above 1000 (400: 'limit … greater than 1000').

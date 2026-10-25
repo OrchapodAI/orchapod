@@ -320,3 +320,7 @@ h1, h2, h3, h4, p { margin: 0; font-weight: 500; letter-spacing: -0.01em; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--ink-4); }
+
+/* ── Reduced motion ───────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) { *, ::before, ::after { animation: none !important; } }

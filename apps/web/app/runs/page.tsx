@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { api, explainError, toastError } from "@/lib/api";
 import type { Run } from "@/lib/types";
 import { StatusBadge } from "@/components/StatusBadge";
-import { runShown } from "@/lib/runEvents";
+import { providerName, runShown } from "@/lib/runEvents";
 
 const BAR_DAYS = 14;
 
@@ -200,7 +200,7 @@ export default function RunsPage() {
                         {run.started_at ? elapsed(run.started_at, run.finished_at) : "—"}
                       </td>
                       <td className="mono">{run.cost_usd != null ? `$${run.cost_usd.toFixed(3)}` : "—"}</td>
-                      <td className="mono muted" style={{ fontSize: 11.5 }}>{run.gpu_provider ?? "—"}</td>
+                      <td className="mono muted" style={{ fontSize: 11.5 }}>{run.gpu_provider ? providerName(run.gpu_provider) : "—"}</td>
                       <td>
                         <Link href={`/runs/${run.id}`} className="btn btn-icon btn-ghost" style={{ textDecoration: "none" }}>
                           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.8">

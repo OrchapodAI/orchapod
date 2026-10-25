@@ -79,7 +79,11 @@ export interface RunSummary {
   cost_usd: number;
   error: string | null;
   nodes: { node_id: string; type: string; status: NodeStatus; usd: number; error: string | null;
-           started_at: string | null; finished_at: string | null }[];
+           started_at: string | null; finished_at: string | null;
+           /** Where the node ran (backend-w9): "local-docker", "nebius" or null. */
+           provider?: string | null;
+           /** The Nebius Job or Endpoint behind it; `state` is read live, and only while the node runs. */
+           resource?: { kind: "job" | "endpoint"; id: string; state: string | null } | null }[];
   /** download_url is an API path (/artifacts/{id}/download) for r2:// artifacts, else null. */
   artifacts: { id: string; node_id: string; name: string; kind: Artifact["kind"]; uri: string;
                download_url: string | null; meta: Record<string, unknown> }[];
@@ -330,6 +334,14 @@ export interface AgentReport {
   estimate: Estimate;
   ready: boolean;
   markdown: string | null;
+}
+
+/** One log line: as GET /runs/{id}/logs returns it, and as a `log` event carries it. */
+export interface LogLine {
+  ts: string;
+  level: string;
+  node_id: string;
+  message: string;
 }
 
 // ── WebSocket events ──────────────────────────────────────────────────────────

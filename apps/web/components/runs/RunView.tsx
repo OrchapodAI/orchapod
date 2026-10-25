@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { api, apiDate, cancelToken, explainError, toastError } from "@/lib/api";
-import { applyRunEvent, canRetry, finished, type RunViewState } from "@/lib/runEvents";
+import { api, apiDate, cancelToken, explainError, mergeLogs, toastError } from "@/lib/api";
+import { applyRunEvent, canRetry, finished, POLL_MS, providerName, type RunViewState } from "@/lib/runEvents";
 import { useRunStream } from "@/lib/ws";
 import { StatusBadge } from "@/components/StatusBadge";
-import { LogStream, type LogLine } from "@/components/runs/LogStream";
+import { LogStream } from "@/components/runs/LogStream";
+import type { LogLine } from "@/lib/types";
 import { LossChart } from "@/components/runs/LossChart";
 import { NodeTimeline } from "@/components/runs/NodeTimeline";
 import { ArtifactList } from "@/components/runs/ArtifactList";
@@ -27,6 +28,7 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
   const [attempt,      setAttempt]      = useState(0);   // bumped by a retry to reconnect the socket
   const [error,        setError]        = useState("");  // a failed retry (a failed cancel is a toast)
   const [loadError,    setLoadError]    = useState("");  // a failed snapshot
+  const [history,      setHistory]      = useState<LogLine[] | null>(null); // the stored log lines of the selected node; null while they load
 
   const { events, connected } = useRunStream(id, attempt);
 
@@ -52,6 +54,14 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
   }, [id]);
   useEffect(load, [load, connected]);
 
+  // A Nebius Job or Endpoint changes state (IMAGE_PULLING, RUNNING…) with no event, so the summary is read again while the run is on.
+  const on = view !== null && !finished(view.run.status);
+  useEffect(() => {
+    if (!on) return;
+    const timer = setInterval(load, POLL_MS);
+    return () => clearInterval(timer);
+  }, [on, load]);
+
   // Apply each event once: `events` only grows, across reconnects.
   const applied = useRef(0);
   useEffect(() => {
@@ -65,16 +75,21 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
     applied.current = events.length;
   }, [events, load]);
 
-  const logLines = useMemo<LogLine[]>(() => {
-    return events
-      .filter((e) => e.type === "log")
-      .map((e) => ({
-        ts:      (e as { ts: string }).ts,
-        level:   (e as { level: string }).level,
-        node_id: (e as { node_id: string }).node_id,
-        message: (e as { message: string }).message,
-      }));
-  }, [events]);
+  // The stored lines come first and the socket adds the new ones. It has no replay, so a line stored before it opened is in neither: the history
+  // is read again when the socket opens or closes (mergeLogs tolerates the overlap) and stays on screen meanwhile; only another run or node clears it.
+  const historyOf = useRef("");
+  useEffect(() => {
+    let current = true;
+    const key = `${id}\0${activeNodeId ?? ""}`;
+    if (historyOf.current !== key) { historyOf.current = key; setHistory(null); }
+    api.runs.logs(id, activeNodeId)
+      .then((rows) => current && setHistory(rows))
+      .catch((err) => { if (current) { setHistory((h) => h ?? []); toastError("Couldn't load the log history")(err); } });
+    return () => { current = false; };
+  }, [id, activeNodeId, connected]);
+
+  const logLines = useMemo<LogLine[]>(
+    () => mergeLogs(history ?? [], events.flatMap((e) => (e.type === "log" ? [e] : []))), [history, events]);
 
   async function handleCancel() {
     setCancelling(true); setError("");
@@ -137,7 +152,7 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
             <StatusBadge status={run.status} />
           </div>
           <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>
-            {[run.gpu_provider && `GPU: ${run.gpu_provider}`,
+            {[run.gpu_provider && `GPU: ${providerName(run.gpu_provider)}`,
               run.started_at && `Started ${apiDate(run.started_at).toLocaleTimeString()}`].filter(Boolean).join("  ·  ")}
           </div>
         </div>
@@ -161,7 +176,7 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
           </button>
         )}
         {run.workflow_id && (
-          <Link href={`/canvas/${run.workflow_id}`} className="btn btn-sm" style={{ textDecoration: "none" }}>
+          <Link href={`/canvas/${run.workflow_id}?run=${id}`} className="btn btn-sm" style={{ textDecoration: "none" }}>
             View workflow
           </Link>
         )}
@@ -217,7 +232,7 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
           <div style={{ flex: 1, overflow: "hidden", padding: 16, background: "var(--bg-2)" }}>
 
             {tab === "logs" && (
-              <LogStream lines={logLines} activeNodeId={activeNodeId} connected={connected} />
+              <LogStream lines={logLines} activeNodeId={activeNodeId} connected={connected} loading={history === null} done={finished(run.status)} />
             )}
 
             {tab === "chart" && (

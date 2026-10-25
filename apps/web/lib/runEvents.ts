@@ -1,4 +1,4 @@
-import type { CompareEvent, Run, RunStatus, RunSummary, WsEvent } from "./types";
+import type { CompareEvent, NodeStatus, Run, RunStatus, RunSummary, WsEvent } from "./types";
 
 /** What the run page shows: the run (header, cost meter) and its summary (nodes, artifacts). */
 export interface RunViewState {
@@ -39,6 +39,37 @@ export function splitReport(md: string): { title: string | null; body: string } 
   const m = md.match(/^## ([^\n]*)\n?([\s\S]*)$/);
   return m ? { title: m[1], body: m[2].trim() } : { title: null, body: md };
 }
+
+/** `?run=` on the canvas: a run id (a UUID) or nothing, so no other text reaches an API path. */
+export const runIdOf = (raw: string | null) => (raw && /^[0-9a-f-]{36}$/i.test(raw) ? raw : null);
+
+/** How often the run page (and the canvas of a run) read the summary while the run is on: a Nebius Job or Endpoint changes state with no event. */
+export const POLL_MS = 5000;
+
+const PROVIDER_NAMES: Record<string, string> = { "local-docker": "Local Docker", nebius: "Nebius" };
+
+/** A provider as shown: "local-docker" is "Local Docker"; any other as it is. */
+export const providerName = (provider: string) => PROVIDER_NAMES[provider] ?? provider;
+
+/** Where a node's step runs, for its card: a Nebius resource's kind, short id and, while it is asked, its state ("Nebius Job …k8m3p7r2 ·
+ *  IMAGE_PULLING"), else the provider ("Local Docker"). The resource says it whatever the provider: vllm-serve's container runs on
+ *  local-docker, and the endpoint it created is the Nebius resource. Empty before the node has run, and on an API without the fields. */
+export function whereRuns({ provider, resource }: Pick<RunSummary["nodes"][number], "provider" | "resource">): string {
+  if (!resource) return provider ? providerName(provider) : "";
+  const id = resource.id.length > 14 ? `…${resource.id.slice(-8)}` : resource.id;
+  return `Nebius ${resource.kind === "job" ? "Job" : "Endpoint"} ${id}${resource.state ? ` · ${resource.state}` : ""}`;
+}
+
+const NODE_STYLES = {
+  pending:   { dot: "#C1C7D0", ring: "ring-2 ring-[#C1C7D0] ring-offset-1", pulse: false },
+  running:   { dot: "#0052CC", ring: "ring-2 ring-[#0052CC] ring-offset-1", pulse: true },
+  succeeded: { dot: "#00875A", ring: "ring-2 ring-[#00875A] ring-offset-1", pulse: false },
+  failed:    { dot: "#DE350B", ring: "ring-2 ring-[#DE350B] ring-offset-1", pulse: false },
+};
+
+/** How a canvas node is drawn for its status in a run (the canvas opened with ?run=): a ring and a dot of one colour, and only the step that is
+ *  executing pulses. No status, no style: the canvas without a run is as it was. */
+export const nodeStyle = (status?: NodeStatus) => (status ? NODE_STYLES[status] : null);
 
 /** One side of the compare playground. */
 export interface CompareSide { text: string; done: boolean; usd: number | null; error?: string }

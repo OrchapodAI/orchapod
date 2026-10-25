@@ -2,11 +2,10 @@
 Updated: 2026-10-25T09:30Z by orchestrator · Phase: P3 · G1 MET 10-22 · G2 MET 10-25 (live golden run) · Next gate: G3 Oct 27 freeze · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
-1. IN FLIGHT (wave 7, base d5d7ad7):
-   - backend-w10: anonymous GPU plans get admin_only and no budget repairs.
-   - frontend-w11: an amber admin-only note with a golden-run link; a plain 402.
-   - devrel-w10: README/Devpost with docs/img and both live runs; the video-script recording note.
-   - Then merge, ui-smoke, deploy.
+1. IN FLIGHT:
+   - qa-w11 (ae3c65befef5dcb2b): a fresh-clone retest + make demo + links, before G3. No e2e or ui-smoke by others meanwhile.
+   - Security review (a1da27f787c5458bd): read-only, static, before the repo goes public.
+   - Wave 7 is merged and deployed (a7c07f9); the docs are up to date (5d53d28).
 2. DONE 10-25:
    - D8 rehearsal PASS: 0ee1e20a, from the hosted UI, 23.5 min, $1.58, Ultra 7/20/3 (win rate 0.57).
    - Wave 6 + frontend-w8b/w9/w10 deployed (85878e4).

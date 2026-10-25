@@ -854,3 +854,4 @@ worktrees:
   - CHANGELOG 2026-10-25 updated (57c9b5a).
   - qa-w11 dispatched (ae3c65befef5dcb2b): a fresh-clone retest + make demo + links, before G3. No e2e or ui-smoke by others meanwhile.
   - RULING (orchestrator): no more D8 rehearsals. The golden path passed live twice (d20d30f3, 0ee1e20a). Another admin run on hosted costs about $1.6 and uses up the public's day share.
+- 2026-10-25T09:36Z SECURITY REVIEW dispatched (general-purpose, opus, read-only, static; id a1da27f787c5458bd) of the public API, web app, providers, infra and CI before the repo goes public (G3) → hackathon/briefs/2026-10-25-security-review.md.

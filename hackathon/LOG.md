@@ -898,3 +898,15 @@ worktrees:
   - Hari then chose to run it himself from the browser, so ORCHAPOD_ANON_SCALE went 0.1 → 0.5 (the day cap is still $10). A visitor now has $1.18 left today and a $1.50 run cap; GPU nodes stay admin-only.
   - Fallback: orchapod-trial-reset.timer at 2026-10-26 00:00 UTC restores scale 0.1 and cap $5 if they are still on; idempotent.
   - The Oct 29 → $20 timer is unchanged.
+- 2026-10-25T18:15Z EXPERIMENT (Hari: "a lengthy run: collect data for multiple states, fine-tune, quantize, run evals; run it end to end").
+  - Run ca9838b7-bd13-4868-91d8-289406a86994 started 18:15Z as the admin through POST /agent/run; estimate $2.54, run cap $3, day cap still $10.
+  - Super's plan (footage/trials/multistate-re/plan.json) had the right six nodes: web-research → synth → data-prep → unsloth-train → quantize → judge-eval (CPU); $2.29.
+  - Edited before Run (footage/trials/multistate-re-run/plan.json; review() clean):
+    - judge-eval base_model_ref: the bare id 'nvidia/Llama-3.1-Nemotron-Nano-8B-v1' (not on Token Factory, so the eval would have failed at the end) → quantize's gguf_file, so base and tuned are both q4_k_m and tuned adds the GGUF LoRA. FINDING: review() should refuse a string ModelRef that is not a priced Token Factory model.
+    - judge max_tokens 512 → 256: 4 vCPUs and the 90-minute node backstop.
+    - research: 9 generic queries + 5 agency homepages (one invented domain), 20 pages → 15 targeted queries over NY/CA/TX/FL/IL, 60 pages.
+    - synth: 300 → 600 rows; max_tokens 800; max_usd 1.0.
+    - train: lora_alpha 32 → 16 (the recipe of both golden runs), max_steps 60 → 120, checkpoint_steps 40.
+  - VM prep: disk 37 GB → 103 GB free. Removed the VM's local unsloth-train image (42 GB; the Jobs pull the registry copy) and build cache older than 10 h (the morning's unsloth builds). Quantize's peak is about 37 GB.
+  - Visitor scale back to 0.1 before the run (Hari's browser trial 25449e0a was done, $0.08).
+  - No API restarts until this run ends: a restart would stop its executor.

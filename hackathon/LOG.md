@@ -712,3 +712,12 @@ worktrees:
   - FIX 69cafd1: drop the Mamba-2 wheels and the tvm-ffi restore. DECISION: the unsloth-train image trains Llama-architecture students only (NemotronH 30B unsupported). Deployed.
   - Rebuild + a mamba-absent check + push running on the VM; then golden run #2.
   - Note: the hosted API has no REST route for node logs. The node's `logs` artifact keeps only the final ERROR line; the traceback is in the Job's console (`nebius ai job logs <id>`).
+- 2026-10-25T06:42Z GOLDEN RUN #2 PASS — the first live golden path, end to end on Nebius (hosted, `make e2e API=https://api.orchapod.dev MAX_COST=3`).
+  - Run d20d30f3-768f-4989-b974-cac3d9b47495 succeeded in 1455 s; wall 24.2 min (under PLAN's 25-min bar); cost $1.6100 (estimate $2.6627, cap $3).
+  - Nodes:
+    - research 3 s $0.032 (Tavily); synth 2.1 min $0.0295 (Super grounded, 300 rows); prep 3 s.
+    - train 11.2 min $0.8408 (H100 Job: image pull ~6 min from our Nebius registry; 60/60 steps; loss 7.75 → 1.676; valid 1.629).
+    - serve 9.3 min $0.6276 (L40S endpoint, vllm/vllm-openai v0.18.0, Nemotron Nano base + LoRA via --enable-lora: PROVEN on Nebius; smoke call ok).
+    - evaluate 85 s $0.0802 (Ultra: n 30, judged 30, 7 wins / 22 ties / 1 loss, 0 errors, win_rate 0.6, consistency 0.733).
+  - Sample win: 'What happens to computing resources and container disk when a Serverless AI job completes?' — base generic, tuned 'the container disk is automatically deleted, and the computing resources are released.'
+  - Endpoint expires 06:55:26Z (keep_alive 15); deletion by the API's TTL is being checked.

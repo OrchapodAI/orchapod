@@ -2,6 +2,11 @@
 
 Dated, user-facing changes made during the Nebius × NVIDIA hackathon submission period (Aug 26 – Oct 30, 2026). Orchapod's first commit is May 4, 2026 (367c605); this file becomes the Devpost "what changed" write-up.
 
+## 2026-10-25
+- The golden path ran live, end to end on Nebius, from the hosted demo (app.orchapod.dev): Tavily research on the Nebius docs, 300 grounded Q&A pairs from Nemotron 3 Super, a LoRA fine-tune of NVIDIA Nemotron Nano 8B on an H100 Serverless Job, base and tuned served from one L40S Serverless Endpoint, and Nemotron 3 Ultra judging base against tuned: 7 wins, 22 ties, 1 loss on 30 questions. 24 minutes, $1.61.
+- The hosted demo is live at app.orchapod.dev and api.orchapod.dev (a Nebius VM, Object Storage, HTTPS).
+- The training image no longer bundles the Mamba-2 kernels (they broke `import unsloth` on GPUs); the golden path's student never needed them.
+
 ## 2026-10-24
 - Live: the golden path's data half ran on real services. Tavily extracted 20 Nebius docs pages, Nemotron 3 Super wrote 300 grounded Q&A pairs from them (each with its source passage and URL), and data prep validated them: 154 s, $0.07 in all.
 - Tavily spike: all 20 docs pages extract cleanly into 98 passages for 4 credits; an advanced search costs 2.

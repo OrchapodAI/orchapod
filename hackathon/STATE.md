@@ -1,5 +1,5 @@
 # STATE — Orchapod × Nebius hackathon
-Updated: 2026-10-25T05:10Z by orchestrator · Phase: P1 · G1 MET 2026-10-22 · Next gate: G2 Oct 25 (GPU quota) · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
+Updated: 2026-10-25T06:42Z by orchestrator · Phase: P1 · G1 MET 2026-10-22 · Next gate: G2 Oct 25 (GPU quota) · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
 1. HOSTED DEMO LIVE: https://app.orchapod.dev + https://api.orchapod.dev (VM orchapod-hosted, eu-west1, 66.201.6.77; bucket orchapod-artifacts-d0c131 eu-north1). First hosted run eeeeb9ff OK ($0.006). BLOCKER for the golden run: Purva makes the GHCR packages public (ghcr.io/bangadpurva/unsloth-train is pulled anonymously by the Nebius Job); Plan B = Nebius Container Registry (build on the VM, push, ORCHAPOD_IMAGE_PREFIX). Then the orchestrator runs `make e2e API=https://api.orchapod.dev` (≈ $2.66; day cap $10 today).
@@ -146,6 +146,7 @@ Updated: 2026-10-25T05:10Z by orchestrator · Phase: P1 · G1 MET 2026-10-22 · 
 - 2026-10-24: ≈ $0.11 (Tavily 6 credits $0.048 spike 3; live run #4 $0.0653)
 - 2026-10-22: ≈ $0.16 Token Factory (spike 1 ≤ $0.03 fine-tune of 50 rows; spike 2 $0.0055; live runs $0.1007 + $0.0034 + $0.0175; key validation $0)
 ## Golden path status (last real run: id, date, cost, result)
+- 2026-10-25T06:42Z: LIVE GOLDEN RUN PASS on the hosted stack — run d20d30f3: 24.2 min, $1.61 (est $2.66): Tavily → Super grounded synth (300 rows) → Unsloth LoRA of Nemotron Nano 8B on an H100 Job (loss 7.75→1.68) → vLLM base+LoRA on one L40S endpoint → Ultra judge: 7 W / 22 T / 1 L, win rate 0.6, consistency 0.73.
 - 2026-10-24T16:08Z: LIVE golden-path data half PASS — run bf0ddb21 (Super's plan nebius-docs-grounded-qa: Tavily research → grounded synth → prep), 154 s, $0.0653 total, 300 grounded rows. The GPU half (unsloth-train → vllm-serve → judge-eval) waits on the nebius CLI login + quota + hosting.
 - 2026-10-22T07:58Z: STUB golden path = template 4 (R25) green: e2e_agent golden path PASS (run 298cf7be, full plan) + ui-smoke golden test (template 4 card, reduced plan) on 3b7bf07.
 - 2026-10-22T07:34Z: LIVE intent #3 through the Agent API PASS — run 59786797 (Super's plan quantize-math-expert; CPU quantize; Nemotron 3 Ultra judged live), 255 s, $0.0175 total. The earlier attempt cf49d0f1 failed on a missing HF config ($0.0034) → data-prep fix 782be76.

@@ -697,3 +697,9 @@ worktrees:
   - FIRST HOSTED RUN: template 2 reduced as an anonymous visitor → run eeeeb9ff succeeded in 42 s, $0.0058, Super's report.
     - The dataset downloads via 307 → presigned storage.eu-north1 URL: 100 rows, CORS *.
   - Golden run (step 6) BLOCKED: ghcr.io/bangadpurva/unsloth-train:latest is private (403), and Nebius Jobs pull it anonymously. Purva to make the packages public; Plan B = Nebius Container Registry.
+- 2026-10-25T05:24Z PLAN B (Hari: 'go with plan B'; 'run the golden run when the push finishes').
+  - Nebius Container Registry registry-e00zbsmf901a9v6504 (cr.eu-north1.nebius.cloud, project eu-north1).
+  - Docs: a Job pulling from Container Registry in the same project needs no credentials.
+  - VM docker logged in with an IAM token (GPU SA); probe image cr.eu-north1.nebius.cloud/e00zbsmf901a9v6504/probe:1 pushed OK.
+  - Full unsloth-train (CUDA stage) build + push running detached on the VM (/tmp/unsloth-build.log).
+  - Next: ORCHAPOD_IMAGE_PREFIX=cr.eu-north1.nebius.cloud/e00zbsmf901a9v6504 in /opt/orchapod/.env → `dc up -d api` → `make e2e API=https://api.orchapod.dev MAX_COST=3`.

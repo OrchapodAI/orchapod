@@ -12,11 +12,12 @@ import { LossChart } from "@/components/runs/LossChart";
 import { NodeTimeline } from "@/components/runs/NodeTimeline";
 import { ArtifactList } from "@/components/runs/ArtifactList";
 import { EvalView } from "@/components/runs/EvalView";
+import { ReportBody } from "@/components/runs/ReportBody";
 import { DatasetCard } from "@/components/runs/DatasetCard";
 import { ComparePlayground } from "@/components/runs/ComparePlayground";
 import { datasetOf, evalOf, modelRefsOf, resultTab } from "@/lib/results";
 
-type Tab = "logs" | "chart" | "artifacts" | "eval" | "dataset" | "compare";
+type Tab = "logs" | "chart" | "artifacts" | "eval" | "dataset" | "compare" | "report";
 
 /** The live run view: /runs/[id], and embedded on /agent (where the back link opens the run page). */
 export function RunView({ id, embedded = false }: { id: string; embedded?: boolean }) {
@@ -29,6 +30,7 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
   const [error,        setError]        = useState("");  // a failed retry (a failed cancel is a toast)
   const [loadError,    setLoadError]    = useState("");  // a failed snapshot
   const [history,      setHistory]      = useState<LogLine[] | null>(null); // the stored log lines of the selected node; null while they load
+  const [report,       setReport]       = useState<string | null>(null); // the Agent's report of this finished run, if it has one
 
   const { events, connected } = useRunStream(id, attempt);
 
@@ -57,6 +59,15 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
     const timer = setInterval(load, POLL_MS);
     return () => clearInterval(timer);
   }, [on, load]);
+
+  // The Agent's report is read once the run has ended (404: not a run the Agent started). /agent shows it in its own card; a Retry node makes it stale.
+  const done = view !== null && finished(view.run.status);
+  useEffect(() => {
+    if (!done || embedded) { setReport(null); return; }
+    let live = true;
+    api.agent.report(id).then((r) => live && setReport(r.ready ? r.markdown : null)).catch(() => {});
+    return () => { live = false; };
+  }, [id, done, embedded]);
 
   // Apply each event once: `events` only grows, across reconnects.
   const applied = useRef(0);
@@ -130,7 +141,7 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
   const refs = modelRefsOf(summary);
   const stub = artifacts.some((a) => a.name === "metrics_json" && a.meta?.stub === true); // the SDK marks STUB=1 runs
   const tabs: Tab[] = ["logs", "chart", "artifacts", ...(evalResult ? ["eval" as const] : []),
-    ...(dataset ? ["dataset" as const] : []), ...(refs.length >= 2 ? ["compare" as const] : [])];
+    ...(dataset ? ["dataset" as const] : []), ...(refs.length >= 2 ? ["compare" as const] : []), ...(report ? ["report" as const] : [])];
 
   const canCancel = ["provisioning_gpu", "running"].includes(run.status);
   const starter = cancelToken(id) !== null; // read here, not in state: on /agent the id changes under one RunView
@@ -248,11 +259,12 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
               </div>
             )}
 
-            {(tab === "eval" || tab === "dataset" || tab === "compare") && (
+            {(tab === "eval" || tab === "dataset" || tab === "compare" || tab === "report") && (
               <div style={{ height: "100%", overflow: "auto" }}>
                 {tab === "eval" && evalResult && <EvalView {...evalResult} />}
                 {tab === "dataset" && dataset && <DatasetCard {...dataset} />}
                 {tab === "compare" && refs.length >= 2 && <ComparePlayground refs={refs} stub={stub} />}
+                {tab === "report" && report && <div className="card" style={{ padding: 16 }}><ReportBody markdown={report} /></div>}
               </div>
             )}
 

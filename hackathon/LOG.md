@@ -679,3 +679,13 @@ worktrees:
   - After a fresh CLI federation login (old token cache renamed to ~/.nebius/credentials.yaml.before-billing).
   - The CLI user = the tenant's admin (tenantuseraccount-e00a1v4snbsvxarzaj, ACTIVE).
   - So the block is Nebius account state (activation/verification), not roles or tokens. Next: Hari tries one create in the console to see Nebius's own error; else Nebius support.
+- 2026-10-25T05:02Z HOSTED BRING-UP (Hari: billing activated; 'yes recreate'). All by the Nebius CLI and the Hostinger connector (DNS only; complychip2's VPS untouched).
+  - The CLI could create once its federation token was refreshed after activation.
+  - Bucket orchapod-artifacts-d0c131 (storagebucket-e005159741708085019229, eu-north1), CORS GET/HEAD *, put/get/delete checked.
+  - Storage SA serviceaccount-e00meazg9fgxvxgmdg (group group-e00zgse05wzww66bxb: editor on the bucket only); static key accesskey-e00yz6r4fw3zb7hhrt → nebius/hosted.env.
+  - GPU SA serviceaccount-e00d2y9b5d6n2592qy (group group-e00g8zetp8e8zz4brk: editor on project-e00hyyz0pr00r4j62ke4hd); public key publickey-e00rnmv8scknqqbtjk → nebius/compute-sa-key.json.
+  - VM #1 (66.201.4.104) unusable over SSH: Hari's id_ed25519 has a passphrase and no agent holds it. Deleted on Hari's yes, with no leftovers.
+  - VM orchapod-hosted = computeinstance-e01ygx9959rzrwv49n: eu-west1 cpu-d3 4vcpu-16gb, 120 GiB, public 66.201.6.77, user orchapod with the new passphrase-free ~/.ssh/orchapod_deploy (+ Hari's key). cloud-init done; Docker 29.1.3; ufw 22/80/443.
+  - DNS at Hostinger: app/api.orchapod.dev A → 66.201.6.77 (TTL 300), resolving.
+  - /opt/orchapod/.env (16 settings incl. ORCHAPOD_MAX_DAY_USD=10) and nebius/compute-sa-key.json installed root:600.
+  - First deploy running.

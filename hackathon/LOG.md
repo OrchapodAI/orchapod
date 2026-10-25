@@ -779,3 +779,28 @@ worktrees:
   - make ui-smoke 4/5: the golden-path test FAILS at the compare playground. After Compare, no 'done' ×2 in 60 s; the snapshot shows the page back on eval with the compare form unmounted.
   - It was 5/5 before wave 6, so this is a frontend-w8 regression (a re-render resets the tab).
   - Sent to the frontend agent (worktree frontend-w8b; it may run ui-smoke once). The deploy waits for this fix.
+- 2026-10-25T08:25Z frontend-w8b MERGED (5b66c2b → 439a839).
+  - Root cause: the finished run's one-shot auto-open of the eval tab replaced a tab the user had already picked (Compare), unmounting the playground and aborting /compare.
+  - The 5 s summary poll made the eval tab appear before the last snapshot. A click now counts as a pick (resultTab()).
+  - ui-smoke 5/5 (worktree); make check 1163 + web 44.
+- 2026-10-25T08:25Z DEPLOYED wave 6 to the hosted VM (439a839).
+  - /health ok; summary nodes carry provider/resource; the header GPU reads nebius; orchapod/vllm-serve:dev rebuilt (orchapod.names).
+- 2026-10-25T08:26Z FIX 7ea6cb3: the golden-run fixture now records its endpoint's deletion (meta.deleted_at 06:55:26Z, re-exported from the hosted DB). Without it, every API that seeds the fixture re-armed the expiry at start and called Nebius to delete an endpoint that is gone (locally: retried forever).
+- 2026-10-25T08:27Z FIX f09aab7: seed-golden-run deletes the run's cancel token too.
+  - Reseeding the hosted d20d30f3 stopped at cancel_token_run_id_fkey (rolled back, nothing lost): /agent/run stores a token, and SQLite never enforced the key.
+  - Reseeded: GET /runs/d20d30f3…/logs → 15 lines over 6 nodes.
+- 2026-10-25T08:31Z FIX 4db617e (planner).
+  - A live plan of the golden sentence had a 7th node: a self-instruct synth-distilabel 'report' after judge-eval, which makes up 10 summaries.
+  - Cause: agent_knowledge.md's canonical plans ended in '→ report'.
+  - Now a constraint says the Agent writes the report itself, and review() refuses a node that needs judge-eval, so the repair round removes it.
+  - Re-planned live: exactly the six R25 nodes, $2.66, no errors.
+- 2026-10-25T08:33Z FIX 51b9c3d: the plan's rationale must be in plain words (it said 'Lane B, spike 4 settings' on the plan card).
+- 2026-10-25T08:35Z README screenshots taken from the hosted d20d30f3 (scratchpad, not yet committed): eval view, eval sample, run logs, artifacts, loss chart, canvas ?run=, templates.
+  - Findings for frontend polish:
+    - 2 of 3 'watch the golden run' links (real-estate, CPU variant) lead to an empty /runs?q= on hosted.
+    - The loss chart draws a vertical grid line at every step.
+- 2026-10-25T08:36Z RULING (orchestrator): the D8 rehearsal runs today, not Oct 26.
+  - It runs on the hosted app through the UI, recorded headless (Playwright video plus screenshots at every node status change), so failures surface before the G3 freeze.
+  - Budget: hosted spent today $2.22, left $2.78 under the $5 day cap; the plan's estimate is $2.66. The script aborts before Run unless the plan is the six nodes with no errors and ≤ $2.75.
+  - Admin: the X-Orchapod-Admin header is added by the script to api.orchapod.dev requests only. ORCHAPOD_ANON_SCALE stays 0.1: docs/video-script.md suggests 1 for recording day, but gpu_guard checks scale < 1, so that would let any visitor start GPU nodes. Devrel to reword that note.
+  - No deploys until the rehearsal ends (an API restart would stop its executor).

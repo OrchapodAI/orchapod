@@ -75,15 +75,18 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
     applied.current = events.length;
   }, [events, load]);
 
-  // The stored lines come first and the socket adds the new ones (it has no replay); the Logs tab opens on both.
+  // The stored lines come first and the socket adds the new ones. It has no replay, so a line stored before it opened is in neither: the history
+  // is read again when the socket opens or closes (mergeLogs tolerates the overlap) and stays on screen meanwhile; only another run or node clears it.
+  const historyOf = useRef("");
   useEffect(() => {
     let current = true;
-    setHistory(null);
+    const key = `${id}\0${activeNodeId ?? ""}`;
+    if (historyOf.current !== key) { historyOf.current = key; setHistory(null); }
     api.runs.logs(id, activeNodeId)
       .then((rows) => current && setHistory(rows))
-      .catch((err) => { if (current) { setHistory([]); toastError("Couldn't load the log history")(err); } });
+      .catch((err) => { if (current) { setHistory((h) => h ?? []); toastError("Couldn't load the log history")(err); } });
     return () => { current = false; };
-  }, [id, activeNodeId]);
+  }, [id, activeNodeId, connected]);
 
   const logLines = useMemo<LogLine[]>(
     () => mergeLogs(history ?? [], events.flatMap((e) => (e.type === "log" ? [e] : []))), [history, events]);

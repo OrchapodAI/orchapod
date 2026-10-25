@@ -775,3 +775,7 @@ worktrees:
   - MERGED backend-w9 → 6748fe6 and frontend-w8 → a22bacf.
   - Orchestrator tweak 0865c31: a bare Bearer/Basic is redacted only when token-like ('basic configuration' stays).
   - make check 1163 + web 43 green. Integration (E2E + ui-smoke) running; then deploy + reseed the golden run on the VM.
+- 2026-10-25T08:07Z Integration on 0865c31: make check E2E=1 GREEN (4 PASS incl. golden path).
+  - make ui-smoke 4/5: the golden-path test FAILS at the compare playground. After Compare, no 'done' ×2 in 60 s; the snapshot shows the page back on eval with the compare form unmounted.
+  - It was 5/5 before wave 6, so this is a frontend-w8 regression (a re-render resets the tab).
+  - Sent to the frontend agent (worktree frontend-w8b; it may run ui-smoke once). The deploy waits for this fix.

@@ -248,6 +248,9 @@ def _input_problems(key: str, value: Any, n: PlanNode, nodes: dict[str, PlanNode
         if model_ref and ("://" in value or "{" in value):  # its provenance cannot be checked
             return ["a model ref is a Token Factory model id, an inline Token Factory ref, or a ref to a "
                     "vllm-serve or quantize output"]
+        if model_ref and value.strip() not in PRICES["token_factory"]:  # the client refuses an unpriced model at run time
+            return [f"{value!r} is not a Token Factory model with a price ({', '.join(sorted(PRICES['token_factory']))}): "
+                    "serve it with vllm-serve or quantize it, and ref that node's output"]
         return []
     m = REF.fullmatch(value.strip())
     if not m:

@@ -460,7 +460,7 @@ def test_review_enforces_the_knowledge_constraints(monkeypatch):
         node("judge", "judge-eval", test_data="r2://b/test", judge_model="meta-llama/Llama-3.3-70B-Instruct",
              base_model_ref={**tf_ref, "base_url": "https://attacker.example/v1"},
              tuned_model_ref={**tf_ref, "api_key_env": "ORCHAPOD_ENDPOINT_TOKEN", "base_url": "https://e.example/v1"}),
-        node("fair", "judge-eval", test_data="r2://b/test", base_model_ref=tf_ref, tuned_model_ref="meta-llama/x"),
+        node("fair", "judge-eval", test_data="r2://b/test", base_model_ref=tf_ref, tuned_model_ref="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B"),
     ]}
 
     errors, warnings, _ = planner.review(plan)
@@ -471,6 +471,17 @@ def test_review_enforces_the_knowledge_constraints(monkeypatch):
     assert errors[2].startswith("judge: tuned_model_ref: refused ModelRef")
     assert errors[3].startswith("judge: judge_model must be a Nemotron model on Token Factory")
     assert any(w.startswith("big: no fine-tune price") for w in warnings)
+
+
+def test_review_refuses_a_bare_model_id_that_token_factory_does_not_price():
+    """Super planned judge-eval's base_model_ref as the student's bare Hub id (hosted, 2026-10-25): it is not on Token
+    Factory, so every base answer would have failed at the end of the run. A plain id must be a priced Token Factory model."""
+    docs = next(t["plan"] for t in planner.templates() if t["plan"]["name"] == "nebius-docs-specialist-nemotron-nano-8b-cpu")
+    judge = next(n for n in docs["nodes"] if n["type"] == "judge-eval")
+    bare = {**docs, "nodes": [n if n is not judge else {**n, "inputs": {**n["inputs"], "base_model_ref": "nvidia/Llama-3.1-Nemotron-Nano-8B-v1"}}
+                              for n in docs["nodes"]]}
+    new = [e for e in errors_of(bare) if e not in errors_of(docs)]
+    assert len(new) == 1 and new[0].startswith(f"{judge['id']}: base_model_ref: 'nvidia/Llama-3.1-Nemotron-Nano-8B-v1' is not a Token Factory model")
 
 
 def test_review_refuses_a_node_after_judge_eval():
@@ -489,7 +500,8 @@ MODEL_REF_CASES = [  # (value of judge-eval's base_model_ref, its needs, refused
     ("${{ nodes.serve.outputs.base_model_ref }}", ["serve"], False),
     ("${{ nodes.quant.outputs.gguf_file }}", ["quant"], False),
     ("${{ nodes.quant.outputs.gguf_f16 }}", ["quant"], False),
-    ("meta-llama/Llama-3.1-8B-Instruct", [], False),
+    ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B", [], False),             # a priced Token Factory model
+    ("meta-llama/Llama-3.1-8B-Instruct", [], True),                   # no Token Factory price: the client refuses it
     ({"base_url": TF_BASE, "model": "m", "api_key_env": "NEBIUS_API_KEY", "base_model": None}, [], False),
     ("${{ nodes.prep.outputs.dataset }}", ["prep"], True),             # a dataset is no model
     ("${{ nodes.quant.outputs.model_ref }}", ["quant"], True),          # an output quantize does not make a model ref from
@@ -507,7 +519,7 @@ def test_review_checks_where_a_model_ref_comes_from(value, needs, refused, monke
                                                "runtime": "api"})
     plan = {"name": "p", "nodes": [
         node("prep", "data-prep", dataset="hf://x"), node("serve", "vllm-serve"), node("quant", "quantize"),
-        node("judge", "judge-eval", needs, test_data="r2://b/t", base_model_ref=value, tuned_model_ref="meta-llama/x"),
+        node("judge", "judge-eval", needs, test_data="r2://b/t", base_model_ref=value, tuned_model_ref="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B"),
     ]}
     judge = [e for e in errors_of(plan) if e.startswith("judge: ")]  # (the fake types are not NodeTypes here)
     assert [e.split(":")[:2] for e in judge] == ([["judge", " base_model_ref"]] if refused else [])

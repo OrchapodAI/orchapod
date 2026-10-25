@@ -1,5 +1,5 @@
 # STATE — Orchapod × Nebius hackathon
-Updated: 2026-10-25T10:22Z by orchestrator · Phase: P3 · G1 MET 10-22 · G2 MET 10-25 (live golden run) · Next gate: G3 Oct 27 freeze · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
+Updated: 2026-10-25T19:18Z · prev 2026-10-25T10:22Z by orchestrator · Phase: P3 · G1 MET 10-22 · G2 MET 10-25 (live golden run) · Next gate: G3 Oct 27 freeze · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
 1. Nothing in flight.
@@ -163,6 +163,7 @@ Updated: 2026-10-25T10:22Z by orchestrator · Phase: P3 · G1 MET 10-22 · G2 ME
 - 2026-10-24: ≈ $0.11 (Tavily 6 credits $0.048 spike 3; live run #4 $0.0653)
 - 2026-10-22: ≈ $0.16 Token Factory (spike 1 ≤ $0.03 fine-tune of 50 rows; spike 2 $0.0055; live runs $0.1007 + $0.0034 + $0.0175; key validation $0)
 ## Golden path status (last real run: id, date, cost, result)
+- 2026-10-25T19:06Z: LIVE EXPERIMENT PASS, the CPU-variant shape on multi-state real-estate compliance. Run ca9838b7: 50.7 min, $1.35; H100 LoRA → q4_k_m GGUF + GGUF LoRA on CPU → Ultra 11/19/0 (0.68). Caveats in LOG; README/Devpost updated (b3eb12b).
 - 2026-10-25T08:07Z: integration on 0865c31 (wave 6): make check E2E=1 GREEN (4 PASS); ui-smoke 4/5. The golden-path compare step regressed → frontend-w8b.
 - 2026-10-25T06:53Z: scripts/golden-run.json is now the live golden run d20d30f3 (`make demo` seeds it; the hosted DB already has it).
 - 2026-10-25T06:42Z: LIVE GOLDEN RUN PASS on the hosted stack — run d20d30f3: 24.2 min, $1.61 (est $2.66): Tavily → Super grounded synth (300 rows) → Unsloth LoRA of Nemotron Nano 8B on an H100 Job (loss 7.75→1.68) → vLLM base+LoRA on one L40S endpoint → Ultra judge: 7 W / 22 T / 1 L, win rate 0.6, consistency 0.73.

@@ -933,3 +933,4 @@ worktrees:
     - All deployed (dfe67d7, 19:13Z); make check 1176 + web 51.
   - Settings back: hosted day cap $5, visitor scale 0.1. Today's hosted spend is about $5.30 (the cap was $10 during the experiment).
   - Local Docker Desktop is not running since the restart: 1 local test skips; ui-smoke and e2e need it.
+- 2026-10-25T19:18Z devrel-w12 MERGED (b3eb12b): the multi-state run in README/Devpost/CHANGELOG with its caveats. Note: 2dcfa2d (my docs/img commit) failed tests/docs for minutes, because every docs/img file needs a row in the video script's table. Run tests/docs after adding to docs/img.

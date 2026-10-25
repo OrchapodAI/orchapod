@@ -764,3 +764,9 @@ worktrees:
 - 2026-10-25T07:42Z frontend-w8 fix round done (63e126e, b422f92, 6060ece, eeacc87, 67d1e1e).
   - Fixes: I1–I3, M1–M5, M7; web 43; a fake-socket browser check 28/28. Its browser check found that nodesConnectable needed OrchaNode to forward isConnectable to its handles (fixed).
   - Orchestrator scoped check of the fix diff: APPROVED. Merges after backend-w9.
+- 2026-10-25T07:47Z backend-w9 review (sonnet): Needs fixes, no blocker.
+  - Verified on Postgres 16: the trim under 16 concurrent writers, the indexed /logs, seed idempotent + transactional, create_all adds only node_log, endpoint_name identical on 200k pairs.
+  - I1: redact_text misses pairs inside non-secret values, Bearer, URL userinfo, IAM tokens in prose.
+  - I2: the Nebius reads can pin the default thread pool → a dedicated pool.
+  - Minors: NUL/surrogates break the Postgres insert; max_length; superseded_at; fixture in conftest.
+  - Fix round 3 → aba8b998661f12a8f.

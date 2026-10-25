@@ -665,3 +665,12 @@ worktrees:
   - Upstream bug: nebius-mcp-server caps mcp ≤ 1.16.0, but uv resolved pydantic 2.14.1, which lacks eval_type_backport, so the server failed on import. Worked around with `uvx --with "pydantic<2.12"`; `claude mcp list`: nebius ✓ Connected.
   - Pending: Hari completes `nebius profile create` (browser login, terminal tab c7), then a session restart loads the MCP tools.
   - Hostinger: DNS only (Hari). Its connector is installed. The only Hostinger VPS is complychip's (not used).
+- 2026-10-25T02:22Z Bring-up steps 1–6 (Hari: yes).
+  - Step 1 DONE: .env NEBIUS_PROJECT_ID → project-e00hyyz0pr00r4j62ke4hd (eu-north1: H100 ×8, L40S ×8 quota). It was the us-north1 project (B300 only).
+  - Findings:
+    - eu-north1 non-GPU vCPU quota 0 → hosting VM per A-W (eu-west1 cpu-d3 4vcpu-16gb, 200 vCPU quota).
+    - GHCR node images are not public (anonymous manifest 403 for all six, incl. unsloth-train) → Purva must make them public before the golden run's Job can pull.
+  - BLOCKED: every create in AI Cloud is refused PermissionDenied:
+    - VM in eu-west1, a probe VM in eu-north1 (could not have been created: 0 vCPU), bucket in eu-north1.
+    - Hari's account is the tenant's only admin and the tenant is ACTIVE → billing/payment activation for AI Cloud is the likely cause.
+  - Nothing was created; $0.

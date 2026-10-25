@@ -689,3 +689,11 @@ worktrees:
   - DNS at Hostinger: app/api.orchapod.dev A → 66.201.6.77 (TTL 300), resolving.
   - /opt/orchapod/.env (16 settings incl. ORCHAPOD_MAX_DAY_USD=10) and nebius/compute-sa-key.json installed root:600.
   - First deploy running.
+- 2026-10-25T05:10Z HOSTED DEMO LIVE (first deploy of 6c6639f, 05:04Z).
+  - https://api.orchapod.dev/health {{"status":"ok"}} (DB, Redis, bucket); /livez 200; https://app.orchapod.dev/agent 200.
+  - Let's Encrypt to 2027-01-23; HTTP→HTTPS 308; hairpin 200.
+  - API container: nebius CLI 0.12.293, profile orchapod-gpu (GPU SA), IAM token ok, `ai job list` authorized.
+  - Node images built on the VM (GHCR private): web-research, synth-distilabel, data-prep, tf-finetune, vllm-serve, judge-eval, quantize, hf-download (13 GB used, 103 GB free).
+  - FIRST HOSTED RUN: template 2 reduced as an anonymous visitor → run eeeeb9ff succeeded in 42 s, $0.0058, Super's report.
+    - The dataset downloads via 307 → presigned storage.eu-north1 URL: 100 rows, CORS *.
+  - Golden run (step 6) BLOCKED: ghcr.io/bangadpurva/unsloth-train:latest is private (403), and Nebius Jobs pull it anonymously. Purva to make the packages public; Plan B = Nebius Container Registry.

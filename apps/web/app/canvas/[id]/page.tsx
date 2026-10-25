@@ -83,7 +83,6 @@ export default function CanvasPage() {
   // Cost-estimate modal state
   const [pendingRun, setPendingRun] = useState<Run | null>(null);
   const [costEstimates, setCostEstimates] = useState<NodeEstimate[]>([]);
-  const [loadingEstimate, setLoadingEstimate] = useState(false);
   const [confirming, setConfirming] = useState(false);
 
   // Load workflow
@@ -186,32 +185,32 @@ export default function CanvasPage() {
     }
   }
 
-  // Step 1: create run and show cost estimate modal
+  // Step 1: create the run and read its GPU quotes; the modal asks for a confirmation only if a node has one
   async function handleRun() {
     if (!workflow) return;
     setStarting(true);
     try {
       const run = await api.runs.create(id);
-      setPendingRun(run);
-      setLoadingEstimate(true);
-      const estimate = await api.runs.costEstimate(run.id);
-      setCostEstimates(estimate.nodes as NodeEstimate[]);
+      const { nodes: quoted } = await api.runs.costEstimate(run.id);
+      if (quoted.some((n) => n.quotes.length > 0)) {
+        setCostEstimates(quoted as NodeEstimate[]);
+        setPendingRun(run);
+      } else {
+        await startRun(run); // no GPU quote anywhere (a CPU-only plan): there is no cost to confirm
+      }
     } catch (err) {
       toastError("Couldn't create the run")(err);
-      setPendingRun(null);
     } finally {
       setStarting(false);
-      setLoadingEstimate(false);
     }
   }
 
-  // Step 2: user confirmed — start the pending run
-  async function handleConfirmRun() {
-    if (!pendingRun) return;
+  // Step 2: the user confirmed, or there was nothing to confirm — start the run
+  async function startRun(run: Run) {
     setConfirming(true);
     try {
-      await api.runs.start(pendingRun.id);
-      router.push(`/runs/${pendingRun.id}`);
+      await api.runs.start(run.id);
+      router.push(`/runs/${run.id}`);
     } catch (err) {
       toastError("Couldn't start the run")(err);
       setPendingRun(null);
@@ -330,63 +329,59 @@ export default function CanvasPage() {
               </p>
             </div>
 
-            {loadingEstimate ? (
-              <p className="muted" style={{ fontSize: 13 }}>Fetching quotes…</p>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {costEstimates.map((ne) => {
-                  const best = ne.quotes.find((q) => q.available && !q.error) ?? ne.quotes[0];
-                  return (
-                    <div key={ne.node_id} style={{
-                      padding: "10px 12px",
-                      background: "var(--bg-2)",
-                      border: "1px solid var(--line)",
-                      borderRadius: 6,
-                    }}>
-                      <div className="row" style={{ gap: 10, alignItems: "center" }}>
-                        <span style={{ fontSize: 11.5, fontWeight: 600, color: "var(--ink-1)", flex: 1 }}>
-                          {ne.node_id}
-                        </span>
-                        <span className="pill" style={{ fontSize: 10 }}>{ne.node_type}</span>
-                      </div>
-                      {best && (
-                        <div className="row" style={{ gap: 8, marginTop: 6, flexWrap: "wrap" }}>
-                          {best.error ? (
-                            <span className="muted" style={{ fontSize: 11 }}>No quote available</span>
-                          ) : (
-                            <>
-                              <span className="muted" style={{ fontSize: 11 }}>{best.provider}</span>
-                              {best.gpu_type && (
-                                <span className="muted" style={{ fontSize: 11 }}>· {best.gpu_type}</span>
-                              )}
-                              <span style={{ fontSize: 11, fontWeight: 600, color: "var(--brand)" }}>
-                                ${best.price_per_hour?.toFixed(2)}/hr
-                              </span>
-                              {!best.available && (
-                                <span style={{ fontSize: 10, color: "var(--rose)", fontWeight: 500 }}>unavailable</span>
-                              )}
-                            </>
-                          )}
-                        </div>
-                      )}
-                      {/* Other provider quotes */}
-                      {ne.quotes.length > 1 && (
-                        <div className="row" style={{ gap: 6, marginTop: 4, flexWrap: "wrap" }}>
-                          {ne.quotes.slice(1).map((q) => !q.error && (
-                            <span key={q.provider} className="muted" style={{ fontSize: 10 }}>
-                              {q.provider} ${q.price_per_hour?.toFixed(2)}
-                            </span>
-                          ))}
-                        </div>
-                      )}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {costEstimates.map((ne) => {
+                const best = ne.quotes.find((q) => q.available && !q.error) ?? ne.quotes[0];
+                return (
+                  <div key={ne.node_id} style={{
+                    padding: "10px 12px",
+                    background: "var(--bg-2)",
+                    border: "1px solid var(--line)",
+                    borderRadius: 6,
+                  }}>
+                    <div className="row" style={{ gap: 10, alignItems: "center" }}>
+                      <span style={{ fontSize: 11.5, fontWeight: 600, color: "var(--ink-1)", flex: 1 }}>
+                        {ne.node_id}
+                      </span>
+                      <span className="pill" style={{ fontSize: 10 }}>{ne.node_type}</span>
                     </div>
-                  );
-                })}
-                {costEstimates.length === 0 && (
-                  <p className="muted" style={{ fontSize: 13 }}>No GPU nodes in this workflow.</p>
-                )}
-              </div>
-            )}
+                    {best && (
+                      <div className="row" style={{ gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+                        {best.error ? (
+                          <span className="muted" style={{ fontSize: 11 }}>No quote available</span>
+                        ) : (
+                          <>
+                            <span className="muted" style={{ fontSize: 11 }}>{best.provider}</span>
+                            {best.gpu_type && (
+                              <span className="muted" style={{ fontSize: 11 }}>· {best.gpu_type}</span>
+                            )}
+                            <span style={{ fontSize: 11, fontWeight: 600, color: "var(--brand)" }}>
+                              ${best.price_per_hour?.toFixed(2)}/hr
+                            </span>
+                            {!best.available && (
+                              <span style={{ fontSize: 10, color: "var(--rose)", fontWeight: 500 }}>unavailable</span>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
+                    {/* Other provider quotes */}
+                    {ne.quotes.length > 1 && (
+                      <div className="row" style={{ gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+                        {ne.quotes.slice(1).map((q) => !q.error && (
+                          <span key={q.provider} className="muted" style={{ fontSize: 10 }}>
+                            {q.provider} ${q.price_per_hour?.toFixed(2)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {costEstimates.length === 0 && (
+                <p className="muted" style={{ fontSize: 13 }}>No GPU nodes in this workflow.</p>
+              )}
+            </div>
 
             <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
               <button
@@ -397,8 +392,8 @@ export default function CanvasPage() {
                 Cancel
               </button>
               <button
-                onClick={handleConfirmRun}
-                disabled={confirming || loadingEstimate}
+                onClick={() => pendingRun && startRun(pendingRun)}
+                disabled={confirming}
                 className="btn btn-sm btn-primary"
               >
                 {confirming ? "Starting…" : "Confirm & Start"}

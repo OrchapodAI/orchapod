@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { api, explainError } from "@/lib/api";
-import { refName } from "@/lib/results";
+import { plural, refName } from "@/lib/results";
 import type { EvalSummary, Verdict } from "@/lib/types";
 import { Callout } from "@/components/Callout";
 
@@ -32,7 +32,7 @@ export function EvalView({ stats, samplesUrl }: { stats: Omit<EvalSummary, "samp
 
   const { wins, ties, losses } = stats;
   const decided = wins + ties + losses; // errored rows are left out of the rate
-  const bars = [["wins", wins, "var(--mint)"], ["ties", ties, "var(--ink-4)"], ["losses", losses, "var(--rose)"]] as const;
+  const bars = [["win", "wins", wins, "var(--mint)"], ["tie", "ties", ties, "var(--ink-4)"], ["loss", "losses", losses, "var(--rose)"]] as const;
 
   return (
     <div className="col" style={{ gap: 16 }}>
@@ -44,20 +44,20 @@ export function EvalView({ stats, samplesUrl }: { stats: Omit<EvalSummary, "samp
               {stats.stub && <span className="pill warn" title="This run ran with STUB=1: placeholder answers and verdicts">STUB</span>}
             </div>
             <div className="tnum" style={{ fontSize: 40, fontWeight: 600, lineHeight: 1.1 }}>{pct(stats.win_rate)}</div>
-            <div className="muted tnum" style={{ fontSize: 12 }}>(wins + ½ ties) ÷ {decided} verdicts</div>
+            <div className="muted tnum" style={{ fontSize: 12 }}>(wins + ½ ties) ÷ {plural(decided, "verdict")}</div>
           </div>
           <div style={{ flex: 1, minWidth: 240 }}>
-            <div role="img" aria-label={`${wins} wins, ${ties} ties, ${losses} losses`}
+            <div role="img" aria-label={bars.map(([one, many, n]) => plural(n, one, many)).join(", ")}
               style={{ display: "flex", height: 14, borderRadius: 4, overflow: "hidden", background: "var(--bg-3)", marginTop: 6 }}>
-              {bars.map(([k, n, color]) => n > 0 && <div key={k} style={{ width: `${(n / decided) * 100}%`, background: color }} />)}
+              {bars.map(([, many, n, color]) => n > 0 && <div key={many} style={{ width: `${(n / decided) * 100}%`, background: color }} />)}
             </div>
             <div className="row tnum" style={{ gap: 14, fontSize: 12.5, marginTop: 8, flexWrap: "wrap" }}>
-              {bars.map(([k, n, color]) => (
-                <span key={k} className="row" style={{ gap: 5 }}>
-                  <span style={{ width: 8, height: 8, borderRadius: 2, background: color }} />{n} {k}
+              {bars.map(([one, many, n, color]) => (
+                <span key={many} className="row" style={{ gap: 5 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: color }} />{plural(n, one, many)}
                 </span>
               ))}
-              {stats.errors > 0 && <span style={{ color: "var(--rose-ink)" }}>{stats.errors} errors (left out)</span>}
+              {stats.errors > 0 && <span style={{ color: "var(--rose-ink)" }}>{plural(stats.errors, "error")} (left out)</span>}
             </div>
             <p className="muted" style={{ fontSize: 12, margin: "8px 0 0" }}>
               The judge sees both answer orders. A win needs tuned picked in both, a loss base in both; anything else is a tie.
@@ -73,7 +73,7 @@ export function EvalView({ stats, samplesUrl }: { stats: Omit<EvalSummary, "samp
         <div className="muted mono" style={{ fontSize: 11.5, marginTop: 10, lineHeight: 1.7, wordBreak: "break-all" }}>
           {refName("base", stats.base?.model, " ")} · {refName("tuned", stats.tuned?.model, " ")}<br />
           judge {stats.judge_model} · temperature {stats.decoding?.temperature} · max {stats.decoding?.max_tokens} tokens ·
-          {" "}{stats.judged} of {stats.n} rows judged
+          {" "}{stats.judged} of {plural(stats.n, "row")} judged
         </div>
       </div>
 

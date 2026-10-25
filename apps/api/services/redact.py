@@ -31,7 +31,9 @@ def redact(value):
 # `key=value`, `key: value` or `"key": "value"` in free text. A key starts only at a word's start; the value may follow an
 # auth scheme (Authorization: Bearer abc) and ends at a space, quote, comma, semicolon, & or }.
 _PAIR = re.compile(r"""(?<![\w.-])([\w.-]+)(["']?\s*[:=]\s*["']?)((?:(?i:bearer|basic)\s+)?[^\s"',;&}]+)""")
-_BEARER = re.compile(r"(?i)\b(bearer|basic)\s+[\w.~+/=-]{8,}")  # a token no key names: "sent Bearer eyJ…"
+# a token no key names ("sent Bearer eyJ…"): it has a digit, + / =, or a capital after its first character, so prose such as
+# "basic configuration" stays readable
+_BEARER = re.compile(r"\b((?i:bearer|basic))\s+(?=[\w.~+/=-]*?(?:[0-9+/=]|(?<=[\w.~+/=-])[A-Z]))[\w.~+/=-]{8,}")
 _USERINFO = re.compile(r"(?<=://)[^/\s@:]*:[^/\s@]+(?=@)")  # the user:password of https://user:pw@host/
 
 

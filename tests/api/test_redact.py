@@ -107,3 +107,14 @@ def test_without_secrets_drops_secret_keys_at_any_depth_of_an_input():
               "headers": {"Authorization": "Bearer X"}, "max_tokens": 5, "api_key_env": "NEBIUS_API_KEY"}
     out = without_secrets({"nodes": [{"id": "n", "inputs": inputs}]})["nodes"][0]["inputs"]
     assert out == {"cfg": {"k": 1}, "refs": [{"model": "m"}], "headers": {}, "max_tokens": 5, "api_key_env": "NEBIUS_API_KEY"}
+
+
+@pytest.mark.parametrize("line, redacted", [
+    ("sent Bearer eyJhbGciOiJIUzI1NiJ9 to the API", True),
+    ("Authorization header: Basic dXNlcjpwYXNz", True),
+    ("bearer sk-1234567 rejected", True),
+    ("using basic configuration for the run", False),
+    ("Basic Configuration loaded", False),
+])
+def test_a_bearer_or_basic_token_is_redacted_but_prose_is_not(line, redacted):
+    assert (REDACTED in redact_text(line)) is redacted, redact_text(line)

@@ -1,12 +1,27 @@
 # STATE — Orchapod × Nebius hackathon
-Updated: 2026-10-25T08:15Z by orchestrator · Phase: P3 · G1 MET 10-22 · G2 MET 10-25 (live golden run) · Next gate: G3 Oct 27 freeze · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
+Updated: 2026-10-25T09:50Z by orchestrator · Phase: P3 · G1 MET 10-22 · G2 MET 10-25 (live golden run) · Next gate: G3 Oct 27 freeze · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
-1. IN FLIGHT: frontend-w8b fixes the ui-smoke regression from wave 6. The compare playground is unmounted mid-stream; the golden-path test fails at smoke.spec.ts:217; it was 5/5 before wave 6. Then re-run ui-smoke 5/5 → deploy wave 6 to the VM → reseed d20d30f3 so its logs show → check /runs/{id}/logs and the summary provider/resource on api.orchapod.dev.
-2. Real screenshots of the hosted app (docs/img) → README/Devpost (devrel).
-3. Oct 26: D8 rehearsal golden run on the hosted stack ($5 day cap). This is the showcase run with persisted logs; record video footage while its endpoint lives (the compare playground needs a live endpoint).
-4. Oct 27: G3 freeze, tag v0.1-hackathon. Oct 29 6 PM ET: submit. Hari's yes is needed to make the repo public, upload the video and submit on Devpost.
-5. P2 when idle: data quality_filter → chat(create=True); backend unsloth estimate from max_steps.
+1. IN FLIGHT (wave 7, base d5d7ad7):
+   - backend-w10: anonymous GPU plans get admin_only and no budget repairs.
+   - frontend-w11: an amber admin-only note with a golden-run link; a plain 402.
+   - devrel-w10: README/Devpost with docs/img and both live runs; the video-script recording note.
+   - Then merge, ui-smoke, deploy.
+2. DONE 10-25:
+   - D8 rehearsal PASS: 0ee1e20a, from the hosted UI, 23.5 min, $1.58, Ultra 7/20/3 (win rate 0.57).
+   - Wave 6 + frontend-w8b/w9/w10 deployed (85878e4).
+   - Screenshots in docs/img (082cf60).
+   - Silent video draft: footage/video-draft/ (gitignored).
+3. Hari (hackathon/WAITING_FOR_HUMAN):
+   - the voice-over and the video upload;
+   - the day cap for the judging window;
+   - the repo public at G3 (keys rotated, Jira.csv);
+   - Devpost submit.
+4. Oct 27: G3 freeze, tag v0.1-hackathon. Oct 29 6 PM ET: submit.
+   - Operating rule from now: no admin runs on the hosted app. Admin spend uses up the public's day share.
+5. P2 when idle:
+   - data: quality_filter → chat(create=True);
+   - backend: the unsloth estimate from max_steps (the flat $1.88 makes Super shrink plans that can never fit).
 
 ## Board (status ∈ TODO | IN_PROGRESS(<agent>, <branch>) | REVIEW | DONE | BLOCKED(<why>))
 ### orchestrator
@@ -142,7 +157,8 @@ Updated: 2026-10-25T08:15Z by orchestrator · Phase: P3 · G1 MET 10-22 · G2 ME
 - Plugins: superpowers 6.3.0, ponytail, episodic-memory (already installed) · nebius CLI: deferred to G2
 - jsonschema in the shared venv (data-w2; also pinned in requirements-dev.txt) · images to rebuild after data-w2 merges: orchapod/synth-distilabel:dev (5 months stale), orchapod/web-research:dev (new), orchapod/data-prep:dev
 ## Spend to date (per day, per key)
-- 2026-10-25: ≈ $2.20 runs on the hosted stack (golden run #1 fa20d166 $0.5842; golden run #2 d20d30f3 $1.6100; first hosted run eeeeb9ff $0.0058), plus the hosting VM and bucket billing hourly. No Jobs or Endpoints left (checked 08:12Z).
+- 2026-10-25: ≈ $3.80 runs on the hosted stack (D8 rehearsal 0ee1e20a $1.5811 added at 08:59Z);
+  earlier the same day ≈ $2.20 (golden run #1 fa20d166 $0.5842; golden run #2 d20d30f3 $1.6100; first hosted run eeeeb9ff $0.0058), plus the hosting VM and bucket billing hourly. No Jobs or Endpoints left (checked 08:12Z).
 - 2026-10-20: $1.29 (vast.ai A100 SXM4 80 GB at $1.2485/h, 48 min, spike 4; instance destroyed)
 - 2026-10-24: ≈ $0.11 (Tavily 6 credits $0.048 spike 3; live run #4 $0.0653)
 - 2026-10-22: ≈ $0.16 Token Factory (spike 1 ≤ $0.03 fine-tune of 50 rows; spike 2 $0.0055; live runs $0.1007 + $0.0034 + $0.0175; key validation $0)

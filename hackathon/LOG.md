@@ -761,3 +761,6 @@ worktrees:
   - 1138 passed; 17 mutants.
   - DECISION (backend-w9): seeded logs leave out PROGRESS lines (live history never stores them).
   - Full-branch review dispatched (sonnet). Trial merge clean.
+- 2026-10-25T07:42Z frontend-w8 fix round done (63e126e, b422f92, 6060ece, eeacc87, 67d1e1e).
+  - Fixes: I1–I3, M1–M5, M7; web 43; a fake-socket browser check 28/28. Its browser check found that nodesConnectable needed OrchaNode to forward isConnectable to its handles (fixed).
+  - Orchestrator scoped check of the fix diff: APPROVED. Merges after backend-w9.

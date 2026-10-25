@@ -5,11 +5,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, capNote, demoNote, explainError, usd } from "@/lib/api";
 import type { AgentPlan, AgentReport, AgentTemplate, Run } from "@/lib/types";
-import { reportNext, seenFinishedAt, splitReport } from "@/lib/runEvents";
+import { reportNext, seenFinishedAt } from "@/lib/runEvents";
 import { planYaml } from "@/lib/workflowYaml";
 import { NODE_META } from "@/components/canvas/OrchaNode";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Callout } from "@/components/Callout";
+import { ReportBody } from "@/components/runs/ReportBody";
 import { RunView } from "@/components/runs/RunView";
 
 const MAX_INTENT = 2000; // contracts: POST /agent/plan takes at most 2000 chars
@@ -298,8 +299,6 @@ function ReportCard({ runId }: { runId: string }) {
     return () => { live = false; clearTimeout(timer); };
   }, [runId]);
 
-  const { title, body } = splitReport(report?.markdown ?? ""); // null until the report is ready
-
   return (
     <div className="card" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
       <div className="row">
@@ -315,12 +314,7 @@ function ReportCard({ runId }: { runId: string }) {
       {error && <Callout tone="rose" title="Couldn't load the report">{error}</Callout>}
       {report?.error && <Callout tone="rose" title="Run failed">{report.error}</Callout>}
       {report?.ready && report.markdown ? (
-        <>
-          {title && <h2 style={{ fontSize: 15, fontWeight: 600 }}>{title}</h2>}
-          <pre style={{ whiteSpace: "pre-wrap", fontFamily: "var(--font-ui)", fontSize: 13, lineHeight: 1.6, margin: 0 }}>
-            {body}
-          </pre>
-        </>
+        <ReportBody markdown={report.markdown} />
       ) : gone ? (
         <p className="muted" style={{ fontSize: 13, margin: 0 }}>
           Report unavailable, <Link href={`/runs/${runId}`} style={{ color: "var(--brand)", textDecoration: "underline" }}>see the run page</Link>

@@ -40,6 +40,45 @@ export function splitReport(md: string): { title: string | null; body: string } 
   return m ? { title: m[1], body: m[2].trim() } : { title: null, body: md };
 }
 
+/** A line of the report: its text, with each artifact download link as {href, text}. */
+export type ReportLine = (string | { href: string; text: string })[];
+type ReportList = { type: "p" | "ul"; lines: ReportLine[] };
+export type ReportBlock = { type: "h"; text: string } | ReportList;
+
+// The artifacts' download_url is a path of the API, written bare or as a Markdown link: relative to the web app it opens /artifacts instead.
+const DOWNLOAD = /\[([^\]\n]*)\]\((\/artifacts\/[0-9a-f-]{36}\/download)\)|(?<![\w/.])(\/artifacts\/[0-9a-f-]{36}\/download)(?![\w/-])/g;
+
+function linkLine(text: string, base: string): ReportLine {
+  const line: ReportLine = [];
+  let end = 0;
+  for (const m of text.matchAll(DOWNLOAD)) {
+    const path = m[2] ?? m[3];
+    if (m.index > end) line.push(text.slice(end, m.index));
+    line.push({ href: base + path, text: m[1] || path });
+    end = m.index + m[0].length;
+  }
+  return end < text.length ? [...line, text.slice(end)] : line;
+}
+
+/** The reporter writes Markdown (planner.REPORT_PROMPT): `## ` headings, plain lines (they end in two spaces: each is its own line) and `- ` bullets,
+ *  in blocks split by blank lines. Nothing else is interpreted; an artifact's download path links to the API at `base`. Model text: shown, never run. */
+export function reportBlocks(md: string, base: string): ReportBlock[] {
+  const blocks: ReportBlock[] = [];
+  let list: ReportList | null = null;
+  for (const raw of md.split(/\r?\n/)) {
+    const line = raw.trimEnd();
+    const heading = line.match(/^#{1,6}\s+(.*)$/), bullet = line.match(/^\s*[-*]\s+(.*)$/);
+    if (heading) { blocks.push({ type: "h", text: heading[1] }); list = null; }
+    else if (!line) list = null;
+    else {
+      const type = bullet ? "ul" : "p";
+      if (!list || list.type !== type) { list = { type, lines: [] }; blocks.push(list); }
+      list.lines.push(linkLine(bullet ? bullet[1] : line, base));
+    }
+  }
+  return blocks;
+}
+
 /** `?run=` on the canvas: a run id (a UUID) or nothing, so no other text reaches an API path. */
 export const runIdOf = (raw: string | null) => (raw && /^[0-9a-f-]{36}$/i.test(raw) ? raw : null);
 

@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { yamlValue, buildYamlFromGraph, planYaml, STARTER_YAML } from "../../apps/web/lib/workflowYaml.ts";
-import { api, apiDate, cancelToken, capNote, demoNote, explainError, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
+import { api, apiDate, cancelToken, capNote, demoNote, explainError, mergeLogs, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
 import { applyCompareEvent, applyRunEvent, canRetry, finished, REPORT_WAIT_MS, reportNext, runShown, seenFinishedAt, splitReport } from "../../apps/web/lib/runEvents.ts";
 import { defaultInputs, NODE_FORMS } from "../../apps/web/lib/nodeForms.ts";
 import { datasetOf, evalOf, lossPoints, lossSources, modelRefsOf, refName } from "../../apps/web/lib/results.ts";
@@ -182,6 +182,34 @@ test("Retry node is enabled only once the run has stopped (failed or cancelled)"
   const statuses = ["pending", "provisioning_gpu", "running", "succeeded", "failed", "cancelled"] as const;
   assert.deepEqual(statuses.filter(canRetry), ["failed", "cancelled"]);
   assert.deepEqual(statuses.filter(finished), ["succeeded", "failed", "cancelled"]); // the loss chart's and artifact list's "this run is over"
+});
+
+test("the Logs tab reads GET /runs/{id}/logs, of the selected node when there is one", async () => {
+  const calls: string[] = [];
+  globalThis.fetch = async (url: string) => { calls.push(url); return new Response('[{"ts":"2026-10-25T10:00:00","level":"INFO","node_id":"train","message":"hi"}]'); };
+  assert.equal((await api.runs.logs("r1"))[0].message, "hi");
+  await api.runs.logs("r1", "train step");
+  assert.deepEqual(calls, ["http://localhost:8001/runs/r1/logs", "http://localhost:8001/runs/r1/logs?node_id=train%20step"]);
+});
+
+test("stored log lines and live ones merge without duplicates, oldest first (backend-w9's contract, mocked)", () => {
+  const line = (ts: string, message: string, node_id = "train") => ({ ts, level: "INFO", node_id, message });
+  // the API's naive UTC against the SDK's own stamp (microseconds, +00:00): one line, whatever the notation
+  const stored = [line("2026-10-25T10:00:00.100000", "loading"), line("2026-10-25T10:00:01.500000", "step 1")];
+  const live = [line("2026-10-25T10:00:01.500000+00:00", "step 1"), line("2026-10-25T10:00:02Z", "step 2")];
+  assert.deepEqual(mergeLogs(stored, live).map((l) => l.message), ["loading", "step 1", "step 2"]);
+  assert.deepEqual(mergeLogs([], live).map((l) => l.message), ["step 1", "step 2"]); // nothing stored yet (or the fetch failed)
+  assert.deepEqual(mergeLogs(stored, []), stored);
+  // two real lines that look alike both show: a stored copy hides one live copy, not every one
+  const twin = line("2026-10-25T10:00:03Z", "retrying");
+  assert.equal(mergeLogs([twin], [twin, twin]).length, 2);
+  assert.equal(mergeLogs([], [twin, twin]).length, 2);
+  // the same text from another node, or at another time, is another line
+  assert.equal(mergeLogs([line("2026-10-25T10:00:03Z", "x", "a")], [line("2026-10-25T10:00:03Z", "x", "b")]).length, 2);
+  assert.equal(mergeLogs([line("2026-10-25T10:00:03Z", "x")], [line("2026-10-25T10:00:04Z", "x")]).length, 2);
+  // a socket open longer than the stored window has older lines too: they go before the stored ones, not after
+  assert.deepEqual(mergeLogs([line("2026-10-25T10:05:00Z", "new")], [line("2026-10-25T10:01:00Z", "old")]).map((l) => l.message), ["old", "new"]);
+  assert.equal(stored.length, 2); // the inputs are not touched
 });
 
 test("dropped nodes start from contract defaults: no teacher_kind, vllm-serve keep-alive 30 min, unsloth-train on R25's student", () => {

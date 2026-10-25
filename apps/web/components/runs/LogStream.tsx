@@ -2,13 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import clsx from "clsx";
-
-export interface LogLine {
-  ts: string;
-  level: string;
-  node_id: string;
-  message: string;
-}
+import type { LogLine } from "@/lib/types";
 
 const LEVEL_COLOR: Record<string, string> = {
   INFO:     "text-[#6B778C]",
@@ -21,9 +15,13 @@ interface Props {
   lines: LogLine[];
   activeNodeId?: string;
   connected: boolean;
+  /** The stored history is still loading. */
+  loading?: boolean;
+  /** The run is over, so no line is coming. */
+  done?: boolean;
 }
 
-export function LogStream({ lines, activeNodeId, connected }: Props) {
+export function LogStream({ lines, activeNodeId, connected, loading, done }: Props) {
   const boxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {  // scroll the log box only: scrollIntoView also moved the page, pulling a reader back on every line
@@ -50,7 +48,7 @@ export function LogStream({ lines, activeNodeId, connected }: Props) {
 
       <div ref={boxRef} className="flex-1 overflow-y-auto p-4 space-y-0.5 font-mono text-xs bg-[#FAFBFC]">
         {filtered.length === 0 ? (
-          <p className="text-[#97A0AF] italic">Waiting for logs…</p>
+          <p className="text-[#97A0AF] italic">{loading ? "Loading logs…" : done ? "No logs." : "Waiting for logs…"}</p>
         ) : (
           filtered.map((line, i) => (
             <div key={i} className="flex gap-3 hover:bg-[#F4F5F7] px-1 py-0.5 rounded log-line">

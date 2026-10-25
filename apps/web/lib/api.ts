@@ -1,7 +1,7 @@
 import type {
   Workflow, Run, BaseModel, PublicDataset, NodeTypeMeta, NodeType, TrainingMethod,
   DeployRequest, DeployResponse, InferenceEndpoint, RegisteredModel, ArtifactListItem,
-  AgentPlan, AgentRunOut, AgentReport, AgentTemplate, Plan, RunSummary, ModelRef, CompareEvent,
+  AgentPlan, AgentRunOut, AgentReport, AgentTemplate, Plan, RunSummary, ModelRef, CompareEvent, LogLine,
 } from "./types";
 
 export const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
@@ -26,6 +26,24 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 /** The API sends naive UTC datetimes (no zone); new Date() would read them as local time. */
 export const apiDate = (iso: string) => new Date(/(Z|[+-]\d\d:\d\d)$/i.test(iso) ? iso : `${iso}Z`);
+
+// A line's time in ms: the API stamps naive UTC, the SDK microseconds and +00:00, and both mean one instant.
+const logMs = (l: LogLine) => apiDate(l.ts).getTime() || 0;
+const logKey = (l: LogLine) => `${logMs(l)}\0${l.node_id}\0${l.level}\0${l.message}`;
+
+/** The Logs tab's lines: the stored history (GET /runs/{id}/logs) and the live ones from the socket, which also hold what was stored while the
+ *  page loaded. A live line the history already has is dropped, one copy per stored copy, so two real lines that look alike both show. The rest
+ *  is in time order, because a socket open longer than the stored window has older lines too. */
+export function mergeLogs(history: LogLine[], live: LogLine[]): LogLine[] {
+  const held = new Map<string, number>();
+  for (const l of history) held.set(logKey(l), (held.get(logKey(l)) ?? 0) + 1);
+  const fresh = live.filter((l) => {
+    const k = logKey(l), n = held.get(k) ?? 0;
+    if (n) held.set(k, n - 1);
+    return !n;
+  });
+  return [...history, ...fresh].map((l) => [logMs(l), l] as const).sort((a, b) => a[0] - b[0]).map(([, l]) => l); // stable
+}
 
 /** One readable sentence for a failed call: the /agent page's error state. */
 export function explainError(err: unknown): string {
@@ -151,6 +169,10 @@ export const api = {
     },
     summary(id: string): Promise<RunSummary> {
       return req(`/runs/${id}/summary`);
+    },
+    /** The stored log lines, oldest first: the last 500 of the run, or of one node (docs/contracts.md, backend-w9). */
+    logs(id: string, nodeId?: string): Promise<LogLine[]> {
+      return req(`/runs/${id}/logs${nodeId ? `?node_id=${encodeURIComponent(nodeId)}` : ""}`);
     },
     costEstimate(id: string): Promise<{ nodes: { node_id: string; node_type: NodeType; quotes: unknown[] }[] }> {
       return req(`/runs/${id}/cost-estimate`);

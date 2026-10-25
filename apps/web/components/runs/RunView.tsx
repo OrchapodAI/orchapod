@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { api, apiDate, cancelToken, explainError, toastError } from "@/lib/api";
+import { api, apiDate, cancelToken, explainError, mergeLogs, toastError } from "@/lib/api";
 import { applyRunEvent, canRetry, finished, type RunViewState } from "@/lib/runEvents";
 import { useRunStream } from "@/lib/ws";
 import { StatusBadge } from "@/components/StatusBadge";
-import { LogStream, type LogLine } from "@/components/runs/LogStream";
+import { LogStream } from "@/components/runs/LogStream";
+import type { LogLine } from "@/lib/types";
 import { LossChart } from "@/components/runs/LossChart";
 import { NodeTimeline } from "@/components/runs/NodeTimeline";
 import { ArtifactList } from "@/components/runs/ArtifactList";
@@ -27,6 +28,7 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
   const [attempt,      setAttempt]      = useState(0);   // bumped by a retry to reconnect the socket
   const [error,        setError]        = useState("");  // a failed retry (a failed cancel is a toast)
   const [loadError,    setLoadError]    = useState("");  // a failed snapshot
+  const [history,      setHistory]      = useState<LogLine[] | null>(null); // the stored log lines of the selected node; null while they load
 
   const { events, connected } = useRunStream(id, attempt);
 
@@ -65,16 +67,18 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
     applied.current = events.length;
   }, [events, load]);
 
-  const logLines = useMemo<LogLine[]>(() => {
-    return events
-      .filter((e) => e.type === "log")
-      .map((e) => ({
-        ts:      (e as { ts: string }).ts,
-        level:   (e as { level: string }).level,
-        node_id: (e as { node_id: string }).node_id,
-        message: (e as { message: string }).message,
-      }));
-  }, [events]);
+  // The stored lines come first and the socket adds the new ones (it has no replay); the Logs tab opens on both.
+  useEffect(() => {
+    let current = true;
+    setHistory(null);
+    api.runs.logs(id, activeNodeId)
+      .then((rows) => current && setHistory(rows))
+      .catch((err) => { if (current) { setHistory([]); toastError("Couldn't load the log history")(err); } });
+    return () => { current = false; };
+  }, [id, activeNodeId]);
+
+  const logLines = useMemo<LogLine[]>(
+    () => mergeLogs(history ?? [], events.flatMap((e) => (e.type === "log" ? [e] : []))), [history, events]);
 
   async function handleCancel() {
     setCancelling(true); setError("");
@@ -217,7 +221,7 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
           <div style={{ flex: 1, overflow: "hidden", padding: 16, background: "var(--bg-2)" }}>
 
             {tab === "logs" && (
-              <LogStream lines={logLines} activeNodeId={activeNodeId} connected={connected} />
+              <LogStream lines={logLines} activeNodeId={activeNodeId} connected={connected} loading={history === null} done={finished(run.status)} />
             )}
 
             {tab === "chart" && (

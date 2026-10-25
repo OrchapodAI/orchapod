@@ -332,6 +332,14 @@ export interface AgentReport {
   markdown: string | null;
 }
 
+/** One log line: as GET /runs/{id}/logs returns it, and as a `log` event carries it. */
+export interface LogLine {
+  ts: string;
+  level: string;
+  node_id: string;
+  message: string;
+}
+
 // ── WebSocket events ──────────────────────────────────────────────────────────
 
 export type WsEvent =

@@ -7,7 +7,7 @@ import { yamlValue, buildYamlFromGraph, planYaml, STARTER_YAML } from "../../app
 import { adminOnlyNote, api, apiDate, cancelToken, capNote, demoNote, explainError, goldenOf, goldenOver, mergeLogs, planErrors, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
 import { applyCompareEvent, applyRunEvent, canRetry, finished, nodeStyle, providerName, REPORT_WAIT_MS, reportBlocks, reportNext, runIdOf, runShown, seenFinishedAt, splitReport, whereRuns } from "../../apps/web/lib/runEvents.ts";
 import { defaultInputs, NODE_FORMS } from "../../apps/web/lib/nodeForms.ts";
-import { datasetOf, evalOf, lossPoints, lossSources, modelRefsOf, refName, resultTab, stepTicks } from "../../apps/web/lib/results.ts";
+import { datasetOf, evalOf, lossPoints, lossSources, modelRefsOf, plural, refName, resultTab, stepTicks } from "../../apps/web/lib/results.ts";
 
 const node = (id: string, node_type: string, inputs: Record<string, unknown>) =>
   ({ id, position: { x: 0, y: 0 }, data: { label: id, node_type, inputs, resources: {} } }) as never;
@@ -418,6 +418,14 @@ test("the eval view reads judge-eval's metrics (eval_summary without samples) an
     [art("judge", "eval_summary"), art("judge", "metrics_json", stats), art("prep", "metrics_json", { total: 3 })]);
   assert.deepEqual(evalOf(run), { stats, samplesUrl: "/artifacts/judge-eval_summary/download" });
   assert.equal(evalOf(summary([nodeRun("prep", "data-prep")], [art("prep", "metrics_json", { total: 3 })])), null);
+});
+
+test("a count is written with its noun in the right number: 1 loss, 22 ties, 0 wins (the Eval tab said \"1 losses\")", () => {
+  assert.equal(plural(1, "loss", "losses"), "1 loss");
+  assert.equal(plural(7, "loss", "losses"), "7 losses");
+  assert.equal(plural(0, "win"), "0 wins");
+  assert.equal(plural(1, "win"), "1 win");
+  assert.equal(plural(22, "tie"), "22 ties");
 });
 
 test("the dataset card is the last data-prep node's dataset and metrics, never synth's raw dataset", () => {

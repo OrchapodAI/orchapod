@@ -23,6 +23,9 @@ export function resultTab(s: RunSummary, picked: boolean): "eval" | "dataset" | 
   return picked || s.status !== "succeeded" ? null : evalOf(s) ? "eval" : datasetOf(s) ? "dataset" : null;
 }
 
+/** A count with its noun: "1 loss", "22 ties" (`many` where adding an s is not it: "losses"). */
+export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
 export interface RunModelRef extends ModelRef {
   label: string;
   expires_at?: string; // vllm-serve endpoints are deleted at expiry

@@ -52,6 +52,11 @@ export function ComparePlayground({ refs, stub }: { refs: RunModelRef[]; stub: b
             </label>
           ))}
         </div>
+        {pick.some((k) => expired(refs[k].expires_at)) && (
+          <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+            The playground needs this run's endpoint, which stays up for its keep-alive after serving. The Eval tab holds the judged comparison.
+          </p>
+        )}
         <textarea className="op-input" rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)}
           placeholder="One prompt; both models answer it with the same settings." aria-label="Prompt"
           style={{ height: "auto", padding: "8px 10px", resize: "vertical", fontFamily: "var(--font-ui)" }} />
@@ -91,11 +96,12 @@ export function ComparePlayground({ refs, stub }: { refs: RunModelRef[]; stub: b
 }
 
 // vllm-serve endpoints are deleted at expires_at; there is no extend.
+const expired = (at?: string) => !!at && apiDate(at).getTime() <= Date.now();
+
 function Expiry({ at }: { at: string }) {
-  const t = apiDate(at);
   return (
     <span className="muted" style={{ fontSize: 11.5 }}>
-      Endpoint {t.getTime() > Date.now() ? "expires" : "expired"} at {t.toLocaleTimeString()}
+      Endpoint {expired(at) ? "expired" : "expires"} at {apiDate(at).toLocaleTimeString()}
     </span>
   );
 }

@@ -198,6 +198,8 @@ def _node_problems(n: PlanNode, nodes: dict[str, PlanNode], catalog: dict[str, d
     if meta is None:
         return problems + [f"unknown node type {n.type!r}"]
     problems += [f"needs unknown node {d!r}" for d in n.needs if d not in nodes]
+    problems += [f"needs judge-eval {d!r}, whose verdicts are final: no node runs after judge-eval (the Agent writes the "
+                 "run report itself)" for d in n.needs if d in nodes and nodes[d].type == "judge-eval"]
     schema = meta["inputs_schema"]
     problems += [f"unknown input {k!r}" for k in n.inputs if k not in schema.model_fields]
     try:

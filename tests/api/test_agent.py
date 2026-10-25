@@ -393,6 +393,17 @@ def test_review_enforces_the_knowledge_constraints(monkeypatch):
     assert any(w.startswith("big: no fine-tune price") for w in warnings)
 
 
+def test_review_refuses_a_node_after_judge_eval():
+    """Super read "→ report" in the knowledge as a step and planned a synth-distilabel "report" after judge-eval (hosted,
+    2026-10-25): ten made-up summaries, not the run's results. The Agent writes the report itself; the repair removes it."""
+    docs = next(t["plan"] for t in planner.templates() if t["plan"]["name"] == "nebius-docs-specialist-nemotron-nano-8b")
+    judge = next(n["id"] for n in docs["nodes"] if n["type"] == "judge-eval")
+    report = node("report", "synth-distilabel", [judge], pipeline_template="self-instruct", n_samples=10)
+    errors = errors_of({**docs, "nodes": [*docs["nodes"], report]})
+    assert errors == errors_of(docs) + [f"report: needs judge-eval {judge!r}, whose verdicts are final: no node runs after "
+                                        "judge-eval (the Agent writes the run report itself)"]
+
+
 MODEL_REF_CASES = [  # (value of judge-eval's base_model_ref, its needs, refused?)
     ("${{ nodes.serve.outputs.model_ref }}", ["serve"], False),
     ("${{ nodes.serve.outputs.base_model_ref }}", ["serve"], False),

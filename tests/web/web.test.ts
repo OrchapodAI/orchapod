@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { yamlValue, buildYamlFromGraph, planYaml, STARTER_YAML } from "../../apps/web/lib/workflowYaml.ts";
 import { api, apiDate, cancelToken, capNote, demoNote, explainError, mergeLogs, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
-import { applyCompareEvent, applyRunEvent, canRetry, finished, providerName, REPORT_WAIT_MS, reportNext, runShown, seenFinishedAt, splitReport, whereRuns } from "../../apps/web/lib/runEvents.ts";
+import { applyCompareEvent, applyRunEvent, canRetry, finished, nodeStyle, providerName, REPORT_WAIT_MS, reportNext, runShown, seenFinishedAt, splitReport, whereRuns } from "../../apps/web/lib/runEvents.ts";
 import { defaultInputs, NODE_FORMS } from "../../apps/web/lib/nodeForms.ts";
 import { datasetOf, evalOf, lossPoints, lossSources, modelRefsOf, refName } from "../../apps/web/lib/results.ts";
 
@@ -224,6 +224,15 @@ test("a node card says where its step runs: a Nebius resource adds its kind, sho
   assert.equal(whereRuns({ provider: "local-docker", resource: null }), "Local Docker");
   assert.equal(whereRuns({ provider: null, resource: null }), ""); // not started
   assert.equal(whereRuns({}), ""); // an API that predates the fields
+});
+
+test("a canvas node is drawn by its run status: pending grey, running blue and pulsing, succeeded green, failed red; no run, no style", () => {
+  assert.equal(nodeStyle(undefined), null); // the canvas without ?run= is unchanged
+  const styles = (["pending", "running", "succeeded", "failed"] as const).map((s) => nodeStyle(s)!);
+  assert.deepEqual(styles.map((s) => s.dot), ["#C1C7D0", "#0052CC", "#00875A", "#DE350B"]);
+  assert.deepEqual(styles.map((s) => s.pulse), [false, true, false, false]); // only the step that is executing pulses
+  assert.equal(new Set(styles.map((s) => s.ring)).size, 4); // four rings that differ
+  for (const [i, s] of styles.entries()) assert.ok(s.ring.includes(styles[i].dot), s.ring); // each ring is its dot's colour
 });
 
 test("dropped nodes start from contract defaults: no teacher_kind, vllm-serve keep-alive 30 min, unsloth-train on R25's student", () => {

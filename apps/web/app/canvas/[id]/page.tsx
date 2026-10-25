@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   ReactFlow, Background, Controls, MiniMap, addEdge,
   useNodesState, useEdgesState,
@@ -10,12 +10,13 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import { api, explainError, toastError } from "@/lib/api";
-import type { Run, Workflow, NodeType } from "@/lib/types";
+import type { Run, RunSummary, Workflow, NodeType } from "@/lib/types";
 import { OrchaNode, NODE_META, type OrchaNodeData } from "@/components/canvas/OrchaNode";
 import { NodePalette } from "@/components/canvas/NodePalette";
 import { NodePanel } from "@/components/canvas/NodePanel";
 import Link from "next/link";
 import { buildYamlFromGraph } from "@/lib/workflowYaml";
+import { finished, POLL_MS } from "@/lib/runEvents";
 import { defaultInputs } from "@/lib/nodeForms";
 
 const nodeTypes: NodeTypes = { orchapodNode: OrchaNode as NodeTypes[string] };
@@ -49,6 +50,26 @@ export default function CanvasPage() {
   const [starting, setStarting] = useState(false);
   const [loadError, setLoadError] = useState("");
   const nodeCounter = useRef(0);
+
+  // ?run=<id> opens the canvas of that run: its summary is read every few seconds until the run is over, and the nodes are drawn by their status in it.
+  const runId = useSearchParams().get("run");
+  const [runSummary, setRunSummary] = useState<RunSummary | null>(null);
+  useEffect(() => {
+    if (!runId) return;
+    let current = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const read = () => api.runs.summary(runId).then((s) => {
+      if (!current) return;
+      setRunSummary(s);
+      if (!finished(s.status)) timer = setTimeout(read, POLL_MS);
+    }).catch(toastError("Couldn't load the run"));
+    read();
+    return () => { current = false; clearTimeout(timer); };
+  }, [runId]);
+  // Derived, so saving never carries a status into the YAML and a late summary still finds the nodes.
+  const shown = useMemo(() => (runSummary
+    ? nodes.map((n) => ({ ...n, data: { ...n.data, status: runSummary.nodes.find((r) => r.node_id === n.id)?.status } }))
+    : nodes), [nodes, runSummary]);
 
   // Cost-estimate modal state
   const [pendingRun, setPendingRun] = useState<Run | null>(null);
@@ -219,6 +240,11 @@ export default function CanvasPage() {
           <span className="here">{workflow.name}</span>
         </div>
         <span className="muted mono" style={{ fontSize: 11 }}>v{workflow.version} · {nodes.length} nodes</span>
+        {runId && (
+          <Link href={`/runs/${runId}`} className="pill mono" style={{ textDecoration: "none" }}>
+            Viewing run {runId.slice(0, 8)} · {runSummary ? runSummary.status.replace(/_/g, " ") : "loading"}
+          </Link>
+        )}
         <div className="spacer" />
         {/* always mounted, so the note is announced when a 409 fills it */}
         <span id="read-only-note" role="status" style={{ fontSize: 12, color: "var(--amber-ink)" }}>
@@ -243,7 +269,7 @@ export default function CanvasPage() {
 
         <div style={{ flex: 1, minWidth: 0 }} onDrop={onDrop} onDragOver={onDragOver}>
           <ReactFlow<Node<OrchaNodeData>, Edge>
-            nodes={nodes}
+            nodes={shown}
             edges={edges}
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}

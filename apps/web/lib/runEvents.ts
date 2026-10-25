@@ -1,4 +1,4 @@
-import type { CompareEvent, Run, RunStatus, RunSummary, WsEvent } from "./types";
+import type { CompareEvent, NodeStatus, Run, RunStatus, RunSummary, WsEvent } from "./types";
 
 /** What the run page shows: the run (header, cost meter) and its summary (nodes, artifacts). */
 export interface RunViewState {
@@ -55,6 +55,17 @@ export function whereRuns({ provider, resource }: Pick<RunSummary["nodes"][numbe
   const id = resource && (resource.id.length > 14 ? `…${resource.id.slice(-8)}` : resource.id);
   return providerName(provider) + (resource ? ` ${resource.kind === "job" ? "Job" : "Endpoint"} ${id}` : "") + (resource?.state ? ` · ${resource.state}` : "");
 }
+
+const NODE_STYLES = {
+  pending:   { dot: "#C1C7D0", ring: "ring-2 ring-[#C1C7D0] ring-offset-1", pulse: false },
+  running:   { dot: "#0052CC", ring: "ring-2 ring-[#0052CC] ring-offset-1", pulse: true },
+  succeeded: { dot: "#00875A", ring: "ring-2 ring-[#00875A] ring-offset-1", pulse: false },
+  failed:    { dot: "#DE350B", ring: "ring-2 ring-[#DE350B] ring-offset-1", pulse: false },
+};
+
+/** How a canvas node is drawn for its status in a run (the canvas opened with ?run=): a ring and a dot of one colour, and only the step that is
+ *  executing pulses. No status, no style: the canvas without a run is as it was. */
+export const nodeStyle = (status?: NodeStatus) => (status ? NODE_STYLES[status] : null);
 
 /** One side of the compare playground. */
 export interface CompareSide { text: string; done: boolean; usd: number | null; error?: string }

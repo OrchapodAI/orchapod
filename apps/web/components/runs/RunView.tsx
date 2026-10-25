@@ -173,7 +173,7 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
           </button>
         )}
         {run.workflow_id && (
-          <Link href={`/canvas/${run.workflow_id}`} className="btn btn-sm" style={{ textDecoration: "none" }}>
+          <Link href={`/canvas/${run.workflow_id}?run=${id}`} className="btn btn-sm" style={{ textDecoration: "none" }}>
             View workflow
           </Link>
         )}

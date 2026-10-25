@@ -3,6 +3,7 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import clsx from "clsx";
 import type { NodeType } from "@/lib/types";
+import { nodeStyle } from "@/lib/runEvents";
 import { Database, Zap, GitMerge, Package, BarChart2, Globe, Download, Upload, Cloud, Sparkles, Tag, HardDrive, Telescope, Flame, Rocket, Scale } from "lucide-react";
 
 export interface OrchaNodeData extends Record<string, unknown> {
@@ -44,14 +45,7 @@ export const NODE_META: Record<NodeType, {
 export function OrchaNode({ data, selected }: NodeProps<Node<OrchaNodeData>>) {
   const meta = NODE_META[data.node_type] ?? NODE_META["data-prep"];
   const Icon = meta.icon;
-  const status = data.status;
-
-  const STATUS_RING: Record<string, string> = {
-    running:   "ring-2 ring-[#0052CC] ring-offset-1",
-    succeeded: "ring-2 ring-[#00875A] ring-offset-1",
-    failed:    "ring-2 ring-[#DE350B] ring-offset-1",
-  };
-  const statusRing = status ? (STATUS_RING[status] ?? "") : "";
+  const style = nodeStyle(data.status);
 
   return (
     <div
@@ -59,7 +53,8 @@ export function OrchaNode({ data, selected }: NodeProps<Node<OrchaNodeData>>) {
         "min-w-[160px] bg-white rounded shadow-md cursor-pointer select-none transition-all",
         "border border-[#DFE1E6]",
         selected && "ring-2 ring-[#0052CC] ring-offset-1",
-        statusRing
+        style?.ring,
+        style?.pulse && "animate-pulse"
       )}
       style={{ borderLeft: `3px solid ${meta.accent}` }}
     >
@@ -82,17 +77,10 @@ export function OrchaNode({ data, selected }: NodeProps<Node<OrchaNodeData>>) {
         </div>
       </div>
 
-      {status && status !== "pending" && (
+      {style && (
         <div className="px-3 pb-2 flex items-center gap-1.5">
-          <div className={clsx(
-            "w-1.5 h-1.5 rounded-full",
-            status === "running"   && "animate-pulse",
-          )} style={{
-            backgroundColor:
-              status === "running" ? "#0052CC" :
-              status === "succeeded" ? "#00875A" : "#DE350B"
-          }} />
-          <span className="text-[10px] text-[#6B778C] capitalize">{status}</span>
+          <div className={clsx("w-1.5 h-1.5 rounded-full", style.pulse && "animate-pulse")} style={{ backgroundColor: style.dot }} />
+          <span className="text-[10px] text-[#6B778C] capitalize">{data.status}</span>
         </div>
       )}
 

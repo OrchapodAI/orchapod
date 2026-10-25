@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from pathlib import Path
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -134,7 +135,9 @@ def nebius_cli(tmp_path, monkeypatch):
     cli.parent.mkdir()
     cli.write_text(f'#!/bin/sh\necho "$@" >> {tmp_path / "calls"}\necho "Note: a newer CLI is out"\necho " iam-token-1 "\n')
     cli.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{cli.parent}{os.pathsep}{os.environ['PATH']}")
+    # no real `nebius` either (~/.nebius/bin is on a developer's PATH): once the test removes the fake, the host has no CLI
+    real = [d for d in os.environ["PATH"].split(os.pathsep) if d and not (Path(d) / "nebius").exists()]
+    monkeypatch.setenv("PATH", os.pathsep.join([str(cli.parent), *real]))
     monkeypatch.delenv("NEBIUS_IAM_TOKEN", raising=False)  # hosted: blank, so the CLI signs one
     monkeypatch.delenv("STUB", raising=False)
     return SimpleNamespace(path=cli, calls=tmp_path / "calls")

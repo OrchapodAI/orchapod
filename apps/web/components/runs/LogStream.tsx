@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import clsx from "clsx";
+import { apiDate } from "@/lib/api";
 import type { LogLine } from "@/lib/types";
 
 const LEVEL_COLOR: Record<string, string> = {
@@ -53,7 +54,7 @@ export function LogStream({ lines, activeNodeId, connected, loading, done }: Pro
           filtered.map((line, i) => (
             <div key={i} className="flex gap-3 hover:bg-[#F4F5F7] px-1 py-0.5 rounded log-line">
               <span className="text-[#97A0AF] shrink-0 w-20 truncate">
-                {new Date(line.ts).toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                {apiDate(line.ts).toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })}
               </span>
               <span className={clsx("shrink-0 w-16", LEVEL_COLOR[line.level] ?? "text-[#6B778C]")}>
                 [{line.level}]

@@ -804,3 +804,22 @@ worktrees:
   - Budget: hosted spent today $2.22, left $2.78 under the $5 day cap; the plan's estimate is $2.66. The script aborts before Run unless the plan is the six nodes with no errors and ≤ $2.75.
   - Admin: the X-Orchapod-Admin header is added by the script to api.orchapod.dev requests only. ORCHAPOD_ANON_SCALE stays 0.1: docs/video-script.md suggests 1 for recording day, but gpu_guard checks scale < 1, so that would let any visitor start GPU nodes. Devrel to reword that note.
   - No deploys until the rehearsal ends (an API restart would stop its executor).
+- 2026-10-25T08:59Z D8 REHEARSAL PASS: the golden path a second time, live, from the hosted UI.
+  - The sentence typed on /agent → Super's live plan (six nodes, $2.66, no errors) → Run.
+  - Run 0ee1e20a-468f-4651-8eee-c39fd094a804: 23.5 min wall, $1.5811 (estimate $2.6627).
+  - Nodes:
+    - research 3 s $0.032; synth 153 s $0.0284 (300 rows, 76 calls); prep 4 s.
+    - train 671 s $0.8391: H100 Job, image pull 4.6 min, then 60 steps; train loss 7.20 → 1.31, valid 1.82.
+    - serve 495 s $0.600: L40S endpoint, PROVISIONING → RUNNING in 4 min, base + LoRA.
+    - evaluate 85 s $0.0816: Ultra, n 30: 7 W / 20 T / 3 L, win rate 0.567, consistency 0.667.
+  - The playground streamed both answers in 7 s inside the keep-alive. Held-out question = judged sample #0 (rule fixed before the run).
+    - Tuned: 'The value 'spot' indicates that a job uses spot pricing.'
+    - Base: an invented PRICE=SPOT format.
+  - The report card appeared; Super's report has the run's real numbers.
+  - Wave 6 worked live: persisted logs (15 lines); Job and Endpoint state on the node cards (PROVISIONING → STARTING → IMAGE_PULLING → RUNNING); the endpoint found by name while provisioning; the canvas ?run= colours.
+  - Footage: footage/2026-10-25-rehearsal-0ee1e20a/ (gitignored): Playwright videos of /agent (79 MB), the run page (44 MB) and the canvas; 23 status-change frames; 12 README shots.
+  - Comparison: d20d30f3 (G2) 24.2 min, $1.61, 7/22/1, 0.60 → 0ee1e20a 23.5 min, $1.58, 7/20/3, 0.57. The same pipeline, reproducible within noise. Both runs are reported as they are.
+  - Findings → frontend-w10 (dispatched 09:05Z):
+    - the report renders as raw markdown (## headings, two-space breaks);
+    - a past run's report is unreachable: the card shows only on the /agent page that started the run.
+  - The Super rationale still said '(Lane B)' (knowledge wording fixed in 149675b, deploys next).

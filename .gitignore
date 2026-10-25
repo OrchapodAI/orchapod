@@ -49,3 +49,6 @@ hackathon/WAITING_FOR_HUMAN
 hackathon/AUTOPILOT
 hackathon/STOP
 hackathon/.autopilot_count
+
+# raw demo footage and screenshots (large; never committed or deployed)
+/footage/

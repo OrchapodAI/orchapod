@@ -742,3 +742,10 @@ worktrees:
 - 2026-10-25T07:03Z Facts observed during golden run #2 (for docs/feedback.md):
   - The L40S endpoint went STARTING 06:32:08Z → IMAGE_PULLING 06:33:09Z → STARTING 06:35:42Z → RUNNING 06:36:12Z, about 4 min to running.
   - `nebius ai job logs` refuses --tail above 1000 (400: 'limit … greater than 1000').
+- 2026-10-25T07:13Z devrel-w9 MERGED (93ab38b): README/Devpost/feedback with the live golden run; 6 TODO markers left (all future).
+- 2026-10-25T07:13Z backend-w9 round 1 done (94ba9be, 8d29c48, 4250007, 1dc9f5c).
+  - node_log table (Postgres/SQLite), GET /runs/{id}/logs; summary provider/resource (Nebius state cached 30 s, ≤ 3 s); header provider from the first GPU node.
+  - 1135 passed; 17 mutants caught; Postgres 16 checked.
+  - DECISION (backend-w9): R22 key-rule redaction applies to log lines, live events and NodeRun.error.
+  - Round 2 sent: vllm-serve endpoint state by deterministic name while provisioning, and through keep-alive after success; seed-golden-run inserts node_log rows from the fixture's logs artifacts.
+- 2026-10-25T07:13Z frontend-w8 done (0f4307a..85e8f56): log history + dedupe merge, provider/resource on cards, a 5 s summary poll, canvas ?run= status colours + banner. Web 42. Review dispatched (sonnet). Merge order: backend-w9 first (smoke needs /logs).

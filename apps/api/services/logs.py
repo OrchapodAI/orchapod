@@ -22,9 +22,11 @@ LOG_MAX, LOG_KEEP = 2000, 5000  # chars of a stored line; lines kept per run
 
 
 def clean(text: str) -> str:
-    """A line as it is stored, broadcast and kept as a node's error: R22-redacted and at most LOG_MAX chars. Cut first, so
-    the regex never reads a huge line, and again: "[redacted]" can be longer than the value it replaces."""
-    return redact_text(text[:LOG_MAX])[:LOG_MAX]
+    """A line as it is stored, broadcast and kept as a node's error: R22-redacted, at most LOG_MAX chars, and fit for the
+    database (Postgres refuses NUL, and no database takes a lone surrogate, which a node that decodes bytes with
+    surrogateescape sends: NUL is dropped, a lone surrogate becomes "?"). Cut first, so the regex never reads a huge line,
+    and again: "[redacted]" can be longer than the value it replaces."""
+    return redact_text(text[:LOG_MAX].replace("\x00", "").encode("utf-8", "replace").decode())[:LOG_MAX]
 
 
 async def keep(db: AsyncSession, run_id: uuid.UUID, lines: Iterable[tuple[str, str, str, str]]) -> None:

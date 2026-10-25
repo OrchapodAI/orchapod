@@ -28,15 +28,28 @@ def redact(value):
     return value
 
 
-# `key=value`, `key: value` or `"key": "value"` in free text. A key starts only at a word's start (linear time); the value may
-# follow an auth scheme (Authorization: Bearer abc) and ends at a space, quote, comma, semicolon, & or }.
+# `key=value`, `key: value` or `"key": "value"` in free text. A key starts only at a word's start; the value may follow an
+# auth scheme (Authorization: Bearer abc) and ends at a space, quote, comma, semicolon, & or }.
 _PAIR = re.compile(r"""(?<![\w.-])([\w.-]+)(["']?\s*[:=]\s*["']?)((?:(?i:bearer|basic)\s+)?[^\s"',;&}]+)""")
+_BEARER = re.compile(r"(?i)\b(bearer|basic)\s+[\w.~+/=-]{8,}")  # a token no key names: "sent Bearer eyJ…"
+_USERINFO = re.compile(r"(?<=://)[^/\s@:]*:[^/\s@]+(?=@)")  # the user:password of https://user:pw@host/
 
 
 def redact_text(text: str) -> str:
-    """`text` (a log line is free text, which redact() cannot walk) with the value of every secret-looking pair replaced, by
-    redact()'s key rule: NEBIUS_API_KEY=sk-1 and "api_key": "sk-1" lose the value, max_tokens=512 does not."""
-    return _PAIR.sub(lambda m: f"{m[1]}{m[2]}{REDACTED}" if _secret(m[1], m[3]) else m[0], text)
+    """`text` (a log line is free text, which redact() cannot walk) with every secret in it replaced: the value of a
+    secret-looking pair, by redact()'s key rule (NEBIUS_API_KEY=sk-1 and "api_key": "sk-1" lose the value, max_tokens=512 does
+    not), also one inside another value (`ValueError: api_key=…`, `?token=…` in a URL); a Bearer or Basic token; the
+    user:password of a URL. A scan, not a recursion. Quadratic in the worst case (a line of nothing but pairs: 6 ms at 2,000
+    characters, 1.4 s at 32,000), which is why logs.clean() cuts a line first."""
+    out, last, pos = [], 0, 0
+    while m := _PAIR.search(text, pos):
+        if _secret(m[1], m[3]):
+            out += [text[last:m.start(3)], REDACTED]
+            last = pos = m.end()
+        else:
+            pos = m.start(3)  # its value may hold a pair of its own
+    text = "".join(out) + text[last:]
+    return _USERINFO.sub(REDACTED, _BEARER.sub(lambda m: f"{m[1]} {REDACTED}", text))
 
 
 def without_secrets(spec):

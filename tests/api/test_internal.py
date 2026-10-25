@@ -7,6 +7,8 @@ import uuid
 
 import pytest
 
+from api.services.redact import REDACTED
+
 
 # ---------------------------------------------------------------------------
 # POST /internal/artifact
@@ -226,6 +228,31 @@ async def test_log_lines_are_cut_at_2000_chars_and_redacted_like_public_outputs(
     assert [e["message"] for e in published() if e["type"] == "log"] == expected
     await db.refresh(node_run)
     assert node_run.error == "boom api_key=[redacted]"  # the node's error is public too
+
+
+async def test_a_line_with_nul_or_a_lone_surrogate_is_stored_without_them(client, seeded_node_run):
+    """Postgres refuses NUL in text, and no database takes a lone surrogate (a node that decodes bytes with surrogateescape
+    sends them): the line used to be a 500, and with it the node's error update. clean() drops the first and replaces the
+    second, so the stored line is the text the node meant."""
+    from api.services.logs import clean
+    assert clean("a\x00b\ud800c\udc00d\U0001F600") == "ab?c?d\U0001F600"  # NUL gone; a lone surrogate "?"; a real emoji stays
+    run, node_run = seeded_node_run
+    for sent in ('"x\\u0000y"', '"x\\ud800y"', '"api_key=k\\u0000k tail"'):  # JSON escapes: httpx would not send a raw surrogate
+        body = ('{"run_id": "%s", "node_id": "node", "ts": "t", "level": "ERROR", "message": %s}' % (run.id, sent)).encode()
+        assert (await client.post("/internal/log", content=body, headers={"Content-Type": "application/json"})).status_code == 204
+    assert [row["message"] for row in await logs(client, run)] == ["xy", "x?y", f"api_key={REDACTED} tail"]
+
+
+@pytest.mark.parametrize("field, limit", [("node_id", 128), ("ts", 64), ("level", 16)])
+async def test_a_log_line_longer_than_its_field_limit_is_refused_and_the_table_agrees(client, db, seeded_node_run, field, limit):
+    """node_id, ts and level are short by nature; a node (it holds the internal secret) cannot fill the table with a megabyte
+    of one: 422 beyond the limit, and the column is a VARCHAR of that length on Postgres."""
+    from api.models.db import NodeLog
+    run, _ = seeded_node_run
+    at_limit = {**line(run, "m"), field: "x" * limit}
+    assert (await client.post("/internal/log", json=at_limit)).status_code == 204
+    assert (await client.post("/internal/log", json={**at_limit, field: "x" * (limit + 1)})).status_code == 422
+    assert NodeLog.__table__.c[field].type.length == limit
 
 
 # ---------------------------------------------------------------------------

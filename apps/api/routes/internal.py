@@ -74,9 +74,9 @@ def _verify_secret(x_orchapod_secret: str = Header(default="")) -> None:
 
 class LogEvent(BaseModel):
     run_id: uuid.UUID
-    node_id: str
-    ts: str
-    level: str         # INFO | WARN | ERROR | PROGRESS
+    node_id: str = Field(max_length=128)  # node_log's columns are as long
+    ts: str = Field(max_length=64)
+    level: str = Field(max_length=16)  # INFO | WARN | ERROR | PROGRESS
     message: str
 
 

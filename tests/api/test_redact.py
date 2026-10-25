@@ -50,6 +50,39 @@ def test_redact_text_applies_the_same_key_rule_to_pairs_in_free_text():
     assert redact_text("no secrets: just words, 1:2 and a=b") == "no secrets: just words, 1:2 and a=b"
 
 
+SHAPES = [  # a secret inside a value that is none, a bare token, the password of a URL: what a pair-by-pair scan misses
+    ("ValueError: api_key=AAA111 is invalid", f"ValueError: api_key={REDACTED} is invalid"),
+    ("Error: NEBIUS_API_KEY=sk-live-123", f"Error: NEBIUS_API_KEY={REDACTED}"),
+    ("url=https://h/p?token=t0k&x=1", f"url=https://h/p?token={REDACTED}&x=1"),
+    ("GET https://h/x?token=t0k&y=1", f"GET https://h/x?token={REDACTED}&y=1"),
+    ("auth 401: token: v1.CmSECRET", f"auth 401: token: {REDACTED}"),
+    ("DATABASE_URL=postgresql://u:pw@db/o", f"DATABASE_URL=postgresql://{REDACTED}@db/o"),
+    ("sent Bearer eyJhbGciOiJIUzI1NiJ9.sig now", f"sent Bearer {REDACTED} now"),
+    ("header: Basic dXNlcjpwYXNzd29yZA== sent", f"header: Basic {REDACTED} sent"),
+    ("clone https://user:pw@host/repo.git", f"clone https://{REDACTED}@host/repo.git"),
+    ("redis://:pw@cache:6379/0", f"redis://{REDACTED}@cache:6379/0"),
+    ('{"error": "ValueError: api_key=AAA111", "url": "https://h?token=T0K"}',
+     f'{{"error": "ValueError: api_key={REDACTED}", "url": "https://h?token={REDACTED}"}}'),
+    ("a=1 api_key=k1 and b: token: t2 then Bearer abcdefgh3", f"a=1 api_key={REDACTED} and b: token: {REDACTED} then Bearer {REDACTED}"),
+]
+
+
+@pytest.mark.parametrize("text, redacted", SHAPES)
+def test_redact_text_finds_a_secret_in_a_value_a_bare_token_and_a_urls_password(text, redacted):
+    assert redact_text(text) == redacted
+    assert redact_text(redacted) == redacted  # again changes nothing
+
+
+def test_redact_text_leaves_prose_and_short_words_alone_and_never_recurses():
+    for text in ("no secrets: just words, 1:2 and a=b", "Basic usage of Bearer tokens: see https://docs.nebius.com/x?page=2",
+                 "mailto://a@b.c and ssh://git@github.com/org", "key=value; token_count=5 max_tokens: 512"):
+        assert redact_text(text) == text, text
+    pairs = "a:" * 1000  # the 2,000 characters of a line, a pair in every value: a recursive scan raised RecursionError
+    assert redact_text(pairs) == pairs
+    assert redact_text(pairs + "api_key=zzz") == pairs + f"api_key={REDACTED}"
+    assert redact_text("x" * 5000 + " " * 5000 + "y=" * 1000) == "x" * 5000 + " " * 5000 + "y=" * 1000  # long words and gaps
+
+
 @pytest.mark.usefixtures("nebius")  # the summary looks a running vllm-serve up at Nebius: faked
 async def test_no_route_returns_an_artifact_secret(client, db, seeded_node_run):
     run, node_run = seeded_node_run

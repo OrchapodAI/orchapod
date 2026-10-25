@@ -148,9 +148,9 @@ class NodeLog(SQLModel, table=True):
     __table_args__ = (Index("ix_node_log_run_id_id", "run_id", "id"),)  # the last N lines of a run, newest first
     id:      Optional[int] = Field(default=None, primary_key=True)
     run_id:  uuid.UUID
-    node_id: str
-    ts:      str
-    level:   str
+    node_id: str = Field(max_length=128)  # these three are short by nature; /internal/log refuses more (422)
+    ts:      str = Field(max_length=64)
+    level:   str = Field(max_length=16)
     message: str
 
 

@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { yamlValue, buildYamlFromGraph, planYaml, STARTER_YAML } from "../../apps/web/lib/workflowYaml.ts";
-import { api, apiDate, cancelToken, capNote, demoNote, explainError, mergeLogs, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
+import { adminOnlyNote, api, apiDate, cancelToken, capNote, demoNote, explainError, goldenOf, goldenOver, mergeLogs, planErrors, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
 import { applyCompareEvent, applyRunEvent, canRetry, finished, nodeStyle, providerName, REPORT_WAIT_MS, reportBlocks, reportNext, runIdOf, runShown, seenFinishedAt, splitReport, whereRuns } from "../../apps/web/lib/runEvents.ts";
 import { defaultInputs, NODE_FORMS } from "../../apps/web/lib/nodeForms.ts";
 import { datasetOf, evalOf, lossPoints, lossSources, modelRefsOf, refName, resultTab, stepTicks } from "../../apps/web/lib/results.ts";
@@ -78,6 +78,8 @@ test("explainError turns each agent failure into a readable sentence", () => {
   assert.equal(explainError(http(404, "/agent/runs/r1/report", { detail: "not an agent run" })), "404 on /agent/runs/r1/report: not an agent run");
   assert.equal(explainError(http(422, "/agent/plan", { detail: [{ msg: "String should have at most 2000 characters" }] })), "String should have at most 2000 characters");
   assert.match(explainError(http(402, "/agent/run", { detail: "day cap $15 reached" })), /^Over budget: day cap \$15 reached/);
+  assert.equal(explainError(http(402, "/agent/plan", { detail: "day cap $1.5: nothing left" })),
+    "The public demo's budget for today is used up; it resets at 00:00 UTC."); // not the cap's raw detail
   assert.match(explainError(http(502, "/agent/plan", { detail: "token_factory server 503" })), /Token Factory/);
   assert.match(explainError(http(503, "/agent/plan", { detail: "kill switch" })), /kill switch/);
   assert.equal(explainError(http(500, "/agent/plan", "Internal Server Error")), "500 on /agent/plan: Internal Server Error");
@@ -516,6 +518,41 @@ test("the demo banner says what a run costs (the estimates one-click Run uses) a
   assert.equal(demoNote(templates, [ran("real-estate-compliance-llama-3b")]),
     `${head}: $0.02 to $0.88 for the templates below. Public runs are capped per run and per day; a template above the per-run cap links to its golden run instead.`);
   assert.equal(demoNote(templates), `${head}: $0.02 to $0.88 for the templates below. Public runs are capped per run and per day.`); // no golden run to link to
+});
+
+const GPU = ["web-research", "synth-distilabel", "data-prep", "unsloth-train", "vllm-serve", "judge-eval"];
+const tpl = (name: string, types: string[], fits?: boolean) => ({ slug: name, title: name, intent: "i", rationale: "", estimate: { usd: 1, minutes: 1, by_node: {} },
+  plan: { name, nodes: types.map((type, i) => ({ id: `n${i}`, type })) }, ...(fits === undefined ? {} : { fits }) }) as never;
+const pipeline = (types: string[]) => ({ name: "what the planner called it", nodes: types.map((type, i) => ({ id: `x${i}`, type })) }) as never;
+
+test("an admin-only plan links to the golden run of the template with its node types, if this API has a succeeded run of that plan name", () => {
+  const cpu = GPU.filter((t) => t !== "vllm-serve");
+  const templates = [tpl("cpu-plan", cpu, false), tpl("docs-plan", GPU, false)];
+  const runs = [ran("docs-plan"), ran("cpu-plan", "failed")];
+  assert.equal(goldenOf(pipeline(GPU), templates, runs), "/runs?q=docs-plan");
+  assert.equal(goldenOf(pipeline([...GPU].reverse()), templates, runs), null); // the same nodes in another order are another pipeline
+  assert.equal(goldenOf(pipeline([...GPU, "report"]), templates, runs), null);
+  assert.equal(goldenOf(pipeline(GPU.slice(0, 5)), templates, runs), null);
+  assert.equal(goldenOf(pipeline(cpu), templates, runs), null); // its template has no succeeded run
+  assert.equal(goldenOf(pipeline(GPU), templates, []), null);
+  assert.equal(goldenOf(pipeline(GPU), null, runs), null); // the templates are not here yet
+});
+
+test("when the day's budget is used up, the golden run offered is the first template above the cap that has one", () => {
+  const templates = [tpl("small", ["data-prep"], true), tpl("big", GPU, false), tpl("bigger", GPU.slice(1), false)];
+  assert.equal(goldenOver(templates, [ran("small"), ran("bigger")]), "/runs?q=bigger"); // "small" is runnable: its run is not the golden one
+  assert.equal(goldenOver(templates, [ran("small"), ran("big", "running")]), null);
+  assert.equal(goldenOver(null, [ran("big")]), null);
+});
+
+test("an admin-only plan says how many nodes rent GPUs, and its one-line error is left out of the rose box", () => {
+  assert.equal(adminOnlyNote(2), "2 of its nodes rent GPUs, billed by the hour, so only the admin can start this plan here.");
+  assert.equal(adminOnlyNote(1), "1 of its nodes rents a GPU, billed by the hour, so only the admin can start this plan here.");
+  const line = "unsloth_train, vllm_serve rent GPUs billed by the hour: on the public demo only the admin can start them.";
+  assert.deepEqual(planErrors({ errors: ["nodes.x: unknown input", line], admin_only: ["unsloth_train", "vllm_serve"] }), ["nodes.x: unknown input"]);
+  assert.deepEqual(planErrors({ errors: [line], admin_only: ["unsloth_train", "vllm_serve"] }), []);
+  assert.deepEqual(planErrors({ errors: [line], admin_only: [] }), [line]); // not admin-only: an error like any other
+  assert.deepEqual(planErrors({ errors: ["e"] }), ["e"]); // an API before backend-w10 has no admin_only
 });
 
 test("the loss chart's x ticks are multiples of a round step, so a 60-step curve reads 0, 10 … 60", () => {

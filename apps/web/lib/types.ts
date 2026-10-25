@@ -303,6 +303,8 @@ export interface AgentPlan {
   estimate: Estimate;
   warnings: string[];
   errors: string[];
+  /** Node ids that rent GPUs, when this caller is below admin scale: only the admin can start the plan. Absent on an API before backend-w10. */
+  admin_only?: string[];
 }
 
 /** GET /agent/templates: the three canonical intents with ready plans; one-click Run posts one to /agent/run. */

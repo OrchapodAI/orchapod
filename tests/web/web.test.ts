@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { yamlValue, buildYamlFromGraph, planYaml, STARTER_YAML } from "../../apps/web/lib/workflowYaml.ts";
 import { api, apiDate, cancelToken, capNote, demoNote, explainError, mergeLogs, TOAST_EVENT, toastError } from "../../apps/web/lib/api.ts";
-import { applyCompareEvent, applyRunEvent, canRetry, finished, REPORT_WAIT_MS, reportNext, runShown, seenFinishedAt, splitReport } from "../../apps/web/lib/runEvents.ts";
+import { applyCompareEvent, applyRunEvent, canRetry, finished, providerName, REPORT_WAIT_MS, reportNext, runShown, seenFinishedAt, splitReport, whereRuns } from "../../apps/web/lib/runEvents.ts";
 import { defaultInputs, NODE_FORMS } from "../../apps/web/lib/nodeForms.ts";
 import { datasetOf, evalOf, lossPoints, lossSources, modelRefsOf, refName } from "../../apps/web/lib/results.ts";
 
@@ -210,6 +210,20 @@ test("stored log lines and live ones merge without duplicates, oldest first (bac
   // a socket open longer than the stored window has older lines too: they go before the stored ones, not after
   assert.deepEqual(mergeLogs([line("2026-10-25T10:05:00Z", "new")], [line("2026-10-25T10:01:00Z", "old")]).map((l) => l.message), ["old", "new"]);
   assert.equal(stored.length, 2); // the inputs are not touched
+});
+
+test("a node card says where its step runs: a Nebius resource adds its kind, short id and live state (backend-w9's contract, mocked)", () => {
+  assert.equal(providerName("nebius"), "Nebius");
+  assert.equal(providerName("local-docker"), "Local Docker");
+  assert.equal(providerName("vastai"), "vastai"); // any other as it is
+  const id = "aijob-e00h5k8m3p7r2";
+  assert.equal(whereRuns({ provider: "nebius", resource: { kind: "job", id, state: "IMAGE_PULLING" } }), "Nebius Job …k8m3p7r2 · IMAGE_PULLING");
+  assert.equal(whereRuns({ provider: "nebius", resource: { kind: "endpoint", id: "ep-1", state: "RUNNING" } }), "Nebius Endpoint ep-1 · RUNNING"); // a short id whole
+  assert.equal(whereRuns({ provider: "nebius", resource: { kind: "job", id, state: null } }), "Nebius Job …k8m3p7r2"); // the state is live only while the node runs
+  assert.equal(whereRuns({ provider: "nebius", resource: null }), "Nebius"); // its Job is not created yet
+  assert.equal(whereRuns({ provider: "local-docker", resource: null }), "Local Docker");
+  assert.equal(whereRuns({ provider: null, resource: null }), ""); // not started
+  assert.equal(whereRuns({}), ""); // an API that predates the fields
 });
 
 test("dropped nodes start from contract defaults: no teacher_kind, vllm-serve keep-alive 30 min, unsloth-train on R25's student", () => {

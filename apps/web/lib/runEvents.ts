@@ -40,6 +40,22 @@ export function splitReport(md: string): { title: string | null; body: string } 
   return m ? { title: m[1], body: m[2].trim() } : { title: null, body: md };
 }
 
+/** How often the run page (and the canvas of a run) read the summary while the run is on: a Nebius Job or Endpoint changes state with no event. */
+export const POLL_MS = 5000;
+
+const PROVIDER_NAMES: Record<string, string> = { "local-docker": "Local Docker", nebius: "Nebius" };
+
+/** A provider as shown: "local-docker" is "Local Docker"; any other as it is. */
+export const providerName = (provider: string) => PROVIDER_NAMES[provider] ?? provider;
+
+/** Where a node's step runs, for its card: "Local Docker", or for a Nebius resource its kind, short id and, while the node runs, the resource's
+ *  state: "Nebius Job …k8m3p7r2 · IMAGE_PULLING". Empty before the node has run, and on an API that predates the fields. */
+export function whereRuns({ provider, resource }: Pick<RunSummary["nodes"][number], "provider" | "resource">): string {
+  if (!provider) return "";
+  const id = resource && (resource.id.length > 14 ? `…${resource.id.slice(-8)}` : resource.id);
+  return providerName(provider) + (resource ? ` ${resource.kind === "job" ? "Job" : "Endpoint"} ${id}` : "") + (resource?.state ? ` · ${resource.state}` : "");
+}
+
 /** One side of the compare playground. */
 export interface CompareSide { text: string; done: boolean; usd: number | null; error?: string }
 

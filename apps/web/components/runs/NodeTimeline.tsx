@@ -3,6 +3,7 @@
 import clsx from "clsx";
 import type { RunSummary } from "@/lib/types";
 import { StatusBadge } from "@/components/StatusBadge";
+import { whereRuns } from "@/lib/runEvents";
 
 interface Props {
   nodes: RunSummary["nodes"];
@@ -35,6 +36,7 @@ export function NodeTimeline({ nodes, activeNodeId, onSelect, canRetry, retrying
                 <p className="text-[10px] text-[#6B778C] capitalize">
                   {node.type.replace(/-/g, " ")}{node.usd > 0 && ` · $${node.usd.toFixed(3)}`}
                 </p>
+                {whereRuns(node) && <p className="text-[10px] text-[#6B778C] truncate" title={whereRuns(node)}>{whereRuns(node)}</p>}
               </div>
             </div>
             <StatusBadge status={node.status} />

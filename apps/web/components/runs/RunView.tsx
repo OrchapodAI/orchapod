@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { api, apiDate, cancelToken, explainError, mergeLogs, toastError } from "@/lib/api";
-import { applyRunEvent, canRetry, finished, type RunViewState } from "@/lib/runEvents";
+import { applyRunEvent, canRetry, finished, POLL_MS, providerName, type RunViewState } from "@/lib/runEvents";
 import { useRunStream } from "@/lib/ws";
 import { StatusBadge } from "@/components/StatusBadge";
 import { LogStream } from "@/components/runs/LogStream";
@@ -53,6 +53,14 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
       .catch((err) => { if (n === loads.current) setLoadError(explainError(err)); });
   }, [id]);
   useEffect(load, [load, connected]);
+
+  // A Nebius Job or Endpoint changes state (IMAGE_PULLING, RUNNING…) with no event, so the summary is read again while the run is on.
+  const on = view !== null && !finished(view.run.status);
+  useEffect(() => {
+    if (!on) return;
+    const timer = setInterval(load, POLL_MS);
+    return () => clearInterval(timer);
+  }, [on, load]);
 
   // Apply each event once: `events` only grows, across reconnects.
   const applied = useRef(0);
@@ -141,7 +149,7 @@ export function RunView({ id, embedded = false }: { id: string; embedded?: boole
             <StatusBadge status={run.status} />
           </div>
           <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>
-            {[run.gpu_provider && `GPU: ${run.gpu_provider}`,
+            {[run.gpu_provider && `GPU: ${providerName(run.gpu_provider)}`,
               run.started_at && `Started ${apiDate(run.started_at).toLocaleTimeString()}`].filter(Boolean).join("  ·  ")}
           </div>
         </div>

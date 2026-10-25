@@ -6,6 +6,12 @@ Dated, user-facing changes made during the Nebius × NVIDIA hackathon submission
 - The golden path ran live, end to end on Nebius, from the hosted demo (app.orchapod.dev): Tavily research on the Nebius docs, 300 grounded Q&A pairs from Nemotron 3 Super, a LoRA fine-tune of NVIDIA Nemotron Nano 8B on an H100 Serverless Job, base and tuned served from one L40S Serverless Endpoint, and Nemotron 3 Ultra judging base against tuned: 7 wins, 22 ties, 1 loss on 30 questions. 24 minutes, $1.61.
 - The hosted demo is live at app.orchapod.dev and api.orchapod.dev (a Nebius VM, Object Storage, HTTPS).
 - The training image no longer bundles the Mamba-2 kernels (they broke `import unsloth` on GPUs); the golden path's student never needed them.
+- The golden path ran live a second time, typed as one sentence on the hosted /agent page: Super's live plan, then Run. 23.5 minutes, $1.58; Nemotron 3 Ultra: 7 wins, 20 ties, 3 losses on 30 questions. Both runs are on the hosted demo.
+- Run pages keep every node's logs after the run, say where each step runs (a Nebius Job or Endpoint with its live state), color the run's workflow on the canvas, and show the Agent's report in a Report tab.
+- The compare tab keeps the tab you picked while a run finishes. Before, the finished run's eval view could take it over mid-stream.
+- The planner no longer adds a made-up "report" node: the Agent writes the report itself. Plan rationales are in plain words.
+- On the public demo, a plan that needs rented GPUs comes back as planned, marked admin-only, with a link to its golden run, instead of being shrunk to fit a budget it can never fit. When the day's public budget is spent, the page says so and when it resets.
+- Smaller polish: the loss chart reads cleanly, finished runs say "ended", an expired endpoint's compare tab explains why, and "watch the golden run" links appear only where a golden run exists.
 
 ## 2026-10-24
 - Live: the golden path's data half ran on real services. Tavily extracted 20 Nebius docs pages, Nemotron 3 Super wrote 300 grounded Q&A pairs from them (each with its source passage and URL), and data prep validated them: 154 s, $0.07 in all.

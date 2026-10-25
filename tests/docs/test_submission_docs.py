@@ -97,6 +97,12 @@ def test_the_report_is_written_by_super_or_a_deterministic_template():
     assert "| Reporter | `nvidia/nemotron-3-super-120b-a12b` |" in README
 
 
+def test_both_live_golden_runs_are_reported():
+    # Same pipeline, two live runs (G2 and the D8 rehearsal): report both, never the better one alone.
+    for name, text in {"README": README, "devpost": DEVPOST}.items():
+        assert "d20d30f3" in text and "0ee1e20a" in text, name
+
+
 def test_docs_have_no_stale_strings_or_bare_todos():
     for name, text in DOCS.items():
         assert [s for s in STALE if s in text] == [], name

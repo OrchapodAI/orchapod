@@ -6,7 +6,7 @@
 
 An entry in the **Nebius × NVIDIA Global AI Hackathon**, track **Best Apps and Agents**. It runs on **Nebius Token Factory** and **Nebius AI Cloud**, calls **NVIDIA Nemotron** models at runtime and uses **Tavily** for web research.
 
-**Status (2026-10-25).** The live golden run passed on the hosted demo, https://app.orchapod.dev. NVIDIA's Nemotron Nano 8B was trained on an H100 and served on an L40S on Nebius, then judged by Nemotron 3 Ultra, in 24.2 min for $1.61 (Results). Intents #2 and #3 have run live too, and on deterministic stubs (no key, $0) the three canonical intents and the golden path pass end to end; [Setup](#setup) runs them on your machine. TODO(D8): the 3-minute video, the screenshots and the Devpost link; then this note goes.
+**Status (2026-10-25).** The golden path has run live twice on the hosted demo, https://app.orchapod.dev: NVIDIA's Nemotron Nano 8B was trained on an H100 and served on an L40S on Nebius, then judged by Nemotron 3 Ultra. The runs took 24.2 and 23.5 min and cost $1.61 and $1.58 (Results). Intents #2 and #3 have run live too, and on deterministic stubs (no key, $0) the three canonical intents and the golden path pass end to end; [Setup](#setup) runs them on your machine. TODO(D8): the 3-minute video and the Devpost link; then this note goes.
 
 ## What it is
 
@@ -14,6 +14,12 @@ Orchapod is an open-source platform for the whole post-training lifecycle of a l
 
 - **The Orchapod Agent** (`/agent`). Type one sentence. Nemotron 3 Super drafts a pipeline from the node catalog, the server validates it against the model and cost rules, and a plan card shows the nodes, the models and the estimated dollars and minutes. Press Run and Orchapod executes the plan, streams logs and cost, evaluates the result and writes a report. Or skip the typing: a template card runs a ready-made plan in one click.
 - **The canvas.** Drag nodes onto a React Flow canvas. The YAML workflow is the source of truth, and any plan the Agent writes opens on the canvas for editing.
+
+![The plan card for the golden sentence: six nodes with their models, $2.66 and about 52 minutes, Run enabled](docs/img/agent-plan.png)
+*Super's live plan for the golden sentence on the hosted app: six nodes, $2.66, no errors (rehearsal run 0ee1e20a).*
+
+![The golden plan on the canvas, six nodes, each green for succeeded](docs/img/canvas.png)
+*The same plan on the canvas, each node coloured by its status in run 0ee1e20a. The public template gallery is [here](docs/img/templates.png).*
 
 A finished run shows what it made: an eval view (win rate; wins, ties and losses; the judge's consistency between the two answer orders; exact match where it applies; every judged sample with the judge's reasoning in both orders), a dataset card (download link and per-field stats) and, when the run serves a model, a compare playground that streams one prompt to the base and tuned models side by side.
 
@@ -33,7 +39,7 @@ Every team wants a cheaper, faster, private specialist model. Today that takes a
 
 - **NVIDIA end to end on the golden path.** Nemotron 3 Super plans, writes the synthetic data and writes the report. Nemotron 3.5 Lightning can filter the data. Nemotron 3 Ultra judges. The student is NVIDIA's `nvidia/Llama-3.1-Nemotron-Nano-8B-v1`: Unsloth trains it on a Nebius Serverless Job, and vLLM serves it from a Serverless Endpoint, so every model call runs on Nebius. The CPU variant differs: it serves the student with llama.cpp on the API host. The other templates are not NVIDIA end to end: real estate fine-tunes Llama 3.2 3B on Token Factory (Lane A), because its intent names Llama 3B, and maths quantizes Qwen2.5-Math-1.5B-Instruct.
 - **It makes models, not only calls them.** Nemotron teaches and judges new specialist models, and every one is measured against its base.
-- **An evaluation you can trust.** Base and tuned models get identical prompts and decoding. A Nemotron Ultra judge sees the question, the reference answer and the source passage, and scores the two answers in both orders; a win counts only if it holds in both. Fine-tuning moves style, format and vocabulary more than it injects facts, so answers are short and sourced. On the live golden run, Ultra judged 30 held-out questions: 7 wins, 22 ties and 1 loss for the tuned model, a win rate of 0.6, and 0.733 of its verdicts held in both answer orders (Results).
+- **An evaluation you can trust.** Base and tuned models get identical prompts and decoding. A Nemotron Ultra judge sees the question, the reference answer and the source passage, and scores the two answers in both orders; a win counts only if it holds in both. Fine-tuning moves style, format and vocabulary more than it injects facts, so answers are short and sourced. On two live golden runs, Ultra judged 30 held-out questions each: the tuned model won 7, lost 1 or 3, and tied the rest. The win rates were 0.60 and 0.57 (Results).
 - **Cost is a first-class output.** Every billed call (tokens, Tavily credits, GPU hours) is metered per node, estimated before a run and capped during it.
 
 ## How it works
@@ -89,10 +95,15 @@ Spike 1 fine-tuned `meta-llama/Llama-3.1-8B-Instruct` (the id the API accepts; `
 
 ### Nebius AI Cloud (Lane B)
 
-- **Serverless Jobs.** `unsloth-train` runs as a Job on `gpu-h100-sxm` with a 1-hour timeout: Unsloth trains a 16-bit LoRA on `nvidia/Llama-3.1-Nemotron-Nano-8B-v1`. The docs templates set `merge: false`, so training skips the 16 GB merged copy. A spike on a rented A100 outside Nebius chose that student: 60 steps took 62.5 s at a 15.9 GiB peak, and the merged model served from vLLM 0.18.0. Logs and artifacts flow back through the SDK, so `ORCHAPOD_CONTROL_URL` must be a public https URL: the live golden run ran from the hosted API. Its Job took 11.2 min, about 6 of them pulling the image.
-- **Serverless Endpoints.** `vllm-serve` creates an Endpoint (`vllm/vllm-openai:v0.18.0-cu130`, default `gpu-l40s-a`, bearer-token auth) that serves the base model and the adapter side by side, so Nemotron 3 Ultra judges the tuned model pairwise against its base. It registers an expiry (15 minutes in the docs template, 30 by default), at which the control plane deletes it. On the golden run, base and adapter served side by side on one L40S (`--enable-lora`); the endpoint took about 4 min from provisioning to running.
+- **Serverless Jobs.** `unsloth-train` runs as a Job on `gpu-h100-sxm` with a 1-hour timeout: Unsloth trains a 16-bit LoRA on `nvidia/Llama-3.1-Nemotron-Nano-8B-v1`. The docs templates set `merge: false`, so training skips the 16 GB merged copy. A spike on a rented A100 outside Nebius chose that student: 60 steps took 62.5 s at a 15.9 GiB peak, and the merged model served from vLLM 0.18.0. Logs and artifacts flow back through the SDK, so `ORCHAPOD_CONTROL_URL` must be a public https URL: both live golden runs ran from the hosted API. Their Jobs took 11.2 min each, of which the image pull took about 6 min and then 4.6 min.
+- **Serverless Endpoints.** `vllm-serve` creates an Endpoint (`vllm/vllm-openai:v0.18.0-cu130`, default `gpu-l40s-a`, bearer-token auth) that serves the base model and the adapter side by side, so Nemotron 3 Ultra judges the tuned model pairwise against its base. It registers an expiry (15 minutes in the docs template, 30 by default), at which the control plane deletes it. On both live golden runs, base and adapter served side by side on one L40S (`--enable-lora`); the endpoint took about 4 min from provisioning to running, and the API deleted it at expiry.
 - **Object Storage.** Datasets, checkpoints and artifacts live in an S3-compatible bucket: `https://storage.eu-north1.nebius.cloud` on Nebius, where the hosted app's bucket sits in eu-north1 beside the GPUs, and MinIO locally. The `ORCHAPOD_R2_*` variables and the `r2://` scheme keep their historical names.
-- **Container Registry.** The hosted app's node images live in a Nebius Container Registry in the same project, so Jobs pull them with no credentials. TODO(D8): console screenshots of a Job and an Endpoint while a run uses them (the golden run's are deleted).
+- **Container Registry.** The hosted app's node images live in a Nebius Container Registry in the same project, so Jobs pull them with no credentials.
+
+We have no Nebius console screenshots. The run page's node cards show each Job and Endpoint and its live state instead:
+
+![The run page while the H100 Job trains: the unsloth_train card reads Nebius Job and RUNNING](docs/img/run-view-train.png)
+*Run 0ee1e20a while the student trains: the node card shows the Nebius Job and its live state, RUNNING.*
 
 ### Tavily
 
@@ -154,30 +165,47 @@ The other templates need `hf-download quantize data-prep judge-eval` (maths), `w
 
 ## Run the demo
 
-- **Hosted.** https://app.orchapod.dev, with its API at https://api.orchapod.dev. It holds the live golden run: [its run page](https://app.orchapod.dev/runs/d20d30f3-768f-4989-b974-cac3d9b47495) shows the nodes, their costs and the eval view. Its template cards run the pipeline at reduced scale under the public caps, so a visitor can run the movie and maths templates (Costs and caps). It runs on one Nebius VM in eu-west1 with Docker Compose and Caddy for HTTPS ([docs/HOSTING.md](docs/HOSTING.md)); its bucket and GPUs are in eu-north1.
+- **Hosted.** https://app.orchapod.dev, with its API at https://api.orchapod.dev. It holds both live golden runs: [d20d30f3](https://app.orchapod.dev/runs/d20d30f3-768f-4989-b974-cac3d9b47495) and the rehearsal typed on its /agent page, [0ee1e20a](https://app.orchapod.dev/runs/0ee1e20a-468f-4651-8eee-c39fd094a804). Their run pages show the nodes, their costs and logs, and the eval view. Its template cards run the pipeline at reduced scale under the public caps, so a visitor can run the movie and maths templates (Costs and caps). It runs on one Nebius VM in eu-west1 with Docker Compose and Caddy for HTTPS ([docs/HOSTING.md](docs/HOSTING.md)); its bucket and GPUs are in eu-north1.
 - **Locally, from the Agent.** Open http://localhost:3000/agent and type one of the intents above, or press Run on a template card (`GET /agent/templates`), which starts a reduced version of its plan (the same pipeline on fewer pages, rows and samples) in one click. A demo-mode banner gives the templates' estimates and says public runs are capped; a template whose reduced plan is above your per-run cap (`fits: false`) keeps Run disabled and links to its golden run. Read the plan card: nodes, models, estimated cost and minutes, warnings. Run stays disabled while the plan has errors, and Edit opens the plan on the canvas. Press Run to follow the live run view (node timeline, logs, cost meter). A run that succeeds opens its result, the eval view or the dataset card, and its compare tab streams one prompt to the run's base and tuned models side by side through `POST /compare`, with the keys kept on the server. When the run ends, the report card shows what ran, the metrics, the cost against the estimate and how to use the result. With `STUB=1` all of this runs on stubs at $0.
-- **Run page.** `/runs/{id}` (also embedded on `/agent`) shows per-node status, cost and errors from `GET /runs/{id}/summary`, updates the cost meter live, shows a failed node's error verbatim and offers **Retry node** while the run is failed or cancelled. Its chart tab draws the fine-tune's loss curve from the node's metrics, so a finished or seeded run shows it, and appends live progress.
+- **Run page.** `/runs/{id}` (also embedded on `/agent`) shows per-node status, cost and errors from `GET /runs/{id}/summary`, updates the cost meter live, shows a failed node's error verbatim and offers **Retry node** while the run is failed or cancelled. Its chart tab draws the fine-tune's loss curve from the node's metrics, so a finished or seeded run shows it, and appends live progress. Each node card says where the step runs: Local Docker, or a Nebius Job or Endpoint with its live state. The Logs tab keeps every node's lines after the run ends ([run 0ee1e20a's logs](docs/img/run-logs.png)), View workflow opens the canvas coloured by status, and a run the Agent started has a Report tab ([its report](docs/img/run-report.png)).
+
+![The run page mid-run: five nodes done or running, the vllm_serve card reads Nebius Endpoint and RUNNING, and the log shows the vLLM command with --enable-lora](docs/img/run-view.png)
+*Run 0ee1e20a mid-run: the Nebius Endpoint is RUNNING, and its log shows vLLM serving the base and the LoRA.*
+
 - **Headless.** `python scripts/e2e_agent.py --stub` runs the three canonical intents and the golden path through the Agent with no key (Setup). `make demo` seeds the live golden run, `d20d30f3`, into the database and bucket that `.env` names (load it first with `set -a; . ./.env; set +a`), so its run page, eval view and report render locally without a model call.
-- **Live, headless.** `make agent-e2e INTENT=2 MAX_COST=0.5` runs one canonical intent through the Agent API with real Token Factory calls. Load `.env` and run `make up` first. It needs `NEBIUS_API_KEY` and stops at `MAX_COST` (at most $3). It refuses a plan that needs an unset key (web-research needs `TAVILY_API_KEY`). It refuses plans that rent a GPU; the golden run is `make e2e API=https://api.<domain>`, which runs template 4 on the hosted API as the admin (`ORCHAPOD_ADMIN_TOKEN`), capped at `MAX_COST` (default $3) and 120 minutes, because Nebius Jobs report to a public https control URL. The golden run passed this way on 2026-10-25, and intents #2 and #3 passed through `make agent-e2e` (Results).
+- **Live, headless.** `make agent-e2e INTENT=2 MAX_COST=0.5` runs one canonical intent through the Agent API with real Token Factory calls. Load `.env` and run `make up` first. It needs `NEBIUS_API_KEY` and stops at `MAX_COST` (at most $3). It refuses a plan that needs an unset key (web-research needs `TAVILY_API_KEY`). It refuses plans that rent a GPU; the golden run is `make e2e API=https://api.<domain>`, which runs template 4 on the hosted API as the admin (`ORCHAPOD_ADMIN_TOKEN`), capped at `MAX_COST` (default $3) and 120 minutes, because Nebius Jobs report to a public https control URL. The first live golden run, `d20d30f3`, passed this way on 2026-10-25, and intents #2 and #3 passed through `make agent-e2e` (Results).
 
 ### Results
 
-**The live golden run (2026-10-25, hosted).** Run `d20d30f3-768f-4989-b974-cac3d9b47495` succeeded in 24.2 min for $1.61, against its $2.66 estimate and the $3 cap.
+**Two live golden runs (2026-10-25, hosted).** The same pipeline ran twice, and the results agree within noise. The tuned model beats its base on 7 of 30 held-out questions and loses on 1 or 3; most pairs tie. Both runs are reported as they are.
 
-| Step | What ran | Time | Cost |
+| Run | Date | Wall time | Cost (estimate) | Wins / ties / losses | Win rate | Consistency |
+| --- | --- | --- | --- | --- | --- | --- |
+| `d20d30f3`, the first live golden run | 2026-10-25 | 24.2 min | $1.61 ($2.66) | 7 / 22 / 1 | 0.60 | 0.73 |
+| `0ee1e20a`, the D8 rehearsal, typed on /agent | 2026-10-25 | 23.5 min | $1.58 ($2.66) | 7 / 20 / 3 | 0.57 | 0.67 |
+
+| Step | What ran | `d20d30f3` | `0ee1e20a` |
 | --- | --- | --- | --- |
-| research | Tavily, 20 Nebius docs pages | 3 s | $0.032 |
-| synth | Nemotron 3 Super, 300 grounded Q&A rows | 2.1 min | $0.0295 |
-| prep | data-prep | 3 s | |
-| train | Unsloth LoRA of Nemotron Nano 8B on an H100 Serverless Job | 11.2 min | $0.8408 |
-| serve | vLLM 0.18 on one L40S Serverless Endpoint, base + LoRA via `--enable-lora` | 9.3 min | $0.6276 |
-| evaluate | Nemotron 3 Ultra, pairwise judge | 85 s | $0.0802 |
+| research | Tavily, 20 Nebius docs pages | 3 s, $0.032 | 3 s, $0.032 |
+| synth | Nemotron 3 Super, 300 grounded Q&A rows | 2.1 min, $0.0295 | 153 s, $0.028 |
+| prep | data-prep | 3 s | 4 s |
+| train | Unsloth LoRA of Nemotron Nano 8B on an H100 Serverless Job | 11.2 min, $0.8408 | 671 s, $0.839 |
+| serve | vLLM 0.18 on one L40S Serverless Endpoint, base + LoRA via `--enable-lora` | 9.3 min, $0.6276 | 495 s, $0.600 |
+| evaluate | Nemotron 3 Ultra, pairwise judge | 85 s, $0.0802 | 85 s, $0.082 |
 
-- **Train.** About 6 of the 11.2 minutes were the image pull from our Nebius Container Registry. It ran 60 of 60 steps; the loss fell from 7.75 to 1.68, and the validation loss was 1.63.
-- **Evaluate.** Ultra judged 30 held-out questions: 7 wins, 22 ties and 1 loss for the tuned model, with 0 errors. That is a win rate of 0.6, and 0.733 of the verdicts held in both answer orders.
-- **One win.** Asked "What happens to computing resources and container disk when a Serverless AI job completes?", the base model answered generically. The tuned model said: "When a Serverless AI job completes, the container disk is automatically deleted, and the computing resources are released."
+- **Train.** The image pull from our Nebius Container Registry took about 6 min, then 4.6 min. Both runs did 60 of 60 steps. The loss fell from 7.75 to 1.68 (validation 1.63), then from 7.20 to 1.31 (validation 1.82): [the second run's loss chart](docs/img/loss-chart.png).
+- **Evaluate.** Ultra judged 30 held-out questions in each run, with 0 errors. Consistency is the share of verdicts that held in both answer orders.
+- **One win (d20d30f3).** Asked "What happens to computing resources and container disk when a Serverless AI job completes?", the base model answered generically. The tuned model said: "When a Serverless AI job completes, the container disk is automatically deleted, and the computing resources are released."
+- **The playground (0ee1e20a).** Inside the endpoint's keep-alive, held-out sample #0, fixed as the question before the run, went to both models. The tuned model said "The value 'spot' indicates that a job uses spot pricing."; the base model invented a `PRICE=SPOT` format. The reference uses a `pricingModel` field instead, so the judge scored this pair a tie ([the judged sample](docs/img/eval-sample.png)).
 - **The first attempt** (`fa20d166`, $0.58) failed in train: the image's Mamba-2 wheels broke `import unsloth` on a GPU. The fix (69cafd1) drops them, so the image no longer trains NemotronH students.
-- TODO(D8): screenshots of the plan card, run view, eval view and playground (the full list is in `docs/video-script.md`), and the video link.
+- TODO(D8): the video link.
+
+![The eval view of run 0ee1e20a: win rate 57%, 7 wins, 20 ties, 3 losses, consistency 67%, and the judged samples](docs/img/eval-view.png)
+*Run 0ee1e20a's eval view: 7 wins, 20 ties and 3 losses on 30 held-out questions; win rate 57%, consistency 67%.*
+
+![The compare playground of run 0ee1e20a: one held-out question answered by the base and the tuned model side by side](docs/img/playground.png)
+*The playground inside run 0ee1e20a's keep-alive: held-out sample #0, base and tuned side by side (the judge scored this pair a tie).*
+
 - **Live: intent #2 through the Agent (2026-10-22).** Nemotron 3 Super planned `movie-interactions-synthetic` live: synth-distilabel → data-prep, estimated at $0.30 and 9 minutes. Run `84e57f84-5423-4c3e-9f68-073c73eb2224` succeeded in 446 s. It returned 928 rows with exactly the schema's fields, and Super wrote the report. It cost $0.1007 in all: $0.0966 for the run and $0.0041 for the planner and the reporter.
 - **Live: intent #3 through the Agent (2026-10-22).** It passed on the second attempt. The first (run `cf49d0f1`) failed in 73 s for $0.0034, because Super's live plan left out GSM8K's dataset config. data-prep now picks `main` (else the first config) when a dataset has several, and logs a warning. The passing run, `59786797-26ca-4a01-9b80-80a730234a97`, took 255 s and $0.0175 in all. It downloaded a 3.1 GB maths model and quantized it to a 0.99 GB q4_k_m GGUF in 75 s on CPU. Nemotron 3 Ultra judged q4_k_m against f16 live on 5 questions: 1 win, 4 ties, 0 losses, consistency 1.0. Exact match was 0.8 for q4_k_m and 0.6 for f16, a gap of one question. Five judged questions is a smoke-scale sample, not a measure of quality.
 - **Intent #3 on CPU (measured, no key).** The maths template's evaluate step ran in Docker on an M1 Pro Mac, a busy host, with the judge turned off: the f16 and q4_k_m GGUFs of Qwen2.5-Math-1.5B-Instruct answered the 50 GSM8K test questions in 18 min 01 s in all, with no failed row. Exact match was 0.78 for f16 and 0.84 for q4_k_m, a gap of 3 questions in 50 that is within noise. The q4_k_m file is 0.99 GB, against 3.09 GB for f16.
@@ -191,12 +219,12 @@ The other templates need `hf-download quantize data-prep judge-eval` (maths), `w
 | Per UTC day | $15 | `ORCHAPOD_MAX_DAY_USD` |
 | Serverless Job timeout | 1 hour | fixed |
 | Node backstop timeout | 5,400 s | `ORCHAPOD_NODE_TIMEOUT_S` |
-| Endpoint keep-alive | 30 min (15 in the docs template), at most 120 (the API deletes the endpoint at expiry: the golden run's endpoint was gone within 3 minutes of it) | `keep_alive_min` on `vllm-serve` |
+| Endpoint keep-alive | 30 min (15 in the docs template), at most 120 (the API deletes the endpoint at expiry, as it did on both live golden runs) | `keep_alive_min` on `vllm-serve` |
 | Compare streams in flight | 4 | `ORCHAPOD_MAX_COMPARES` |
 | Kill switch | off | `ORCHAPOD_KILL_SWITCH=1` |
 | Anonymous visitors | caps × 0.1 | `ORCHAPOD_ANON_SCALE` |
 
-The guard checks the estimate when a plan is drafted (`POST /agent/plan` answers 402 once the day's budget is spent, and an estimate above the remaining budget is a plan error), at /agent/run, start and retry (HTTP 402), at every node boundary, and inside each node, where `ORCHAPOD_MAX_COST_USD` aborts the node once spend passes it. A model with no price in the table fails before the request is sent. No live run has hit a cap yet: the golden run spent $1.61 of its $3.
+The guard checks the estimate when a plan is drafted (`POST /agent/plan` answers 402 once the day's budget is spent, and an estimate above the remaining budget is a plan error, which the planner tries to repair), at /agent/run, start and retry (HTTP 402), at every node boundary, and inside each node, where `ORCHAPOD_MAX_COST_USD` aborts the node once spend passes it. A visitor's plan with a node that rents a GPU is the exception: it comes back as drafted, with no budget repairs, and `admin_only` names those nodes. Its error says they "rent GPUs billed by the hour: on the public demo only the admin can start them", and the page shows it as an amber "Admin-only on the public demo" note, with a link to the pipeline's golden run when there is one. A model with no price in the table fails before the request is sent. No live run has hit a cap yet: the two golden runs spent $1.61 and $1.58 of their $3.
 
 **The public app.** The web app never sends the admin header (`X-Orchapod-Admin` with `ORCHAPOD_ADMIN_TOKEN`), so every browser gets the caps × `ORCHAPOD_ANON_SCALE`: by default $0.30 a run and $1.50 a day. Visitors cannot start a node that rents a GPU (`unsloth-train`, `vllm-serve`: HTTP 403), cannot change or delete a workflow that has runs (409; the canvas then offers **Save a copy**, which saves the edits as a new workflow "<name> (copy)"), and can cancel only the runs they started: start and `/agent/run` return a cancel token once, the starting browser tab keeps it in sessionStorage and sends it as `X-Orchapod-Cancel-Token`, and in any other tab the run page disables Cancel (HTTP 403 without the token). Each address is rate-limited, with HTTP 429 and `Retry-After`: planning 5 requests, then 1 every 12 s; starting runs the same; compare 3, then 1 a minute; other writes 10, then 1 every 30 s. Secret-looking node inputs (keys, tokens, passwords) are dropped before a workflow or plan is stored, and artifact metadata is redacted on the way in and on every way out. The kill switch refuses every plan, run, start, retry and compare.
 
@@ -209,7 +237,10 @@ The guard checks the estimate when a plan is drafted (`POST /agent/plan` answers
 | `gpu-h100-sxm`, per hour | $4.50 |
 | `gpu-l40s-a`, per hour | $1.55 |
 
-These are estimates, not measurements. The docs template (Lane B) is estimated at $2.66 at full scale. Under our spend rules its worst case is $2.92, still under the $3 run cap. That is at most 25 minutes of H100, up to 15 minutes of L40S start plus 15 of keep-alive, and about $0.27 of Tavily and Token Factory calls. Its CPU variant is estimated at $2.15. Lane A's estimates assume $0.50 for the fine-tune, because Token Factory does not publish its price per trained token (spike 1). Measured: the live golden run cost $1.61 in 24.2 min against that $2.66 estimate, intent #2 $0.1007 in 446 s, and intent #3 $0.0175 in 255 s (Results).
+These are estimates, not measurements. The docs template (Lane B) is estimated at $2.66 at full scale. Under our spend rules its worst case is $2.92, still under the $3 run cap. That is at most 25 minutes of H100, up to 15 minutes of L40S start plus 15 of keep-alive, and about $0.27 of Tavily and Token Factory calls. Its CPU variant is estimated at $2.15. Lane A's estimates assume $0.50 for the fine-tune, because Token Factory does not publish its price per trained token (spike 1). Measured: the two live golden runs cost $1.61 in 24.2 min and $1.58 in 23.5 min against that $2.66 estimate, intent #2 $0.1007 in 446 s, and intent #3 $0.0175 in 255 s (Results).
+
+![The finished run 0ee1e20a: every node done with its cost, $1.581 in all, and its artifacts](docs/img/run-finished.png)
+*Run 0ee1e20a finished: each node's cost, $1.581 in all against the $2.66 estimate, and the run's artifacts.*
 
 ## What changed during the submission period
 

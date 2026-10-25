@@ -94,6 +94,13 @@ rollback runs the old API against today's nodes.
   Then check the Nebius console for Serverless Jobs and Endpoints and delete any that are running: the API deletes
   endpoints at their TTL only while it runs.
 
+## During judging: no admin runs
+- Never start an admin run on the hosted app while judges can visit it. Admin spend counts against the public's share
+  of the day cap. The public can spend the day cap × `ORCHAPOD_ANON_SCALE`, less everything spent that day.
+- At the defaults ($5 and 0.1) the public's share is $0.50 a day, and one golden run costs about $1.60. After the
+  2026-10-25 rehearsal, the public could not run anything until 00:00 UTC.
+- Run GPU work on a local instance instead. The hosted app already holds both live golden runs.
+
 ## Backup and restore
 Cron runs `scripts/backup-db.sh` at 03:15 UTC: `pg_dump -Fc` → `s3://<bucket>/backups/pg/orchapod-<NN>.dump`, NN = day
 number mod 14, so the bucket keeps the last 14 nights with no lifecycle rule. Its log: `journalctl -t orchapod-backup`.

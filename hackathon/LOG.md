@@ -749,3 +749,8 @@ worktrees:
   - DECISION (backend-w9): R22 key-rule redaction applies to log lines, live events and NodeRun.error.
   - Round 2 sent: vllm-serve endpoint state by deterministic name while provisioning, and through keep-alive after success; seed-golden-run inserts node_log rows from the fixture's logs artifacts.
 - 2026-10-25T07:13Z frontend-w8 done (0f4307a..85e8f56): log history + dedupe merge, provider/resource on cards, a 5 s summary poll, canvas ?run= status colours + banner. Web 42. Review dispatched (sonnet). Merge order: backend-w9 first (smoke needs /logs).
+- 2026-10-25T07:27Z frontend-w8 review (sonnet): Needs fixes.
+  - Findings: I1 the vllm-serve card read 'Local Docker Endpoint'; I2 a history/live handoff gap; I3 the card-level pulse dims text and there is no reduced-motion handling; I4 the old golden run shows no logs.
+  - Dedupe, polling cleanup and text-only rendering verified.
+  - Ruling (I4): logs come from backend-w9 round 2 seeding node_log from the fixture's logs artifacts + a reseed on the VM; no frontend fallback.
+  - Fix round → a0b588992b033feb4 (I1–I3 + M1–M5, M7).

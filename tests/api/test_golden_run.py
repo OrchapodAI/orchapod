@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from api.models.db import AgentRun, Artifact, ArtifactKind, Model, NodeRun, Run, Spend
+from api.models.db import AgentRun, Artifact, ArtifactKind, CancelToken, Model, NodeRun, Run, Spend
 from api.agent import planner
 from api.services import storage
 
@@ -113,6 +113,16 @@ async def test_the_seeded_run_keeps_the_log_lines_its_nodes_wrote(client, db, s3
     assert await lines(client, run_id, node_id=last) == [x for x in expected if x[0] == last]
     await golden.seed(FIXTURE)  # seeded again: the run is replaced with its lines, none twice
     assert await lines(client, run_id) == expected
+
+
+async def test_seeding_replaces_a_run_started_by_the_agent(client, db, s3):
+    """The live golden run was started by /agent/run, so the hosted database holds its cancel token: reseeding there must
+    replace the run, not stop at the token's foreign key (Postgres, 2026-10-25)."""
+    run_id = await golden.seed(FIXTURE)
+    db.add(CancelToken(run_id=run_id, sha256="0" * 64))
+    await db.commit()
+    assert await golden.seed(FIXTURE) == run_id
+    assert await db.scalar(select(func.count()).select_from(CancelToken).where(CancelToken.run_id == run_id)) == 0
 
 
 async def test_seeding_trims_and_redacts_the_log_lines_like_internal_log(client, db, s3, monkeypatch):

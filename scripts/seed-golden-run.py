@@ -34,7 +34,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / "apps"), str(ROOT / "packages/sdk-py")]
 from sqlalchemy import delete, select  # noqa: E402
 
 from api import database  # noqa: E402
-from api.models.db import AgentRun, Artifact, Model, NodeLog, NodeRun, Run, RunStatus, Workflow  # noqa: E402
+from api.models.db import AgentRun, Artifact, CancelToken, Model, NodeLog, NodeRun, Run, RunStatus, Workflow  # noqa: E402
 from api.services import logs, storage  # noqa: E402
 from api.services.redact import redact  # noqa: E402
 
@@ -95,6 +95,7 @@ async def seed(fixture: dict) -> uuid.UUID:
         nodes = select(NodeRun.id).where(NodeRun.run_id == run_id)
         for old in (delete(Model).where(Model.run_id == run_id), delete(Artifact).where(Artifact.node_run_id.in_(nodes)),
                     delete(NodeLog).where(NodeLog.run_id == run_id), delete(AgentRun).where(AgentRun.run_id == run_id),
+                    delete(CancelToken).where(CancelToken.run_id == run_id),  # a run started by /agent/run has one
                     delete(NodeRun).where(NodeRun.run_id == run_id), delete(Run).where(Run.id == run_id)):
             await db.execute(old)
         for table, rows in ((Workflow, [f["workflow"]] if f["workflow"] else []), (Run, [f["run"]]), (NodeRun, f["nodes"]),

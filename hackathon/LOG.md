@@ -882,3 +882,9 @@ worktrees:
   - orchapod-daycap.service sets ORCHAPOD_MAX_DAY_USD=20 in /opt/orchapod/.env and runs `docker compose up -d api`. It is idempotent.
   - Dry-run in a systemd context on a temp copy of .env: the sed gives 20 and compose config resolves; the real .env still says 5. Deploys never sync .env, so they keep it.
   - Restart note: after the session restart (around 16:00Z) ssh-agent was empty → `ssh-add ~/.ssh/orchapod_deploy` (passphrase-free). The anonymous 00:10Z check died with the restart; re-armed.
+- 2026-10-25T16:20Z HOSTED HEALTH for the judging window (Oct 29 → Dec 15):
+  - app/agent, api/health and both golden-run pages answer 200 in under 0.7 s.
+  - orchapod-watchdog.timer runs every minute.
+  - /etc/cron.d/orchapod has the nightly backup at 03:15 UTC (14 slots). It had never run: the VM was created at 05:01Z.
+  - Ran it by hand: backups/pg/orchapod-03.dump, 38,861 bytes. `pg_restore -l` lists the data of all 9 tables (agent_run, artifact, cancel_token, model, node_log, noderun, run, spend, workflow).
+  - The anonymous G3-B check is re-armed for 2026-10-26T00:10Z: footage/checks/anon-check.cjs, outside the wiped scratchpad.

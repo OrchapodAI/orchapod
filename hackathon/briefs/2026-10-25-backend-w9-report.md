@@ -1,38 +1,33 @@
-# backend-w9 report (2026-10-25, round 2)
+# backend-w9 report (2026-10-25, round 3)
 
-Status: DONE_WITH_CONCERNS. Branch hack/backend-w9; NebiusHackathon (22a6ee7) merged in, no conflicts. Spend $0: no model or Nebius call, no .env sourced, no e2e, no ui-smoke, no subagents.
+Status: DONE_WITH_CONCERNS. Branch hack/backend-w9, NebiusHackathon (22a6ee7) merged in. Spend $0: no model or Nebius call, no .env sourced, no e2e, no ui-smoke, no subagents.
 
 ## Commits
-Round 1 (reviewed): 94ba9be contracts · 8d29c48 persisted logs · 4250007 summary `provider`/`resource` and the run header · 1dc9f5c report.
-Round 2, on top of the merge 3ce7ed4:
-- 8d236a5 docs(contracts): endpoint state (a) and (b), the header's two accepted cases, seeded logs, the one endpoint-name function.
-- 5e532f3 refactor(api): `apps/api/services/logs.py`: `clean()` (cut, redact, cut) and `keep()` (add lines, trim to the last 5000), used by `/internal/log`. No behaviour change.
-- f7867b4 feat(demo): `seed()` stores each node's `logs` artifact through the same `clean()` and `keep()`.
-- b3f0c61 feat(api): the serving endpoint's state, (a) by name and (b) through the keep-alive window.
-- The report commit follows. Each commit is green on its own (snapshot runs: 283, 283, 285, 288 tests incl. drills and the vllm-serve container tests; ruff clean).
+- Round 1: 94ba9be contracts · 8d29c48 persisted logs · 4250007 summary `provider`/`resource` and the run header.
+- Round 2 (after the merge 3ce7ed4): 8d236a5 contracts · 5e532f3 `services/logs.py` · f7867b4 seeded logs · b3f0c61 endpoint state (a) by name and (b) through the keep-alive window.
+- Round 3: 3ae2786 contracts · b23117a redaction, cleaning, field limits (I1, M3, M4) · b1a11ff Nebius reads and a superseded endpoint (I2, M6, M7).
+- The report commit follows. Each round-3 commit is green on its own (snapshot runs with drills, docs and the vllm-serve container tests: 314, 331, 334; ruff clean).
 
-## What changed in round 2
-1. **Endpoint state (approved fix 1).**
-   - (a) A `running` vllm-serve node with no `endpoint_url` artifact is looked up by name in `endpoints.list()` (not `find()`: it sleeps 0, 15 and 30 s on a miss). The summary then shows `{"kind": "endpoint", "id", "state"}` with PROVISIONING, IMAGE_PULLING, STARTING, RUNNING; null while Nebius lists no such name.
-   - The name comes from one function, `orchapod.names.endpoint_name(run_id, node_id)` (packages/sdk-py, which both the API image and the node image ship). vllm-serve had the expression inline in `main()`, with nothing to import, so I moved it there and `containers/vllm-serve/run.py` now calls it (three lines: the import, the call, and the `import re` it left unused; ml's file, as "reuse vllm-serve's naming function" required). A test asserts `load_container("vllm-serve").endpoint_name is endpoint_name`, and the lookup test uses the node id `Serve_8B`, whose name differs from a hand-derived one.
-   - (b) A registered endpoint's state is read while its artifact's `meta.expires_at` is in the future and `meta.deleted_at` is unset, whatever its node's status. Same cache, cap and STUB guard as before: all reads now go through one helper, `_read(key, fetch)` (30 s per key, 3 s, null on error, failures cached too).
-2. **Seeded golden-run logs (approved fix 2).** The live fixture (d20d30f3) yields 15 lines over 6 nodes. `seed()` also clears the run's old lines, so seeding again replaces them. Export is untouched.
-3. **Header label left as is**, and both accepted cases named in the contract line.
+## Rounds 1 and 2 in brief
+`GET /runs/{id}/logs` over table `node_log` (cut at 2000 chars, R22-redacted, the last 5000 per run); the summary's per-node `provider` and `resource` (a Job, or vllm-serve's endpoint found by `orchapod.names.endpoint_name` while it runs and read through the keep-alive window; state cached 30 s, capped 3 s, null on error, never under STUB); `RunOut.gpu_provider` = the first GPU-renting node's provider; `make demo` seeds the golden run's log lines (PROGRESS left out) through the same `clean()` and `keep()`.
+
+## What changed in round 3
+- **I1: `redact_text` scans.** `_PAIR` consumed a whole value, so a pair inside a non-secret value was never looked at. It now loops over `_PAIR.search`: after a non-secret pair it resumes at the value (`m.start(3)`), after a secret one it splices `[redacted]` and continues at `m.end()`; no recursion. Two passes follow for what no key names: `(?i)\b(bearer|basic)\s+[\w.~+/=-]{8,}` and `(?<=://)[^/\s@:]*:[^/\s@]+(?=@)`. All eight shapes of the review (and a nested JSON line, `redis://:pw@…`, a `Basic` header) come out redacted and stay so when applied twice.
+- **I2: a pool of its own and one read in flight per key.** Reads run on `ThreadPoolExecutor(2, "nebius-read")`. A read that outlives the 3 s stays the key's one flight: the next poll after a cache lapse waits for it again (shielded) instead of starting another; `_landed` frees the key when it ends, keeps an answer that came late, and asks the future for its exception so none is "never retrieved". A failure is cached as before.
+- **M3: `clean()`** drops NUL and turns a lone surrogate into `?`. Found on the way: a lone surrogate broke the insert on SQLite too (the probe raised `UnicodeEncodeError`), so it was a 500 anywhere, and only NUL was Postgres-specific.
+- **M4:** `max_length` 128 (`node_id`), 64 (`ts`), 16 (`level`) on `LogEvent` (422 beyond) and on `NodeLog` (VARCHAR on Postgres).
+- **M6:** the keep-alive read uses `internal._live()` and `_expiry()`, so a deleted or superseded registration is not read.
+- **M7:** the faked Nebius (`Serverless`, `nebius`) lives in `tests/api/conftest.py`; test_redact no longer imports it from test_executor. The fixture also resets `_flights` and the guard still fails any test that reaches the real client.
 
 ## Evidence
-- `pytest tests/api -q` x5, clean env: `239 passed` five times (234 + 5 new: 2 name lookup, 1 keep-alive, 2 seed).
-- `make check` (no E2E): exit 0; ruff "All checks passed!"; `1138 passed, 2 warnings`; web `pass 38 fail 0`.
-- Mutation check, 17 breaks of the new behaviour (container re-derives the name, no lookup, wrong name, matches any endpoint, no 3 s cap, no STUB guard, keep-alive: read only while running / always / ignoring expiry / ignoring `deleted_at` / compared backwards, seed keeps PROGRESS / skips cleaning / does not trim / does not clear / stores nothing / wrong order): all caught. One survived at first: a hand-written f-string equals `endpoint_name` for the id `serve`, so the test now uses `Serve_8B`.
-- Real client class, mocked transport: my lookups run through the actual `NebiusServerless` over `httpx.MockTransport` replies shaped like Nebius's REST (a two-page endpoint listing, `endpoints.get`, `jobs.get`): name found on page 2, ids and states right, bearer header sent. Nothing touched the real API.
-- Postgres 16 (the compose one, scratch databases, all dropped): the real `seed()` stores the 15 lines over 6 nodes (218 ms; 87 ms the second time, no duplicates, no PROGRESS); a 7000-line bulk through `keep()` leaves exactly lines 2000..6999 in 343 ms.
-
-## Decisions (for the Orchestrator to record)
-1. Seeded logs leave out `PROGRESS` lines. The SDK's `logs` file holds them, but they went to /internal/progress, which stores nothing: 250 of the fixture's 263 lines are `step=N/M phase=…`, and a live run's history has none, so the seeded Logs tab shows the 15 real lines instead of burying them. One condition in `_log_lines` (scripts/seed-golden-run.py) if you want them.
-2. The endpoint name's single source is `orchapod/names.py` in the SDK, not packages/providers (platform's file). NebiusServerless is untouched.
-3. Seeding moves `r2://` URIs to the hosted bucket in log lines too, like the rest of the fixture (a checkpoint line reads `r2://<hosted bucket>/runs/…`).
+- `pytest tests/api -q` x5, clean env: `259 passed` five times (239 + 20 new: 12 redaction shapes, 1 prose/recursion, 1 NUL and surrogate, 3 limits, 3 pool and flight).
+- `make check` (no E2E): exit 0; ruff "All checks passed!"; `1158 passed, 2 warnings`; web `pass 38 fail 0`. No new lint finding in a touched test file.
+- Mutation check, 17 breaks (scan skipping values, no Bearer pass, no URL pass, Bearer minimum 1, secret not spliced at the value, default executor, a read per lapse, late answer dropped, key never freed, failure uncached, NUL kept, surrogate kept, each of the three request limits, the table limit, superseded endpoints read): all caught.
+- Redaction cost, measured: 6 ms on 2,000 characters of `a:a:a:…` (the worst case, quadratic), 91 ms at 8,000, 1.4 s at 32,000; hence `clean()` cuts first.
+- Postgres 16 (compose, scratch database, dropped): `node_log.node_id/ts/level` are VARCHAR 128/64/16; Postgres refuses NUL and a 129-character `node_id` natively; through the route NUL gives `ab`, a lone surrogate `x?y`, a 65-character `ts` a 422; 16 writers x 100 lines on one run with keep 500 leave exactly 500 (ids strictly increasing, no error) while a second run alongside keeps its 200.
 
 ## Concerns
-1. **Hosted rollout:** the new table appears at the API's next start; `make demo` must run again on the hosted app for the golden run to get its lines. The vllm-serve node image need not be rebuilt for this change: the old image names endpoints identically; a rebuild picks up `orchapod/names.py` with the rest of the SDK.
-2. By name, a still-listed (DELETING) endpoint of an earlier attempt of the same node can show for up to one 30 s cache window before the new one exists.
-3. `endpoints.list()` pages through every endpoint of the project, once per 30 s per running serve node.
-4. Container stdout (STDOUT events) is still not stored; a retried node briefly shows its previous attempt's Job id (round 1 notes, unchanged).
+1. **False positives, as specified:** `Bearer`/`Basic` followed by any 8+ word characters is redacted, so prose such as "basic configuration" becomes `basic [redacted]`. Cheap to narrow (require a digit or a symbol) if that costs more than the leak it prevents.
+2. **A URL password needs a colon:** `user:pw@host` is covered; a token alone as userinfo (`https://TOKEN@host`) is not.
+3. **Two pool threads:** two hung keys hold both; a third read queues, its poll gives up at 3 s with null, and it runs when a thread frees.
+4. Unchanged from round 2: the hosted API gains the table at its next start and `make demo` must run again for the golden run's lines; by name, a still-listed (DELETING) endpoint of an earlier attempt can show for one cache window; `endpoints.list()` pages the whole project once per 30 s per running serve node; container stdout is not stored; a retried node briefly shows its previous Job id.

@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Optional
-from sqlmodel import SQLModel, Field, Column, JSON, UniqueConstraint
+from sqlmodel import SQLModel, Field, Column, JSON, Index, UniqueConstraint
 
 
 def utcnow() -> datetime:
@@ -137,6 +137,21 @@ class CancelToken(SQLModel, table=True):
     __tablename__ = "cancel_token"
     run_id: uuid.UUID = Field(foreign_key="run.id", primary_key=True)
     sha256:  str
+
+
+class NodeLog(SQLModel, table=True):
+    """A line a node posted to /internal/log (redacted, at most 2000 chars): the last 5000 of each run stay, so a finished run
+    keeps its logs. ts is the node's own string, so a live event and its stored line compare equal. No foreign key: a late line
+    of a run this database no longer has must not fail the node's log call. A table of its own, so existing databases gain it
+    at startup (create_all)."""
+    __tablename__ = "node_log"
+    __table_args__ = (Index("ix_node_log_run_id_id", "run_id", "id"),)  # the last N lines of a run, newest first
+    id:      Optional[int] = Field(default=None, primary_key=True)
+    run_id:  uuid.UUID
+    node_id: str = Field(max_length=128)  # these three are short by nature; /internal/log refuses more (422)
+    ts:      str = Field(max_length=64)
+    level:   str = Field(max_length=16)
+    message: str
 
 
 class Spend(SQLModel, table=True):

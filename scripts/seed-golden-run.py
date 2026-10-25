@@ -8,7 +8,8 @@ The fixture holds what the app reads for one finished run: its workflow, run, no
 logs). So the run page, the eval view, the downloads and the report render without a single model call. Seeding replaces
 that run if it is already there (same ids), keeps its timestamps (an old run never counts toward today's budget) and
 moves its r2:// URIs to ORCHAPOD_R2_BUCKET. Directory artifacts (lora_adapter) and binaries (GGUF) are not copied:
-their rows still show, their downloads do not.
+their rows still show, their downloads do not. Seeding also stores each node's `logs` file as that run's log lines
+(GET /runs/{id}/logs), cut, redacted and trimmed as /internal/log does, so the run page shows them without a live run.
 
 The committed fixture is the live golden run d20d30f3 (template 4, hosted, 2026-10-25: Nemotron Nano 8B trained on an
 H100 Job, served base + LoRA from an L40S endpoint, judged by Nemotron 3 Ultra: 7 wins, 22 ties, 1 loss; $1.61).
@@ -33,8 +34,8 @@ sys.path[:0] = [str(ROOT), str(ROOT / "apps"), str(ROOT / "packages/sdk-py")]
 from sqlalchemy import delete, select  # noqa: E402
 
 from api import database  # noqa: E402
-from api.models.db import AgentRun, Artifact, Model, NodeRun, Run, RunStatus, Workflow  # noqa: E402
-from api.services import storage  # noqa: E402
+from api.models.db import AgentRun, Artifact, Model, NodeLog, NodeRun, Run, RunStatus, Workflow  # noqa: E402
+from api.services import logs, storage  # noqa: E402
 from api.services.redact import redact  # noqa: E402
 
 FIXTURE = ROOT / "scripts/golden-run.json"
@@ -93,8 +94,8 @@ async def seed(fixture: dict) -> uuid.UUID:
     async with database.AsyncSessionLocal() as db:
         nodes = select(NodeRun.id).where(NodeRun.run_id == run_id)
         for old in (delete(Model).where(Model.run_id == run_id), delete(Artifact).where(Artifact.node_run_id.in_(nodes)),
-                    delete(AgentRun).where(AgentRun.run_id == run_id), delete(NodeRun).where(NodeRun.run_id == run_id),
-                    delete(Run).where(Run.id == run_id)):
+                    delete(NodeLog).where(NodeLog.run_id == run_id), delete(AgentRun).where(AgentRun.run_id == run_id),
+                    delete(NodeRun).where(NodeRun.run_id == run_id), delete(Run).where(Run.id == run_id)):
             await db.execute(old)
         for table, rows in ((Workflow, [f["workflow"]] if f["workflow"] else []), (Run, [f["run"]]), (NodeRun, f["nodes"]),
                             (Artifact, f["artifacts"]), (Model, f["models"]),
@@ -102,8 +103,18 @@ async def seed(fixture: dict) -> uuid.UUID:
             for row in rows:  # merge: the workflow may serve other runs too, so it is updated, never deleted
                 await db.merge(table.model_validate(row))
             await db.flush()  # parents before children: the tables only know each other through foreign keys
+        await logs.keep(db, run_id, _log_lines(f))
         await db.commit()
     return run_id
+
+
+def _log_lines(f: dict) -> list[tuple[str, str, str, str]]:
+    """(node_id, ts, level, message) of the fixture's `logs` artifacts (JSONL {ts, level, message}), nodes in run order, each
+    line cleaned as /internal/log cleans one. Not the PROGRESS lines: those went to /internal/progress, which stores nothing,
+    so a live run's history has none either."""
+    files = {a["node_run_id"]: f["objects"].get(storage.r2_uri_to_key(a["uri"]), "") for a in f["artifacts"] if a["name"] == "logs"}
+    return [(n["node_id"], r["ts"], r["level"], logs.clean(r["message"])) for n in f["nodes"]
+            for r in map(json.loads, filter(str.strip, files.get(n["id"], "").splitlines())) if r["level"] != "PROGRESS"]
 
 
 async def _then_dispose(work):

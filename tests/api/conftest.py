@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import os
+import threading
 import uuid
 from unittest.mock import MagicMock, patch
 
@@ -72,6 +73,52 @@ def no_stub(monkeypatch):
     """STUB=1 in the caller's shell would put gpu nodes on LocalDocker, a real `docker run` wherever a test fakes no provider,
     and skip plan review's GPU-provider check: a test that wants STUB sets it."""
     monkeypatch.delenv("STUB", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def no_nebius(monkeypatch):
+    """The summary reads a running Nebius node's state through runs._serverless(): no test reaches the real API (nor the
+    nebius CLI that signs its token). pytest.fail is no Exception, so the summary's `except Exception` cannot swallow it;
+    a test that wants a state fakes the client (tests/api/test_executor.py `nebius`)."""
+    monkeypatch.setattr("api.routes.runs._serverless", lambda: pytest.fail("a test reached the real Nebius API"))
+
+
+class Serverless:
+    """NebiusServerless as the summary reads it (contracts "NebiusServerless"): jobs.get(id) and endpoints.get(id) answer
+    {"state": states[id]}, and an id with no state raises; endpoints.list() answers `listing`; `calls` records each call
+    (an id, or "list") and `threads` the name of the thread it ran on; `gate` (a threading.Event) holds every call until
+    it is set."""
+
+    def __init__(self):
+        self.calls, self.states, self.listing, self.gate, self.threads = [], {}, [], None, []
+        self.jobs = self.endpoints = self
+
+    def get(self, id):
+        self._enter(id)
+        return {"id": id, "state": self.states[id]}
+
+    def list(self):
+        self._enter("list")
+        return self.listing
+
+    def _enter(self, call):
+        self.calls.append(call)
+        self.threads.append(threading.current_thread().name)
+        if self.gate:
+            self.gate.wait(10)
+
+
+@pytest.fixture
+def nebius(monkeypatch):
+    """A faked Nebius for the summary's reads, on a clock the test moves (`nebius.clock[0] += 31`)."""
+    from api.routes import runs
+    fake, clock = Serverless(), [1000.0]
+    fake.clock = clock
+    monkeypatch.setattr(runs, "_serverless", lambda: fake)
+    monkeypatch.setattr(runs, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(runs, "_states", {})
+    monkeypatch.setattr(runs, "_flights", {})  # a read still in flight belongs to the loop of the test that started it
+    return fake
 
 
 @pytest.fixture(autouse=True)

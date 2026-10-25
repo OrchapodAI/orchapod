@@ -7,6 +7,8 @@ import uuid
 
 import pytest
 
+from api.services.redact import REDACTED
+
 
 # ---------------------------------------------------------------------------
 # POST /internal/artifact
@@ -143,6 +145,114 @@ async def test_log_endpoint_returns_204(client):
     })
 
     assert resp.status_code == 204
+
+
+# ---------------------------------------------------------------------------
+# POST /internal/log keeps the lines for GET /runs/{id}/logs (contracts "Run control API")
+# ---------------------------------------------------------------------------
+
+def line(run, message, node="node", level="INFO"):
+    return {"run_id": str(run.id), "node_id": node, "ts": "2026-10-25T10:00:00+00:00", "level": level, "message": message}
+
+
+async def post_lines(client, run, *messages, node="node"):
+    for message in messages:
+        assert (await client.post("/internal/log", json=line(run, message, node))).status_code == 204
+
+
+async def logs(client, run, **params):
+    r = await client.get(f"/runs/{run.id}/logs", params=params)
+    assert r.status_code == 200
+    return r.json()
+
+
+async def test_log_lines_are_kept_oldest_first_and_filtered_by_node(client, seeded_node_run):
+    run, _ = seeded_node_run
+    for i, node in enumerate("abab"):
+        await post_lines(client, run, f"line {i}", node=node)
+
+    assert [(row["node_id"], row["message"]) for row in await logs(client, run)] == [
+        ("a", "line 0"), ("b", "line 1"), ("a", "line 2"), ("b", "line 3")]
+    assert [row["message"] for row in await logs(client, run, node_id="b")] == ["line 1", "line 3"]
+    assert [row["message"] for row in await logs(client, run, limit=3)] == ["line 1", "line 2", "line 3"]  # the last 3
+    assert await logs(client, run, node_id="b", limit=1) == [
+        {"ts": "2026-10-25T10:00:00+00:00", "level": "INFO", "node_id": "b", "message": "line 3"}]
+
+
+async def test_logs_default_to_the_last_500_within_1_to_2000_and_need_a_known_run(client, db, seeded_node_run):
+    from api.models.db import NodeLog
+    run, _ = seeded_node_run
+    db.add_all(NodeLog(run_id=run.id, node_id="node", ts="t", level="INFO", message=f"line {i}") for i in range(600))
+    await db.commit()
+
+    default = await logs(client, run)
+    assert (len(default), default[0]["message"], default[-1]["message"]) == (500, "line 100", "line 599")
+    assert len(await logs(client, run, limit=2000)) == 600
+    for bad in (0, 2001):
+        assert (await client.get(f"/runs/{run.id}/logs", params={"limit": bad})).status_code == 422
+    assert (await client.get(f"/runs/{uuid.uuid4()}/logs")).status_code == 404
+
+
+async def test_only_the_last_lines_of_each_run_are_kept(client, db, seeded_node_run, monkeypatch):
+    from sqlalchemy import func
+    from sqlmodel import select
+    from api.models.db import NodeLog, Run
+    monkeypatch.setattr("api.services.logs.LOG_KEEP", 3)
+    run, _ = seeded_node_run
+    other = Run(user_id=uuid.uuid4())
+    db.add(other)
+    await db.commit()
+
+    await post_lines(client, other, "other 0")
+    await post_lines(client, run, *(f"line {i}" for i in range(5)))
+
+    assert [row["message"] for row in await logs(client, run)] == ["line 2", "line 3", "line 4"]
+    assert [row["message"] for row in await logs(client, other)] == ["other 0"]  # a run is trimmed against its own lines
+    assert await db.scalar(select(func.count()).select_from(NodeLog)) == 4  # deleted, not just hidden
+
+
+async def test_log_lines_are_cut_at_2000_chars_and_redacted_like_public_outputs(client, db, seeded_node_run):
+    from tests.api.test_executor import published
+    run, node_run = seeded_node_run
+    secrets = ('env NEBIUS_API_KEY=sk-123, {"api_key": "sk-456"}, Authorization: Bearer abc.def; x-amz-security-token=t0k '
+               'max_tokens=512 token_count: 7 api_key_env=NEBIUS_API_KEY')
+    redacted = ('env NEBIUS_API_KEY=[redacted], {"api_key": "[redacted]"}, Authorization: [redacted]; '
+                'x-amz-security-token=[redacted] max_tokens=512 token_count: 7 api_key_env=NEBIUS_API_KEY')
+
+    grows = "api_key=a " * 300  # cut at 2000 chars, each short value then becomes "[redacted]": cut again, still 2000
+    await post_lines(client, run, secrets, "x" * 2500, grows)
+    await client.post("/internal/log", json=line(run, "boom api_key=sk-789", level="ERROR"))
+
+    expected = [redacted, "x" * 2000, ("api_key=[redacted] " * 200)[:2000], "boom api_key=[redacted]"]
+    assert [row["message"] for row in await logs(client, run)] == expected
+    assert [e["message"] for e in published() if e["type"] == "log"] == expected
+    await db.refresh(node_run)
+    assert node_run.error == "boom api_key=[redacted]"  # the node's error is public too
+
+
+async def test_a_line_with_nul_or_a_lone_surrogate_is_stored_without_them(client, seeded_node_run):
+    """Postgres refuses NUL in text, and no database takes a lone surrogate (a node that decodes bytes with surrogateescape
+    sends them): the line used to be a 500, and with it the node's error update. clean() drops the first and replaces the
+    second, so the stored line is the text the node meant."""
+    from api.services.logs import clean
+    assert clean("a\x00b\ud800c\udc00d\U0001F600") == "ab?c?d\U0001F600"  # NUL gone; a lone surrogate "?"; a real emoji stays
+    run, node_run = seeded_node_run
+    for sent in ('"x\\u0000y"', '"x\\ud800y"', '"api_key=k\\u0000k tail"'):  # JSON escapes: httpx would not send a raw surrogate
+        body = ('{"run_id": "%s", "node_id": "node", "ts": "t", "level": "ERROR", "message": %s}' % (run.id, sent)).encode()
+        assert (await client.post("/internal/log", content=body, headers={"Content-Type": "application/json"})).status_code == 204
+    assert [row["message"] for row in await logs(client, run)] == ["xy", "x?y", f"api_key={REDACTED} tail"]
+
+
+@pytest.mark.parametrize("field, limit", [("node_id", 128), ("ts", 64), ("level", 16)])
+async def test_a_log_line_longer_than_its_field_limit_is_refused_and_the_table_agrees(client, db, seeded_node_run, field, limit):
+    """node_id, ts and level are short by nature; a node (it holds the internal secret) cannot fill the table with a megabyte
+    of one: 422 beyond the limit, and the column is a VARCHAR of that length on Postgres."""
+    from api.models.db import NodeLog
+    run, _ = seeded_node_run
+    at_limit = {**line(run, "m"), field: "x" * limit}
+    assert (await client.post("/internal/log", json=at_limit)).status_code == 204
+    assert (await client.post("/internal/log", json={**at_limit, field: "x" * (limit + 1)})).status_code == 422
+    assert NodeLog.__table__.c[field].type.length == limit
 
 
 # ---------------------------------------------------------------------------

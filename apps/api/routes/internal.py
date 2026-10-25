@@ -6,7 +6,7 @@ These are NOT exposed to the public internet — protected by a shared secret
 or network policy in production.
 
 Routes:
-  POST /internal/log           — receive a structured log line from a container
+  POST /internal/log           — receive a log line from a container: kept (GET /runs/{id}/logs) and broadcast
   POST /internal/artifact      — receive artifact registration after R2 upload
   POST /internal/progress      — receive training progress (step, loss) for charts
   POST /internal/ttl           — register a Serverless Endpoint; it is deleted at its expiry
@@ -42,7 +42,7 @@ from api.models.db import (
     NodeRun, NodeStatus,
     Run,
 )
-from api.services import budget
+from api.services import budget, logs
 from api.services.events import event_bus
 from api.services.redact import redact
 
@@ -74,9 +74,9 @@ def _verify_secret(x_orchapod_secret: str = Header(default="")) -> None:
 
 class LogEvent(BaseModel):
     run_id: uuid.UUID
-    node_id: str
-    ts: str
-    level: str         # INFO | WARN | ERROR | PROGRESS
+    node_id: str = Field(max_length=128)  # node_log's columns are as long
+    ts: str = Field(max_length=64)
+    level: str = Field(max_length=16)  # INFO | WARN | ERROR | PROGRESS
     message: str
 
 
@@ -111,21 +111,24 @@ class RegisterTTLRequest(BaseModel):
 @router.post("/log", status_code=204, dependencies=[Depends(_verify_secret)])
 async def receive_log(event: LogEvent, db: Session):
     """
-    Receive a log line from a container and forward it to the WebSocket subscribers.
-    Only the last ERROR line is stored (NodeRun.error): a failed node's error is "exit <code>: <that line>".
+    Receive a log line from a container, keep it (GET /runs/{id}/logs) and forward it to the WebSocket subscribers. The line
+    is cut and redacted (R22) by services/logs, which also trims the run to its last lines: the store, the event and
+    NodeRun.error carry the same text. The last ERROR line is also NodeRun.error: a failed node's error is "exit <code>: <that line>".
     """
     from fastapi import Response
+    message = logs.clean(event.message)
     if event.level == "ERROR":
         node_run = await db.scalar(select(NodeRun).where(NodeRun.run_id == event.run_id, NodeRun.node_id == event.node_id))
         if node_run and node_run.status == NodeStatus.RUNNING:  # a late line must not replace "cancelled"
-            node_run.error = event.message
-            await db.commit()  # before the event, like every other announced change
+            node_run.error = message
+    await logs.keep(db, event.run_id, [(event.node_id, event.ts, event.level, message)])
+    await db.commit()  # before the event, like every other announced change: a client that saw the line finds it in the store
     await event_bus.publish(event.run_id, {
         "type": "log",
         "node_id": event.node_id,
         "ts": event.ts,
         "level": event.level,
-        "message": event.message,
+        "message": message,
     })
     return Response(status_code=204)
 

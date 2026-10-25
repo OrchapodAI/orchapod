@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
 import uuid
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -1034,12 +1036,269 @@ async def test_summary_rolls_up_nodes_cost_and_artifacts(client, db):
     assert (s["run_id"], s["status"], s["cost_usd"], s["error"]) == (str(run.id), "failed", 0.5, "exit 1: boom")
     assert [(n["node_id"], n["type"], n["status"], n["usd"]) for n in s["nodes"]] == [
         ("a", "data-prep", "succeeded", 0.1), ("b", "data-prep", "failed", 0.4), ("c", "data-prep", "pending", 0)]
-    assert {k for k in s["nodes"][0]} == {"node_id", "type", "status", "usd", "error", "started_at", "finished_at"}
+    assert {k for k in s["nodes"][0]} == {"node_id", "type", "status", "usd", "error", "started_at", "finished_at",
+                                          "provider", "resource"}
     by_name = {(x["node_id"], x["name"]): x for x in s["artifacts"]}
     assert by_name[("a", "dataset")]["download_url"] == f"/artifacts/{arts[1].id}/download"
     assert by_name[("a", "dataset")]["meta"] == {"rows": 9}
     assert by_name[("b", "endpoint_url")]["download_url"] is None
     assert (await client.get(f"/runs/{uuid.uuid4()}/summary")).status_code == 404
+
+
+async def idle():
+    """Until every Nebius read has ended: a read held at the gate and released ends a moment later, in the test's own loop."""
+    from api.routes import runs
+    for _ in range(300):
+        if not runs._flights:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("a Nebius read is still in flight")
+
+
+async def train_state(client, db):
+    """A run whose train node runs as Nebius job aijob-1 → a coroutine function reading that node's state from the summary."""
+    run = await seed(db, status=RunStatus.RUNNING)
+    db.add(NodeRun(run_id=run.id, node_id="train", node_type="unsloth-train", status=NodeStatus.RUNNING,
+                   gpu_provider="nebius", gpu_pod_id="aijob-1"))
+    await db.commit()
+
+    async def state():
+        return (await client.get(f"/runs/{run.id}/summary")).json()["nodes"][0]["resource"]["state"]
+    return state
+
+
+async def test_summary_says_where_each_node_runs(client, db, nebius):
+    """provider = the NodeRun's gpu_provider. resource: a gpu node on nebius → its Job; a node with an endpoint_url artifact
+    → the newest endpoint_id; the live state only for a node that is running."""
+    run = await seed(db, status=RunStatus.RUNNING)
+    prep, train, serve, judge = (NodeRun(run_id=run.id, node_id=i, node_type=t, status=s, gpu_provider=p, gpu_pod_id=pod)
+                                 for i, t, s, p, pod in (
+        ("prep", "data-prep", NodeStatus.SUCCEEDED, "local-docker", "c1"),
+        ("train", "unsloth-train", NodeStatus.RUNNING, "nebius", "aijob-1"),
+        ("serve", "vllm-serve", NodeStatus.SUCCEEDED, "local-docker", "c2"),
+        ("evaluate", "judge-eval", NodeStatus.PENDING, None, None)))
+    db.add_all([prep, train, serve, judge])
+    await db.flush()
+    db.add_all(Artifact(node_run_id=serve.id, name="endpoint_url", kind=ArtifactKind.ENDPOINT, uri="https://ep.example",
+                        meta=meta, created_at=datetime(2026, 10, 25, 10, 0, minute))  # a retry registered a newer one
+               for minute, meta in ((0, {"endpoint_id": "aiendpoint-0"}), (1, {"endpoint_id": "aiendpoint-1"}), (2, {})))
+    await db.commit()
+    nebius.states["aijob-1"] = "IMAGE_PULLING"
+
+    s = (await client.get(f"/runs/{run.id}/summary")).json()
+
+    assert {n["node_id"]: (n["provider"], n["resource"]) for n in s["nodes"]} == {
+        "prep": ("local-docker", None),
+        "train": ("nebius", {"kind": "job", "id": "aijob-1", "state": "IMAGE_PULLING"}),
+        "serve": ("local-docker", {"kind": "endpoint", "id": "aiendpoint-1", "state": None}),  # done, and no expiry: not asked
+        "evaluate": (None, None)}
+    assert nebius.calls == ["aijob-1"]
+
+
+async def test_a_live_state_is_cached_per_id_for_30_s(client, db, nebius):
+    state = await train_state(client, db)
+    nebius.states["aijob-1"] = "IMAGE_PULLING"
+    assert [await state(), await state()] == ["IMAGE_PULLING"] * 2
+
+    nebius.states["aijob-1"] = "RUNNING"
+    nebius.clock[0] += 29
+    assert await state() == "IMAGE_PULLING"  # read 29 s ago: cached
+    nebius.clock[0] += 2
+    assert await state() == "RUNNING"        # 31 s: read again
+    assert nebius.calls == ["aijob-1"] * 2
+
+
+async def test_a_state_that_cannot_be_read_is_null_and_not_asked_again_for_30_s(client, db, nebius):
+    state = await train_state(client, db)
+    assert await state() is None  # jobs.get raised: the summary answers all the same
+    nebius.states["aijob-1"] = "RUNNING"
+    assert await state() is None  # the failure is cached too, so a Nebius that hangs costs one worker thread per 30 s
+    nebius.clock[0] += 31
+    assert await state() == "RUNNING"
+    assert nebius.calls == ["aijob-1"] * 2
+
+
+async def test_the_summary_does_not_wait_longer_than_STATE_WAIT_S_for_nebius(client, db, nebius, monkeypatch):
+    from api.routes import runs
+    assert (runs.STATE_WAIT_S, runs.STATE_TTL_S) == (3, 30)  # the contract's bounds
+    monkeypatch.setattr(runs, "STATE_WAIT_S", 0.05)  # patched down to keep the test fast
+    nebius.gate, nebius.states["aijob-1"] = threading.Event(), "RUNNING"
+    state = await train_state(client, db)
+    try:
+        assert await asyncio.wait_for(state(), 5) is None  # answered while the call is still held at the gate
+        for _ in range(200):  # the worker thread reaches the gate a moment after the wait gave up
+            if nebius.calls:
+                break
+            await asyncio.sleep(0.01)
+        assert await asyncio.wait_for(state(), 5) is None and nebius.calls == ["aijob-1"]  # cached: no second thread
+    finally:
+        nebius.gate.set()
+        await idle()
+
+
+async def test_nebius_reads_run_on_a_pool_of_their_own_not_the_default_executor(client, db, nebius):
+    """A Nebius that hangs keeps a read's thread for minutes (the client retries); on the default executor a few of those
+    would stall every to_thread caller (the planner, /compare), so the reads have two threads of their own."""
+    state = await train_state(client, db)
+    nebius.states["aijob-1"] = "RUNNING"
+    assert await state() == "RUNNING"
+    assert nebius.threads and all(name.startswith("nebius-read") for name in nebius.threads), nebius.threads
+
+
+async def test_a_read_that_outlives_the_cap_is_not_started_twice_and_its_late_answer_is_kept(client, db, nebius, monkeypatch):
+    """Each cache lapse used to start another read while the first still held its thread: now one is in flight per key, the
+    next poll waits for that one, and when it ends late its answer is kept for the polls after it."""
+    from api.routes import runs
+    monkeypatch.setattr(runs, "STATE_WAIT_S", 0.05)
+    nebius.gate, nebius.states["aijob-1"] = threading.Event(), "RUNNING"
+    state = await train_state(client, db)
+    try:
+        assert await state() is None  # gave up after 0.05 s: the read is held at the gate
+        for _ in range(200):
+            if nebius.calls:
+                break
+            await asyncio.sleep(0.01)
+        for _ in range(3):  # three cache lapses
+            nebius.clock[0] += 31
+            assert await state() is None
+        assert nebius.calls == ["aijob-1"]  # still the one read
+    finally:
+        nebius.gate.set()
+        await idle()
+    assert await state() == "RUNNING" and nebius.calls == ["aijob-1"]  # kept from the late answer: nothing was asked again
+    nebius.clock[0] += 31
+    nebius.states["aijob-1"] = "COMPLETED"
+    assert await state() == "COMPLETED" and nebius.calls == ["aijob-1"] * 2  # and the key is free for a read of its own again
+
+
+async def test_a_read_that_fails_late_frees_its_key_and_leaves_the_failure_cached(client, db, nebius, monkeypatch):
+    from api.routes import runs
+    monkeypatch.setattr(runs, "STATE_WAIT_S", 0.05)
+    nebius.gate = threading.Event()  # no state for aijob-1: the read raises once it is let go
+    state = await train_state(client, db)
+    try:
+        assert await state() is None
+    finally:
+        nebius.gate.set()
+        await idle()
+    assert await state() is None and nebius.calls == ["aijob-1"]  # cached None; the error was retrieved, not left pending
+
+
+async def test_no_live_state_is_read_under_stub(client, db, nebius, monkeypatch):
+    nebius.states["aijob-1"] = "RUNNING"
+    state = await train_state(client, db)
+    monkeypatch.setenv("STUB", "1")
+    assert await state() is None and nebius.calls == []
+
+
+async def test_a_serving_node_that_has_not_registered_is_found_by_the_name_vllm_serve_gives_its_endpoint(client, db, nebius):
+    """While vllm-serve waits for its endpoint (about nine minutes) it has registered nothing: its endpoint is the one Nebius
+    lists under the node's name, from the one function the node names it with (an id with a capital and an underscore, so a
+    name derived any other way would not match)."""
+    from orchapod.names import endpoint_name
+    from tests.containers.conftest import load_container
+    assert load_container("vllm-serve").endpoint_name is endpoint_name  # one function: the node and the API never differ
+    run = await seed(db, status=RunStatus.RUNNING)
+    node = NodeRun(run_id=run.id, node_id="Serve_8B", node_type="vllm-serve", status=NodeStatus.RUNNING,
+                   gpu_provider="local-docker", gpu_pod_id="c1")
+    db.add(node)
+    await db.commit()
+    name = endpoint_name(str(run.id), "Serve_8B")
+    assert name == f"orchapod-{str(run.id)[:8]}-serve-8b"  # lowercased, "_" → "-": a name derived by hand would differ
+
+    async def resource():
+        return (await client.get(f"/runs/{run.id}/summary")).json()["nodes"][0]["resource"]
+
+    nebius.listing = [{"id": "aiendpoint-x", "name": "orchapod-12345678-serve", "state": "RUNNING"}]  # another run's
+    assert await resource() is None  # not created yet (the null is cached, like any read)
+    nebius.listing.append({"id": "aiendpoint-9", "name": name, "state": "PROVISIONING"})
+    assert await resource() is None
+    nebius.clock[0] += 31
+    assert await resource() == {"kind": "endpoint", "id": "aiendpoint-9", "state": "PROVISIONING"}
+    nebius.listing[-1]["state"] = "IMAGE_PULLING"
+    assert (await resource())["state"] == "PROVISIONING"  # read 0 s ago
+    nebius.clock[0] += 31
+    assert await resource() == {"kind": "endpoint", "id": "aiendpoint-9", "state": "IMAGE_PULLING"}
+    assert nebius.calls == ["list"] * 3
+
+    nebius.states["aiendpoint-9"] = "RUNNING"  # it registered: by id from now on, while the node still runs
+    db.add(Artifact(node_run_id=node.id, name="endpoint_url", kind=ArtifactKind.ENDPOINT, uri="https://ep.example",
+                    meta={"endpoint_id": "aiendpoint-9"}))
+    await db.commit()
+    nebius.clock[0] += 31
+    assert await resource() == {"kind": "endpoint", "id": "aiendpoint-9", "state": "RUNNING"}
+    assert nebius.calls[3:] == ["aiendpoint-9"]
+
+
+async def test_a_lookup_by_name_waits_at_most_STATE_WAIT_S_and_never_runs_under_stub(client, db, nebius, monkeypatch):
+    from api.routes import runs
+    run = await seed(db, status=RunStatus.RUNNING)
+    db.add(NodeRun(run_id=run.id, node_id="serve", node_type="vllm-serve", status=NodeStatus.RUNNING))
+    await db.commit()
+
+    async def resource():
+        return (await asyncio.wait_for(client.get(f"/runs/{run.id}/summary"), 5)).json()["nodes"][0]["resource"]
+
+    monkeypatch.setenv("STUB", "1")
+    assert await resource() is None and nebius.calls == []  # a STUB endpoint registers as stub-*; nothing exists at Nebius
+    monkeypatch.delenv("STUB")
+    monkeypatch.setattr(runs, "STATE_WAIT_S", 0.05)
+    nebius.gate = threading.Event()
+    try:
+        assert await resource() is None  # the listing hangs at the gate: the summary answers all the same
+    finally:
+        nebius.gate.set()
+        await idle()
+
+
+async def test_a_registered_endpoint_is_read_until_its_artifact_expires_or_is_deleted(client, db, nebius):
+    """The keep-alive window: the node is done, the endpoint serves /compare for keep_alive_min. Its state is read until
+    meta.expires_at passes or meta.deleted_at is set (the TTL task sets it)."""
+    run = await seed(db, status=RunStatus.RUNNING)
+    now = datetime.now(timezone.utc)
+    metas = {"live": {"endpoint_id": "ep-live", "expires_at": (now + timedelta(minutes=10)).isoformat()},
+             "expired": {"endpoint_id": "ep-old", "expires_at": (now - timedelta(minutes=1)).isoformat()},
+             "deleted": {"endpoint_id": "ep-gone", "expires_at": (now + timedelta(minutes=10)).isoformat(),
+                         "deleted_at": now.isoformat()},
+             "unreadable": {"endpoint_id": "ep-odd", "expires_at": "soon"},
+             "superseded": {"endpoint_id": "ep-sup", "expires_at": (now + timedelta(minutes=10)).isoformat(),
+                            "superseded_at": now.isoformat()}}  # an earlier registration of that endpoint stands
+    for node_id, meta in metas.items():
+        node = NodeRun(run_id=run.id, node_id=node_id, node_type="vllm-serve", status=NodeStatus.SUCCEEDED,
+                       gpu_provider="local-docker")
+        db.add(node)
+        await db.flush()
+        db.add(Artifact(node_run_id=node.id, name="endpoint_url", kind=ArtifactKind.ENDPOINT, uri="https://ep.example", meta=meta))
+    await db.commit()
+    nebius.states.update({meta["endpoint_id"]: "RUNNING" for meta in metas.values()})
+
+    s = (await client.get(f"/runs/{run.id}/summary")).json()
+
+    assert {n["node_id"]: (n["resource"]["id"], n["resource"]["state"]) for n in s["nodes"]} == {
+        "live": ("ep-live", "RUNNING"), "expired": ("ep-old", None), "deleted": ("ep-gone", None),
+        "unreadable": ("ep-odd", None), "superseded": ("ep-sup", None)}
+    assert nebius.calls == ["ep-live"]  # the others are not asked
+    nebius.states["ep-live"] = "STOPPING"
+    nebius.clock[0] += 31
+    assert [n["resource"]["state"] for n in (await client.get(f"/runs/{run.id}/summary")).json()["nodes"]
+            if n["node_id"] == "live"] == ["STOPPING"]  # same cache as the rest: read again after 30 s
+
+
+async def test_a_runs_gpu_provider_is_its_first_gpu_nodes_else_null(client, db):
+    """RunOut.gpu_provider was whatever the last node set (the run header read "GPU: local-docker"); it is now the provider
+    of the first node that rents a GPU (by start time), whatever Run.gpu_provider says, else null."""
+    gpu, cpu = [await seed(db, gpu_provider="local-docker") for _ in range(2)]  # the column: the last node's
+    for run, rows in ((gpu, (("prep", "data-prep", "local-docker"), ("train", "unsloth-train", "nebius"),
+                             ("serve", "vllm-serve", "local-docker"), ("evaluate", "judge-eval", "local-docker"))),
+                      (cpu, (("prep", "data-prep", "local-docker"), ("evaluate", "judge-eval", "local-docker")))):
+        db.add_all(NodeRun(run_id=run.id, node_id=i, node_type=t, status=NodeStatus.SUCCEEDED, gpu_provider=p,
+                           started_at=datetime(2026, 10, 25, 10, 0, n)) for n, (i, t, p) in enumerate(rows))
+    await db.commit()
+
+    assert (await client.get(f"/runs/{gpu.id}")).json()["gpu_provider"] == "nebius"
+    assert (await client.get(f"/runs/{cpu.id}")).json()["gpu_provider"] is None
+    assert {r["id"]: r["gpu_provider"] for r in (await client.get("/runs")).json()} == {
+        str(gpu.id): "nebius", str(cpu.id): None}
 
 
 async def test_artifact_download_redirects_to_a_presigned_url(client, db, seeded_node_run):

@@ -9,7 +9,8 @@ Routes:
   POST   /runs/{id}/cancel              — cancel (terminates the pod, SIGTERM with 30 s grace)
   POST   /runs/{id}/nodes/{node_id}/retry — re-run a failed node, then continue downstream
   GET    /runs/{id}                     — get run + status
-  GET    /runs/{id}/summary             — status, cost, per-node usd and errors, artifacts
+  GET    /runs/{id}/summary             — status, cost, per-node usd, errors, provider and Nebius resource, artifacts
+  GET    /runs/{id}/logs                — the log lines nodes posted, oldest first (kept after the run ends)
   GET    /runs/{id}/nodes               — list node runs for a run
   GET    /runs/{id}/nodes/{node_id}     — get a single node run
   GET    /runs/{id}/artifacts           — list all artifacts for a run
@@ -21,10 +22,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import secrets
 import uuid
 from collections import defaultdict
-from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from time import monotonic
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
@@ -33,15 +37,20 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from api import config
 from api.database import get_session
 from api.executor import run_workflow as executor
 from api.executor.dag import compile_dag
-from api.models.db import (AgentRun, Artifact, ArtifactKind, CancelToken, NodeRun, NodeStatus, Run, RunStatus, Workflow,
-                           utcnow)
+from api.models.db import (AgentRun, Artifact, ArtifactKind, CancelToken, NodeLog, NodeRun, NodeStatus, Run, RunStatus,
+                           Workflow, utcnow)
+from api.routes.internal import _expiry, _live
 from api.services import budget, ratelimit
 from api.services.events import event_bus
 from api.services.redact import redact
+from orchapod.names import endpoint_name
+from packages.providers.nebius import NebiusServerless
 
+log = logging.getLogger("api.runs")
 router = APIRouter()
 
 Session = Annotated[AsyncSession, Depends(get_session)]
@@ -123,7 +132,7 @@ async def create_run(body: RunCreate, db: Session):
     db.add(run)
     await db.flush()
     await db.refresh(run)
-    return _run_out(run, workflow.name)
+    return _run_out(run, workflow.name, None)  # no node has run yet
 
 
 @router.post("/{run_id}/start", response_model=StartOut, dependencies=[Depends(ratelimit.limit("run"))])
@@ -141,7 +150,7 @@ async def start_run(run_id: uuid.UUID, db: Session, scale: Scale):
         await db.refresh(run)
         raise HTTPException(status_code=409, detail=f"Run is {run.status.value}; only pending runs can be started")
     executor.launch(run_id, scale)
-    return StartOut(**_run_out(run, await _workflow_name(db, run)).model_dump(), cancel_token=token)
+    return StartOut(**(await _out(db, run)).model_dump(), cancel_token=token)
 
 
 @router.post("/{run_id}/cancel", response_model=RunOut, dependencies=[Depends(ratelimit.limit("write"))])
@@ -168,7 +177,7 @@ async def cancel_run(run_id: uuid.UUID, db: Session, is_admin: Admin, x_orchapod
         run.finished_at = utcnow()
         await db.commit()  # before the event: subscribers re-read the run on it
         await event_bus.publish(run_id, {"type": "run_status", "status": "cancelled"})
-    return _run_out(run, await _workflow_name(db, run))
+    return await _out(db, run)
 
 
 @router.post("/{run_id}/nodes/{node_id}/retry", response_model=RunOut, status_code=status.HTTP_202_ACCEPTED,
@@ -195,7 +204,7 @@ async def retry_node(run_id: uuid.UUID, node_id: str, db: Session, scale: Scale)
         await db.rollback()
         raise HTTPException(status_code=409, detail="Run changed meanwhile; reload it")
     executor.launch(run_id, scale)
-    return _run_out(run, await _workflow_name(db, run))
+    return await _out(db, run)
 
 
 async def _to_run(db: AsyncSession, run: Run) -> list[str]:
@@ -238,7 +247,9 @@ async def list_runs(
         stmt = stmt.where(Run.workflow_id == workflow_id)
     if user_id:
         stmt = stmt.where(Run.user_id == user_id)
-    return [_run_out(r, name) for r, name in (await db.execute(stmt)).all()]
+    rows = (await db.execute(stmt)).all()
+    gpu = await _gpu_providers(db, [r.id for r, _ in rows])
+    return [_run_out(r, name, gpu.get(r.id)) for r, name in rows]
 
 
 @router.get("/{run_id}", response_model=RunOut)
@@ -246,7 +257,7 @@ async def get_run(run_id: uuid.UUID, db: Session):
     run = await db.get(Run, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
-    return _run_out(run, await _workflow_name(db, run))
+    return await _out(db, run)
 
 
 @router.get("/{run_id}/summary")
@@ -267,17 +278,36 @@ async def run_summary(run_id: uuid.UUID, db: Session):
         if a.name == "cost_json":
             usd[node_ids[a.node_run_id]] += float((a.meta or {}).get("usd", 0))
     failed = next((n for n in nodes if n.status == NodeStatus.FAILED), None)
+    registered = {a.node_run_id: a.meta for a in artifacts  # the newest registration wins (created_at order)
+                  if a.kind == ArtifactKind.ENDPOINT and (a.meta or {}).get("endpoint_id")}
+    now = datetime.now(timezone.utc)
+    resources = dict(zip((n.node_id for n in nodes),
+                         await asyncio.gather(*(_resource(n, registered.get(n.id), now) for n in nodes))))
     return {
         "run_id": run.id,
         "status": run.status,
         "cost_usd": float(run.cost_usd or 0),
         "error": failed.error if failed else None,
         "nodes": [{"node_id": n.node_id, "type": n.node_type, "status": n.status, "usd": usd[n.node_id],
-                   "error": n.error, "started_at": n.started_at, "finished_at": n.finished_at} for n in nodes],
+                   "error": n.error, "started_at": n.started_at, "finished_at": n.finished_at,
+                   "provider": n.gpu_provider, "resource": resources[n.node_id]} for n in nodes],
         "artifacts": [{"id": a.id, "node_id": node_ids[a.node_run_id], "name": a.name, "kind": a.kind, "uri": a.uri,
                        "download_url": f"/artifacts/{a.id}/download" if a.uri.startswith("r2://") else None,
                        "meta": redact(a.meta or {})} for a in artifacts],
     }
+
+
+@router.get("/{run_id}/logs")
+async def run_logs(run_id: uuid.UUID, db: Session, node_id: str | None = None, limit: int = Query(500, ge=1, le=2000)):
+    """The last `limit` lines nodes posted to /internal/log (those of one node with node_id), oldest first. A finished run
+    keeps the last 5,000 of its lines."""
+    if not await db.get(Run, run_id):
+        raise HTTPException(status_code=404, detail="Run not found")
+    stmt = select(NodeLog).where(NodeLog.run_id == run_id).order_by(NodeLog.id.desc()).limit(limit)
+    if node_id:
+        stmt = stmt.where(NodeLog.node_id == node_id)
+    return [{"ts": row.ts, "level": row.level, "node_id": row.node_id, "message": row.message}
+            for row in reversed((await db.scalars(stmt)).all())]
 
 
 @router.get("/{run_id}/nodes", response_model=list[NodeRunOut])
@@ -346,7 +376,94 @@ async def _workflow_name(db: AsyncSession, run: Run) -> str | None:
     return await db.scalar(select(Workflow.name).where(Workflow.id == run.workflow_id)) if run.workflow_id else None
 
 
-def _run_out(r: Run, workflow_name: str | None) -> RunOut:
+async def _gpu_providers(db: AsyncSession, run_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
+    """run id → the provider of its first node that rents a GPU (the one that started first), for the runs that have one:
+    the run header's "GPU: …". Not Run.gpu_provider, which is whatever the last node set."""
+    first: dict[uuid.UUID, str] = {}
+    for run_id, node_type, provider in await db.execute(
+            select(NodeRun.run_id, NodeRun.node_type, NodeRun.gpu_provider)
+            .where(NodeRun.run_id.in_(run_ids), NodeRun.gpu_provider.is_not(None)).order_by(NodeRun.started_at)):
+        if budget.gpu_nodes([node_type]):
+            first.setdefault(run_id, provider)
+    return first
+
+
+async def _out(db: AsyncSession, run: Run) -> RunOut:
+    return _run_out(run, await _workflow_name(db, run), (await _gpu_providers(db, [run.id])).get(run.id))
+
+
+async def _resource(n: NodeRun, endpoint: dict | None, now: datetime) -> dict | None:
+    """Where the node's work runs at Nebius (contracts "Run control API"): {"kind": "job"|"endpoint", "id", "state"} or None.
+    A gpu node on nebius has its Job. vllm-serve has its endpoint: the one it registered through /internal/ttl (`endpoint` is
+    that artifact's meta), or, while it runs and has not registered yet, the one Nebius lists under the name the node gave it.
+    The state is read for a node that is running, and for a registered endpoint until its expires_at passes or it is
+    deleted or superseded."""
+    running = n.status == NodeStatus.RUNNING
+    if n.gpu_provider == "nebius" and n.gpu_pod_id:
+        kind, id_, read = "job", n.gpu_pod_id, running
+    elif endpoint:
+        kind, id_ = "endpoint", endpoint["endpoint_id"]
+        read = running or (_live(endpoint) and _expiry(endpoint) > now)  # the keep-alive window
+    elif running and n.node_type == "vllm-serve":
+        name = endpoint_name(str(n.run_id), n.node_id)
+        found = await _read(name, lambda nebius: next(((e["id"], e["state"]) for e in nebius.endpoints.list()
+                                                       if e["name"] == name), None))
+        return {"kind": "endpoint", "id": found[0], "state": found[1]} if found else None
+    else:
+        return None
+    state = await _read(id_, lambda nebius: getattr(nebius, kind + "s").get(id_)["state"]) if read else None
+    return {"kind": kind, "id": id_, "state": state}
+
+
+# What Nebius reports about a Job or Endpoint is read at most once per key in STATE_TTL_S, and waited for at most STATE_WAIT_S.
+STATE_TTL_S, STATE_WAIT_S = 30, 3
+# key → (when read, value or None). ponytail: in-process, which the one API worker allows; an entry per key read, never evicted
+# (a few per gpu node).
+_states: dict[str, tuple[float, object]] = {}
+_flights: dict[str, asyncio.Future] = {}  # key → its read in flight: one per key, however many polls wait for it
+# Its own threads: a client that retries a hung Nebius keeps a read's thread for minutes, and a few of those on the default
+# executor would stall every to_thread caller (the planner, /compare).
+_pool = ThreadPoolExecutor(2, thread_name_prefix="nebius-read")
+_nebius: NebiusServerless | None = None
+
+
+def _serverless() -> NebiusServerless:
+    """One client for every read, so the IAM token the nebius CLI signs (about a second) serves its whole life."""
+    global _nebius
+    _nebius = _nebius or NebiusServerless()
+    return _nebius
+
+
+async def _read(key: str, fetch):
+    """fetch(NebiusServerless) on the pool (jobs.get, endpoints.get, endpoints.list: contracts "NebiusServerless"), cached
+    per key for STATE_TTL_S. None on any error, after STATE_WAIT_S, and always under STUB (or for a stub-* id): nothing
+    exists at Nebius. A read that outlives STATE_WAIT_S stays the key's one read in flight (a poll after the cache lapses
+    waits for it again, never starts a second), and an answer that comes late is kept. A failed read is cached too."""
+    if config.env("STUB") == "1" or key.startswith("stub-"):
+        return None
+    now = monotonic()
+    if (hit := _states.get(key)) and now - hit[0] < STATE_TTL_S:
+        return hit[1]
+    if key not in _flights:
+        _flights[key] = flight = asyncio.get_running_loop().run_in_executor(_pool, lambda: fetch(_serverless()))
+        flight.add_done_callback(lambda f: _landed(key, f))
+    try:
+        return await asyncio.wait_for(asyncio.shield(_flights[key]), STATE_WAIT_S)
+    except Exception as e:  # a ProviderError, a reply without a state, or STATE_WAIT_S
+        log.warning("%s not read from Nebius: %r", key, e)
+        _states[key] = (now, None)
+        return None
+
+
+def _landed(key: str, flight: asyncio.Future) -> None:
+    """A read has ended, in time or late: its key is free, and an answer is the cache's (an error was logged by the poll that
+    waited for it, if one did; asking for it here keeps it from being reported as never retrieved)."""
+    _flights.pop(key, None)
+    if not flight.cancelled() and flight.exception() is None:
+        _states[key] = (monotonic(), flight.result())
+
+
+def _run_out(r: Run, workflow_name: str | None, gpu_provider: str | None) -> RunOut:
     return RunOut(
         id=r.id,
         workflow_id=r.workflow_id,
@@ -357,7 +474,7 @@ def _run_out(r: Run, workflow_name: str | None) -> RunOut:
         cost_usd=float(r.cost_usd) if r.cost_usd is not None else None,
         started_at=r.started_at,
         finished_at=r.finished_at,
-        gpu_provider=getattr(r, "gpu_provider", None),
+        gpu_provider=gpu_provider,  # not Run.gpu_provider: see _gpu_providers
         created_at=r.created_at,
     )
 

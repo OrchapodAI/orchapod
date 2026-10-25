@@ -870,3 +870,10 @@ worktrees:
   - Extras: docs/Jira.csv holds Hari's name and Atlassian id in 21 rows (Hari decides); gitleaks dir mode flagged the fixture's docs example → .gitleaksignore (all clean).
   - WAVE 8 dispatched on f7c8caa: devrel-w11 (README: where to look after make demo, STUB=1 first, timings, the uvicorn graceful shutdown, a Python 3.12 hint), backend-w11 (the seed says where it seeded; a STUB=1 hint in the no-key errors), frontend-w12 (pluralised eval counts; the canvas cost modal for CPU-only plans).
   - Skipped (P3, ruling): the console 404 for a canvas run's report fetch, and the Node MODULE_TYPELESS warning in make check.
+- 2026-10-25T10:22Z WAVE 8 MERGED + DEPLOYED (c5eab1f, 10:22Z).
+  - devrel-w11 dbd4e80: README fresh-clone polish.
+  - frontend-w12 374dd39: '1 loss'; a CPU-only canvas run skips the empty cost modal.
+  - backend-w11 c5eab1f: make demo names its database and bucket; the no-key errors point to STUB=1.
+  - make check 1174 + web 51; ui-smoke 5/5 on the merged tree.
+  - Hosted: d20d30f3's eval reads '7 wins, 22 ties, 1 loss'.
+  - G3 checklist A: done except the tag, which waits for Hari's repo step.

@@ -1,11 +1,11 @@
 # STATE — Orchapod × Nebius hackathon
-Updated: 2026-10-25T09:30Z by orchestrator · Phase: P3 · G1 MET 10-22 · G2 MET 10-25 (live golden run) · Next gate: G3 Oct 27 freeze · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
+Updated: 2026-10-25T10:22Z by orchestrator · Phase: P3 · G1 MET 10-22 · G2 MET 10-25 (live golden run) · Next gate: G3 Oct 27 freeze · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
-1. IN FLIGHT:
-   - qa-w11 (ae3c65befef5dcb2b): a fresh-clone retest + make demo + links, before G3. No e2e or ui-smoke by others meanwhile.
-   - Security review DONE: H1 and M1 refuted (live test; datasets 5.1.0); L1/L4 by design; L2/L3/L5 parked until after the hackathon. Nothing blocks G3.
-   - Wave 7 is merged and deployed (a7c07f9); the docs are up to date (5d53d28).
+1. Nothing in flight.
+   - The hosted app runs c5eab1f (waves 6–8).
+   - The fresh clone is green in 3 min 35 s (qa-w11); the security review has no open critical or high finding; gitleaks is clean over all refs.
+   - Next: G3 (Oct 27), hackathon/G3-CHECKLIST.md. Section A is done except the tag; B needs one anonymous check after 00:00Z; D is Hari's.
 2. DONE 10-25:
    - D8 rehearsal PASS: 0ee1e20a, from the hosted UI, 23.5 min, $1.58, Ultra 7/20/3 (win rate 0.57).
    - Wave 6 + frontend-w8b/w9/w10 deployed (85878e4).

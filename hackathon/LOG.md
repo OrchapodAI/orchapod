@@ -674,3 +674,8 @@ worktrees:
     - VM in eu-west1, a probe VM in eu-north1 (could not have been created: 0 vCPU), bucket in eu-north1.
     - Hari's account is the tenant's only admin and the tenant is ACTIVE → billing/payment activation for AI Cloud is the likely cause.
   - Nothing was created; $0.
+- 2026-10-25T02:57Z Hari: billing activated. Creates still PermissionDenied:
+  - VM in eu-west1; the bucket, retried every minute for 10 minutes.
+  - After a fresh CLI federation login (old token cache renamed to ~/.nebius/credentials.yaml.before-billing).
+  - The CLI user = the tenant's admin (tenantuseraccount-e00a1v4snbsvxarzaj, ACTIVE).
+  - So the block is Nebius account state (activation/verification), not roles or tokens. Next: Hari tries one create in the console to see Nebius's own error; else Nebius support.

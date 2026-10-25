@@ -26,6 +26,7 @@ import logging
 import secrets
 import uuid
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from time import monotonic
 from typing import Annotated
@@ -42,7 +43,7 @@ from api.executor import run_workflow as executor
 from api.executor.dag import compile_dag
 from api.models.db import (AgentRun, Artifact, ArtifactKind, CancelToken, NodeLog, NodeRun, NodeStatus, Run, RunStatus,
                            Workflow, utcnow)
-from api.routes.internal import _expiry
+from api.routes.internal import _expiry, _live
 from api.services import budget, ratelimit
 from api.services.events import event_bus
 from api.services.redact import redact
@@ -395,14 +396,14 @@ async def _resource(n: NodeRun, endpoint: dict | None, now: datetime) -> dict | 
     """Where the node's work runs at Nebius (contracts "Run control API"): {"kind": "job"|"endpoint", "id", "state"} or None.
     A gpu node on nebius has its Job. vllm-serve has its endpoint: the one it registered through /internal/ttl (`endpoint` is
     that artifact's meta), or, while it runs and has not registered yet, the one Nebius lists under the name the node gave it.
-    The state is read for a node that is running, and for a registered endpoint until its expires_at or deleted_at."""
+    The state is read for a node that is running, and for a registered endpoint until its expires_at passes or it is
+    deleted or superseded."""
     running = n.status == NodeStatus.RUNNING
     if n.gpu_provider == "nebius" and n.gpu_pod_id:
         kind, id_, read = "job", n.gpu_pod_id, running
     elif endpoint:
         kind, id_ = "endpoint", endpoint["endpoint_id"]
-        until = _expiry(endpoint)
-        read = running or (until is not None and until > now and not endpoint.get("deleted_at"))
+        read = running or (_live(endpoint) and _expiry(endpoint) > now)  # the keep-alive window
     elif running and n.node_type == "vllm-serve":
         name = endpoint_name(str(n.run_id), n.node_id)
         found = await _read(name, lambda nebius: next(((e["id"], e["state"]) for e in nebius.endpoints.list()
@@ -419,6 +420,10 @@ STATE_TTL_S, STATE_WAIT_S = 30, 3
 # key → (when read, value or None). ponytail: in-process, which the one API worker allows; an entry per key read, never evicted
 # (a few per gpu node).
 _states: dict[str, tuple[float, object]] = {}
+_flights: dict[str, asyncio.Future] = {}  # key → its read in flight: one per key, however many polls wait for it
+# Its own threads: a client that retries a hung Nebius keeps a read's thread for minutes, and a few of those on the default
+# executor would stall every to_thread caller (the planner, /compare).
+_pool = ThreadPoolExecutor(2, thread_name_prefix="nebius-read")
 _nebius: NebiusServerless | None = None
 
 
@@ -430,22 +435,32 @@ def _serverless() -> NebiusServerless:
 
 
 async def _read(key: str, fetch):
-    """fetch(NebiusServerless) in a worker thread (jobs.get, endpoints.get, endpoints.list: contracts "NebiusServerless"),
-    cached per key for STATE_TTL_S. None on any error, after STATE_WAIT_S, and always under STUB (or for a stub-* id):
-    nothing exists at Nebius. A failed read is cached too, so a Nebius that hangs costs one worker thread per key per
-    STATE_TTL_S, not one per poll of the summary."""
+    """fetch(NebiusServerless) on the pool (jobs.get, endpoints.get, endpoints.list: contracts "NebiusServerless"), cached
+    per key for STATE_TTL_S. None on any error, after STATE_WAIT_S, and always under STUB (or for a stub-* id): nothing
+    exists at Nebius. A read that outlives STATE_WAIT_S stays the key's one read in flight (a poll after the cache lapses
+    waits for it again, never starts a second), and an answer that comes late is kept. A failed read is cached too."""
     if config.env("STUB") == "1" or key.startswith("stub-"):
         return None
     now = monotonic()
     if (hit := _states.get(key)) and now - hit[0] < STATE_TTL_S:
         return hit[1]
+    if key not in _flights:
+        _flights[key] = flight = asyncio.get_running_loop().run_in_executor(_pool, lambda: fetch(_serverless()))
+        flight.add_done_callback(lambda f: _landed(key, f))
     try:
-        value = await asyncio.wait_for(asyncio.to_thread(lambda: fetch(_serverless())), STATE_WAIT_S)
+        return await asyncio.wait_for(asyncio.shield(_flights[key]), STATE_WAIT_S)
     except Exception as e:  # a ProviderError, a reply without a state, or STATE_WAIT_S
         log.warning("%s not read from Nebius: %r", key, e)
-        value = None
-    _states[key] = (now, value)
-    return value
+        _states[key] = (now, None)
+        return None
+
+
+def _landed(key: str, flight: asyncio.Future) -> None:
+    """A read has ended, in time or late: its key is free, and an answer is the cache's (an error was logged by the poll that
+    waited for it, if one did; asking for it here keeps it from being reported as never retrieved)."""
+    _flights.pop(key, None)
+    if not flight.cancelled() and flight.exception() is None:
+        _states[key] = (monotonic(), flight.result())
 
 
 def _run_out(r: Run, workflow_name: str | None, gpu_provider: str | None) -> RunOut:

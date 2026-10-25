@@ -8,7 +8,6 @@ from sqlalchemy import select
 
 from api.models.db import AgentRun, Artifact, ArtifactKind
 from api.services.redact import REDACTED, redact, redact_text
-from tests.api.test_executor import nebius  # noqa: F401 (fixture)
 
 
 SECRETS = {"api_key", "API_KEY", "apiKey", "apikey", "x-api-key", "openai_api_key", "token", "accessToken",

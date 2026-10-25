@@ -1045,37 +1045,14 @@ async def test_summary_rolls_up_nodes_cost_and_artifacts(client, db):
     assert (await client.get(f"/runs/{uuid.uuid4()}/summary")).status_code == 404
 
 
-class Serverless:
-    """NebiusServerless as the summary reads it (contracts "NebiusServerless"): jobs.get(id) and endpoints.get(id) answer
-    {"state": states[id]}, and an id with no state raises; endpoints.list() answers `listing` (and records "list");
-    `gate` (a threading.Event) holds every call until it is set."""
-
-    def __init__(self):
-        self.calls, self.states, self.listing, self.gate = [], {}, [], None
-        self.jobs = self.endpoints = self
-
-    def get(self, id):
-        self.calls.append(id)
-        if self.gate:
-            self.gate.wait(10)
-        return {"id": id, "state": self.states[id]}
-
-    def list(self):
-        self.calls.append("list")
-        if self.gate:
-            self.gate.wait(10)
-        return self.listing
-
-
-@pytest.fixture
-def nebius(monkeypatch):
+async def idle():
+    """Until every Nebius read has ended: a read held at the gate and released ends a moment later, in the test's own loop."""
     from api.routes import runs
-    fake, clock = Serverless(), [1000.0]
-    fake.clock = clock
-    monkeypatch.setattr(runs, "_serverless", lambda: fake)
-    monkeypatch.setattr(runs, "monotonic", lambda: clock[0])
-    monkeypatch.setattr(runs, "_states", {})
-    return fake
+    for _ in range(300):
+        if not runs._flights:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("a Nebius read is still in flight")
 
 
 async def train_state(client, db):
@@ -1156,6 +1133,55 @@ async def test_the_summary_does_not_wait_longer_than_STATE_WAIT_S_for_nebius(cli
         assert await asyncio.wait_for(state(), 5) is None and nebius.calls == ["aijob-1"]  # cached: no second thread
     finally:
         nebius.gate.set()
+        await idle()
+
+
+async def test_nebius_reads_run_on_a_pool_of_their_own_not_the_default_executor(client, db, nebius):
+    """A Nebius that hangs keeps a read's thread for minutes (the client retries); on the default executor a few of those
+    would stall every to_thread caller (the planner, /compare), so the reads have two threads of their own."""
+    state = await train_state(client, db)
+    nebius.states["aijob-1"] = "RUNNING"
+    assert await state() == "RUNNING"
+    assert nebius.threads and all(name.startswith("nebius-read") for name in nebius.threads), nebius.threads
+
+
+async def test_a_read_that_outlives_the_cap_is_not_started_twice_and_its_late_answer_is_kept(client, db, nebius, monkeypatch):
+    """Each cache lapse used to start another read while the first still held its thread: now one is in flight per key, the
+    next poll waits for that one, and when it ends late its answer is kept for the polls after it."""
+    from api.routes import runs
+    monkeypatch.setattr(runs, "STATE_WAIT_S", 0.05)
+    nebius.gate, nebius.states["aijob-1"] = threading.Event(), "RUNNING"
+    state = await train_state(client, db)
+    try:
+        assert await state() is None  # gave up after 0.05 s: the read is held at the gate
+        for _ in range(200):
+            if nebius.calls:
+                break
+            await asyncio.sleep(0.01)
+        for _ in range(3):  # three cache lapses
+            nebius.clock[0] += 31
+            assert await state() is None
+        assert nebius.calls == ["aijob-1"]  # still the one read
+    finally:
+        nebius.gate.set()
+        await idle()
+    assert await state() == "RUNNING" and nebius.calls == ["aijob-1"]  # kept from the late answer: nothing was asked again
+    nebius.clock[0] += 31
+    nebius.states["aijob-1"] = "COMPLETED"
+    assert await state() == "COMPLETED" and nebius.calls == ["aijob-1"] * 2  # and the key is free for a read of its own again
+
+
+async def test_a_read_that_fails_late_frees_its_key_and_leaves_the_failure_cached(client, db, nebius, monkeypatch):
+    from api.routes import runs
+    monkeypatch.setattr(runs, "STATE_WAIT_S", 0.05)
+    nebius.gate = threading.Event()  # no state for aijob-1: the read raises once it is let go
+    state = await train_state(client, db)
+    try:
+        assert await state() is None
+    finally:
+        nebius.gate.set()
+        await idle()
+    assert await state() is None and nebius.calls == ["aijob-1"]  # cached None; the error was retrieved, not left pending
 
 
 async def test_no_live_state_is_read_under_stub(client, db, nebius, monkeypatch):
@@ -1222,6 +1248,7 @@ async def test_a_lookup_by_name_waits_at_most_STATE_WAIT_S_and_never_runs_under_
         assert await resource() is None  # the listing hangs at the gate: the summary answers all the same
     finally:
         nebius.gate.set()
+        await idle()
 
 
 async def test_a_registered_endpoint_is_read_until_its_artifact_expires_or_is_deleted(client, db, nebius):
@@ -1233,7 +1260,9 @@ async def test_a_registered_endpoint_is_read_until_its_artifact_expires_or_is_de
              "expired": {"endpoint_id": "ep-old", "expires_at": (now - timedelta(minutes=1)).isoformat()},
              "deleted": {"endpoint_id": "ep-gone", "expires_at": (now + timedelta(minutes=10)).isoformat(),
                          "deleted_at": now.isoformat()},
-             "unreadable": {"endpoint_id": "ep-odd", "expires_at": "soon"}}
+             "unreadable": {"endpoint_id": "ep-odd", "expires_at": "soon"},
+             "superseded": {"endpoint_id": "ep-sup", "expires_at": (now + timedelta(minutes=10)).isoformat(),
+                            "superseded_at": now.isoformat()}}  # an earlier registration of that endpoint stands
     for node_id, meta in metas.items():
         node = NodeRun(run_id=run.id, node_id=node_id, node_type="vllm-serve", status=NodeStatus.SUCCEEDED,
                        gpu_provider="local-docker")
@@ -1247,7 +1276,7 @@ async def test_a_registered_endpoint_is_read_until_its_artifact_expires_or_is_de
 
     assert {n["node_id"]: (n["resource"]["id"], n["resource"]["state"]) for n in s["nodes"]} == {
         "live": ("ep-live", "RUNNING"), "expired": ("ep-old", None), "deleted": ("ep-gone", None),
-        "unreadable": ("ep-odd", None)}
+        "unreadable": ("ep-odd", None), "superseded": ("ep-sup", None)}
     assert nebius.calls == ["ep-live"]  # the others are not asked
     nebius.states["ep-live"] = "STOPPING"
     nebius.clock[0] += 31

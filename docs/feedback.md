@@ -34,7 +34,9 @@ What we hit while building Orchapod on Nebius Token Factory, Nebius AI Cloud and
 - **Serverless Jobs pull from a Container Registry in the same project with no credentials.** Our GitHub images were private, so we pushed the node images to a Nebius Container Registry in the same project. The H100 Job pulled the 44 GB training image with no credentials, as the docs say. This worked. Source: `hackathon/LOG.md` (2026-10-25T05:24Z and 06:02Z).
 - **`nebius ai job logs` caps `--tail` at 1000.** Job logs have no REST route, so a failed Job's traceback comes from this command. A higher cap, or paging, would show a long log in full. Source: `hackathon/briefs/2026-10-25-wave6.md` (devrel-w9, item 2); `hackathon/LOG.md` (2026-10-25T06:02Z).
 - **The Nebius MCP server fails to start with pydantic 2.14.** `nebius-mcp-server` pins mcp ≤ 1.16.0, and uv resolved pydantic 2.14.1 for it, so the server failed on import. Running it with `uvx --with "pydantic<2.12"` fixed it. An upper bound on pydantic in the package, or a newer mcp, would avoid it. Source: `hackathon/LOG.md` (2026-10-25T00:12Z).
-- **Startup times, for the record.** An L40S endpoint took about 4 min from provisioning to running. The H100 Job spent about 6 min pulling our 44 GB image (state IMAGE_PULLING). Source: `hackathon/LOG.md` (2026-10-25T06:02Z and 06:42Z); `hackathon/briefs/2026-10-25-wave6.md` (devrel-w9, item 2).
+- **Image pulls: about 6 min, then 4.6 min.** The H100 Job pulled our 44 GB image (state IMAGE_PULLING) in about 6 min on the first live golden run and in 4.6 min on the second. Source: `hackathon/LOG.md` (2026-10-25T06:02Z and 08:59Z).
+- **An endpoint starts in about 4 min.** An L40S endpoint went from PROVISIONING to RUNNING in about 4 min on both live runs. Source: `hackathon/LOG.md` (2026-10-25T07:03Z and 08:59Z).
+- **Deleting an endpoint at its expiry worked on both runs.** Our API's TTL deleted each run's endpoint when its keep-alive ended (the second at 09:12:20Z). Source: `hackathon/LOG.md` (2026-10-25T06:58Z); `hackathon/briefs/2026-10-25-devrel-w10.md` (New facts).
 
 ## NVIDIA Nemotron models
 

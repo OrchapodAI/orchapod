@@ -3,8 +3,8 @@
  "workflow": {
   "name": "nebius-docs-specialist-nemotron-nano-8b",
   "user_id": "0f245600-44cd-43d1-9b5a-d1bc6d2ca112",
-  "created_at": "2026-10-25T06:17:41.937519",
   "yaml": "name: nebius-docs-specialist-nemotron-nano-8b\nnodes:\n- id: research\n  type: web-research\n  needs: []\n  inputs:\n    seed_urls:\n    - https://docs.tokenfactory.nebius.com/post-training/how-to-fine-tune\n    - https://docs.tokenfactory.nebius.com/post-training/models\n    - https://docs.nebius.com/serverless/overview\n    - https://docs.nebius.com/serverless/tutorials/deploy-model\n    - https://docs.nebius.com/serverless/quickstart/jobs\n    - https://docs.nebius.com/serverless/pricing-quotas\n    - https://docs.tokenfactory.nebius.com/post-training/datasets\n    - https://docs.tokenfactory.nebius.com/ai-models-inference/dedicated-endpoints/custom-weights\n    - https://docs.tokenfactory.nebius.com/ai-models-inference/dedicated-endpoints/deploy-api\n    - https://docs.tokenfactory.nebius.com/ai-models-inference/overview\n    - https://docs.tokenfactory.nebius.com/ai-models-inference/rate-limits\n    - https://docs.tokenfactory.nebius.com/other-capabilities/billing-new\n    - https://docs.nebius.com/compute/resources/pricing\n    - https://docs.nebius.com/object-storage/resources/pricing\n    - https://docs.nebius.com/serverless/tutorials/fine-tuning\n    - https://docs.nebius.com/object-storage/overview\n    - https://docs.nebius.com/object-storage/quickstart\n    - https://docs.nebius.com/compute/resources/quotas-limits\n    - https://docs.nebius.com/serverless/jobs/manage\n    - https://docs.nebius.com/serverless/endpoints/manage\n    max_pages: 20\n- id: synth\n  type: synth-distilabel\n  needs:\n  - research\n  inputs:\n    pipeline_template: grounded\n    corpus: ${{ nodes.research.outputs.corpus }}\n    teacher_model: nvidia/nemotron-3-super-120b-a12b\n    n_samples: 300\n    max_usd: 0.5\n    max_tokens: 800\n    instructions: 'Questions a developer asks while building on Nebius: fine-tuning\n      and deploying models on Token Factory, Serverless AI jobs and endpoints, Object\n      Storage, quotas and prices; answers in at most three sentences, using only the\n      passage, with its exact names, commands and numbers. Where a page lists prices\n      by date, quote the latest (as listed after October 1, 2026), never an older\n      one.'\n- id: prep\n  type: data-prep\n  needs:\n  - synth\n  inputs:\n    dataset: ${{ nodes.synth.outputs.dataset }}\n    format: chatml\n    train_split: 0.8\n    test_split: 0.1\n- id: train\n  type: unsloth-train\n  needs:\n  - prep\n  inputs:\n    model: nvidia/Llama-3.1-Nemotron-Nano-8B-v1\n    train_data: ${{ nodes.prep.outputs.train_jsonl }}\n    eval_data: ${{ nodes.prep.outputs.eval_jsonl }}\n    lora_alpha: 16\n    max_steps: 60\n    checkpoint_steps: 30\n    merge: false\n- id: serve\n  type: vllm-serve\n  needs:\n  - train\n  inputs:\n    model: nvidia/Llama-3.1-Nemotron-Nano-8B-v1\n    lora_adapter: ${{ nodes.train.outputs.lora_adapter }}\n    keep_alive_min: 15\n- id: evaluate\n  type: judge-eval\n  needs:\n  - prep\n  - serve\n  inputs:\n    test_data: ${{ nodes.prep.outputs.test_jsonl }}\n    base_model_ref: ${{ nodes.serve.outputs.base_model_ref }}\n    tuned_model_ref: ${{ nodes.serve.outputs.model_ref }}\n    judge_model: nvidia/Nemotron-3-Ultra-550b-a55b\n    max_samples: 30\n",
+  "created_at": "2026-10-25T06:17:41.937519",
   "graph_json": {
    "nodes": [
     {
@@ -199,9 +199,9 @@
  },
  "nodes": [
   {
-   "status": "succeeded",
    "id": "99436bfd-5ccf-4615-b954-e42d831f0fdb",
    "run_id": "d20d30f3-768f-4989-b974-cac3d9b47495",
+   "status": "succeeded",
    "inputs": {
     "seed_urls": [
      "https://docs.tokenfactory.nebius.com/post-training/how-to-fine-tune",
@@ -243,9 +243,9 @@
    "gpu_provider": "local-docker"
   },
   {
-   "status": "succeeded",
    "id": "406d08b5-f284-40fb-a391-ff12c743720e",
    "run_id": "d20d30f3-768f-4989-b974-cac3d9b47495",
+   "status": "succeeded",
    "inputs": {
     "pipeline_template": "grounded",
     "corpus": "r2://orchapod-artifacts-d0c131/runs/d20d30f3-768f-4989-b974-cac3d9b47495/research/corpus",
@@ -271,9 +271,9 @@
    "gpu_provider": "local-docker"
   },
   {
-   "status": "succeeded",
    "id": "df0ba84d-1a82-4d2a-9e0c-2ee816133e41",
    "run_id": "d20d30f3-768f-4989-b974-cac3d9b47495",
+   "status": "succeeded",
    "inputs": {
     "dataset": "r2://orchapod-artifacts-d0c131/runs/d20d30f3-768f-4989-b974-cac3d9b47495/synth/dataset",
     "format": "chatml",
@@ -299,9 +299,9 @@
    "gpu_provider": "local-docker"
   },
   {
-   "status": "succeeded",
    "id": "aa5d2293-1a0b-44c9-b3cd-a5552b9d1f77",
    "run_id": "d20d30f3-768f-4989-b974-cac3d9b47495",
+   "status": "succeeded",
    "inputs": {
     "model": "nvidia/Llama-3.1-Nemotron-Nano-8B-v1",
     "train_data": "r2://orchapod-artifacts-d0c131/runs/d20d30f3-768f-4989-b974-cac3d9b47495/prep/train_jsonl",
@@ -329,9 +329,9 @@
    "gpu_provider": "nebius"
   },
   {
-   "status": "succeeded",
    "id": "91afd9f4-b6f1-4d80-b2e8-9d7ca86e3d56",
    "run_id": "d20d30f3-768f-4989-b974-cac3d9b47495",
+   "status": "succeeded",
    "inputs": {
     "model": "nvidia/Llama-3.1-Nemotron-Nano-8B-v1",
     "lora_adapter": "r2://orchapod-artifacts-d0c131/runs/d20d30f3-768f-4989-b974-cac3d9b47495/train/lora_adapter",
@@ -356,9 +356,9 @@
    "gpu_provider": "local-docker"
   },
   {
-   "status": "succeeded",
    "id": "49880eca-5fc3-495f-9ae9-2e9e5081dd46",
    "run_id": "d20d30f3-768f-4989-b974-cac3d9b47495",
+   "status": "succeeded",
    "inputs": {
     "test_data": "r2://orchapod-artifacts-d0c131/runs/d20d30f3-768f-4989-b974-cac3d9b47495/prep/test_jsonl",
     "base_model_ref": "r2://orchapod-artifacts-d0c131/runs/d20d30f3-768f-4989-b974-cac3d9b47495/serve/base_model_ref",
@@ -955,7 +955,8 @@
     "keep_alive_min": 15,
     "registered_at": "2026-10-25T06:40:26.327448+00:00",
     "expires_at": "2026-10-25T06:55:26.327448+00:00",
-    "endpoint_id": "aiendpoint-e00q42qz7a5ghys4w4"
+    "endpoint_id": "aiendpoint-e00q42qz7a5ghys4w4",
+    "deleted_at": "2026-10-25T06:55:26.601447+00:00"
    },
    "created_at": "2026-10-25T06:40:26.329320"
   },
@@ -1142,8 +1143,8 @@
  ],
  "models": [
   {
-   "base_model": "nvidia/Llama-3.1-Nemotron-Nano-8B-v1",
    "id": "44c9297e-db26-4f4d-8ce2-caf7898f7a64",
+   "base_model": "nvidia/Llama-3.1-Nemotron-Nano-8B-v1",
    "uri": "r2://orchapod-artifacts-d0c131/runs/d20d30f3-768f-4989-b974-cac3d9b47495/train/checkpoint_step_000030",
    "tags": [
     "hf",
@@ -1152,16 +1153,16 @@
    "artifact_id": "4070167c-d12d-4985-88bd-bc4fdb36186b",
    "created_at": "2026-10-25T06:30:00.751556",
    "name": "llama-3-1-nemotron-nano-8b-v1-hf",
-   "description": null,
    "user_id": "d20d30f3-768f-4989-b974-cac3d9b47495",
+   "description": null,
    "format": "hf",
    "size_bytes": null,
    "node_run_id": "aa5d2293-1a0b-44c9-b3cd-a5552b9d1f77",
    "run_id": "d20d30f3-768f-4989-b974-cac3d9b47495"
   },
   {
-   "base_model": "nvidia/Llama-3.1-Nemotron-Nano-8B-v1",
    "id": "40cd21fd-e45f-474b-9a75-94154978ac53",
+   "base_model": "nvidia/Llama-3.1-Nemotron-Nano-8B-v1",
    "uri": "r2://orchapod-artifacts-d0c131/runs/d20d30f3-768f-4989-b974-cac3d9b47495/train/checkpoint_step_000060",
    "tags": [
     "hf",
@@ -1170,16 +1171,16 @@
    "artifact_id": "ca6853e1-549c-49ac-bc11-ce8f2f2d857d",
    "created_at": "2026-10-25T06:30:32.733808",
    "name": "llama-3-1-nemotron-nano-8b-v1-hf",
-   "description": null,
    "user_id": "d20d30f3-768f-4989-b974-cac3d9b47495",
+   "description": null,
    "format": "hf",
    "size_bytes": null,
    "node_run_id": "aa5d2293-1a0b-44c9-b3cd-a5552b9d1f77",
    "run_id": "d20d30f3-768f-4989-b974-cac3d9b47495"
   },
   {
-   "base_model": "nvidia/Llama-3.1-Nemotron-Nano-8B-v1",
    "id": "14a9dc98-f9d7-4301-b76f-650c92b8d089",
+   "base_model": "nvidia/Llama-3.1-Nemotron-Nano-8B-v1",
    "uri": "r2://orchapod-artifacts-d0c131/runs/d20d30f3-768f-4989-b974-cac3d9b47495/train/lora_adapter",
    "tags": [
     "hf",
@@ -1188,16 +1189,16 @@
    "artifact_id": "ad65dbcb-05a4-4122-ac64-ab327aeef281",
    "created_at": "2026-10-25T06:30:34.882266",
    "name": "llama-3-1-nemotron-nano-8b-v1-hf",
-   "description": null,
    "user_id": "d20d30f3-768f-4989-b974-cac3d9b47495",
+   "description": null,
    "format": "hf",
    "size_bytes": null,
    "node_run_id": "aa5d2293-1a0b-44c9-b3cd-a5552b9d1f77",
    "run_id": "d20d30f3-768f-4989-b974-cac3d9b47495"
   },
   {
-   "base_model": "nvidia/Llama-3.1-Nemotron-Nano-8B-v1",
    "id": "691d6bf1-6a02-4dc6-a64e-371551986d2a",
+   "base_model": "nvidia/Llama-3.1-Nemotron-Nano-8B-v1",
    "uri": "r2://orchapod-artifacts-d0c131/runs/d20d30f3-768f-4989-b974-cac3d9b47495/serve/model_ref",
    "tags": [
     "hf",
@@ -1206,16 +1207,16 @@
    "artifact_id": "ff4bc981-662a-4941-a794-31a4515cb59e",
    "created_at": "2026-10-25T06:40:27.096558",
    "name": "llama-3-1-nemotron-nano-8b-v1-hf",
-   "description": null,
    "user_id": "d20d30f3-768f-4989-b974-cac3d9b47495",
+   "description": null,
    "format": "hf",
    "size_bytes": null,
    "node_run_id": "91afd9f4-b6f1-4d80-b2e8-9d7ca86e3d56",
    "run_id": "d20d30f3-768f-4989-b974-cac3d9b47495"
   },
   {
-   "base_model": "nvidia/Llama-3.1-Nemotron-Nano-8B-v1",
    "id": "121ac6a2-c4ca-44ea-aaca-6156cd839fdf",
+   "base_model": "nvidia/Llama-3.1-Nemotron-Nano-8B-v1",
    "uri": "r2://orchapod-artifacts-d0c131/runs/d20d30f3-768f-4989-b974-cac3d9b47495/serve/base_model_ref",
    "tags": [
     "hf",
@@ -1224,8 +1225,8 @@
    "artifact_id": "0431704b-1e65-4351-953e-49e4d50b98b8",
    "created_at": "2026-10-25T06:40:27.287559",
    "name": "llama-3-1-nemotron-nano-8b-v1-hf",
-   "description": null,
    "user_id": "d20d30f3-768f-4989-b974-cac3d9b47495",
+   "description": null,
    "format": "hf",
    "size_bytes": null,
    "node_run_id": "91afd9f4-b6f1-4d80-b2e8-9d7ca86e3d56",
@@ -1236,37 +1237,6 @@
   "report_md": "## nebius-docs-specialist-nemotron-nano-8b: succeeded\n\n## What ran\nresearch  \nsynth  \nprep  \ntrain  \nserve  \nevaluate\n\n## Results\nWin rate: 0.6 (7 wins, 22 ties, 1 loss over 30 samples); final training loss: 1.676; validation loss: 1.629.\n\n## Cost\nTotal spent: $1.610043 (estimate: $2.6627).\n\n## How to use it\nModel endpoint: https://port8000-bzef88n79r5xyfk.tunnel.applications.eu-north1.nebius.cloud/v1  \nDownload tuned model adapter: /artifacts/ad65dbcb-05a4-4122-ac64-ab327aeef281/download  \nBase model reference: /artifacts/0431704b-1e65-4351-953e-49e4d50b98b8/download  \nEvaluation summary: /artifacts/cfae5769-7b4a-46b0-bb38-6878a71c0a6c/download",
   "intent": "Distill a Nebius docs specialist: fine-tune NVIDIA Nemotron Nano 8B on the Nebius AI Cloud and Token Factory docs",
   "created_at": "2026-10-25T06:17:41.942119",
-  "estimate": {
-   "usd": 2.6627,
-   "minutes": 51.5,
-   "by_node": {
-    "research": {
-     "usd": 0.032,
-     "minutes": 3
-    },
-    "synth": {
-     "usd": 0.09,
-     "minutes": 3.5
-    },
-    "prep": {
-     "usd": 0.0,
-     "minutes": 2
-    },
-    "train": {
-     "usd": 1.88,
-     "minutes": 25
-    },
-    "serve": {
-     "usd": 0.5167,
-     "minutes": 8
-    },
-    "evaluate": {
-     "usd": 0.144,
-     "minutes": 10.0
-    }
-   }
-  },
-  "run_id": "d20d30f3-768f-4989-b974-cac3d9b47495",
   "plan": {
    "name": "nebius-docs-specialist-nemotron-nano-8b",
    "nodes": [
@@ -1373,6 +1343,37 @@
      }
     }
    ]
+  },
+  "run_id": "d20d30f3-768f-4989-b974-cac3d9b47495",
+  "estimate": {
+   "usd": 2.6627,
+   "minutes": 51.5,
+   "by_node": {
+    "research": {
+     "usd": 0.032,
+     "minutes": 3
+    },
+    "synth": {
+     "usd": 0.09,
+     "minutes": 3.5
+    },
+    "prep": {
+     "usd": 0.0,
+     "minutes": 2
+    },
+    "train": {
+     "usd": 1.88,
+     "minutes": 25
+    },
+    "serve": {
+     "usd": 0.5167,
+     "minutes": 8
+    },
+    "evaluate": {
+     "usd": 0.144,
+     "minutes": 10.0
+    }
+   }
   }
  },
  "objects": {

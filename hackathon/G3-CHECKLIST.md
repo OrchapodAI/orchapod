@@ -15,7 +15,7 @@ else the orchestrator runs and logs in LOG.md with its output.
 ### B. Hosted demo (orchestrator)
 - [ ] deploys.log on the VM ends with the tag commit; `https://api.orchapod.dev/health` is ok; `https://app.orchapod.dev/agent` is 200.
 - [ ] Both live golden runs (d20d30f3, 0ee1e20a) open, with logs, eval, report and an honest expired Compare tab.
-- [ ] Anonymous, after 00:00 UTC (the public share resets): the golden sentence plans to six nodes marked admin-only, with the
+- [x] (2026-10-26 00:11Z on dfe67d7; re-run only if a deploy follows) Anonymous, after 00:00 UTC (the public share resets): the golden sentence plans to six nodes marked admin-only, with the
       golden-run link, and the movie template runs to its dataset card. That spends the public's share, cents.
 - [ ] No Nebius GPU resource is left: `nebius ai endpoint list` and `nebius ai job list` are empty.
 - [ ] No admin runs on the hosted app from here on (docs/HOSTING.md): admin spend uses up the public's day share.

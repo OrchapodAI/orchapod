@@ -934,3 +934,10 @@ worktrees:
   - Settings back: hosted day cap $5, visitor scale 0.1. Today's hosted spend is about $5.30 (the cap was $10 during the experiment).
   - Local Docker Desktop is not running since the restart: 1 local test skips; ui-smoke and e2e need it.
 - 2026-10-25T19:18Z devrel-w12 MERGED (b3eb12b): the multi-state run in README/Devpost/CHANGELOG with its caveats. Note: 2dcfa2d (my docs/img commit) failed tests/docs for minutes, because every docs/img file needs a row in the video script's table. Run tests/docs after adding to docs/img.
+- 2026-10-26T00:05Z REPORT REGENERATED for ca9838b7 (footage/checks/regen-report.py, after the UTC day reset): report_md cleared, re-requested as the admin, Super rewrote it with dfe67d7's facts.
+  - Results now lead with the eval: win rate 0.6833 (11 wins, 19 ties, 0 losses), 479/60/60 rows, train loss 1.0132, valid 1.5685.
+  - How to use it links the right files (quantize's gguf_file 4.92 GB + gguf_lora 168 MB); no invented "merged GGUF". Old text kept in footage/trials/multistate-re-run/report-before-fix.md.
+- 2026-10-26T00:11Z ANONYMOUS HOSTED CHECK PASS (G3 checklist B; footage/checks/anon-check.cjs, no admin header, dfe67d7):
+  - The golden sentence planned six nodes (web-research → synth → data-prep → unsloth-train → vllm-serve → judge-eval, $2.66), admin_only [unsloth_train, vllm_serve]; the amber "Admin-only on the public demo" note shows with the golden-run link (/runs?q=nebius-docs-specialist-nemotron-nano-8b); Run disabled.
+  - The movie template ran to its dataset card: run 6b94d176 SUCCEEDED, $0.0058. Day spend so far $0.0155 (the run + Super's plan and the regenerated report).
+  - The script first logged "MISSING amber note": a false negative. getByText matched the note and the sr-only status line ("…, admin-only on the public demo."), a strict-mode error. Fixed with exact: true (proved: 2 matches → 1); the screenshot footage/checks/anon-plan.png shows the note.

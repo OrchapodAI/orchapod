@@ -950,3 +950,14 @@ worktrees:
   - Reset script fix: "in flight" = provisioning_gpu or running (every start path moves a run there before executor.launch); a pending run never started, so it no longer holds the reset.
   - FINDING (P2, unfixed): GET /runs/{id}/cost-estimate quotes an H100 at $4.50/h for every node, CPU and API nodes too, so the canvas always shows its GPU-cost modal with wrong rows; only vllm-serve rents a GPU, and that is an L40S. Fix: quote only budget.gpu_nodes.
 - 2026-10-27T03:17Z Hari: "open GPUs". ORCHAPOD_ANON_SCALE 0.1 → 1: every visitor has the full $50 (run and day) and may start GPU nodes, never more than $50 a day in total. API recreated with no run started; checked: visitor (49.997, day, 50), gpu_guard passes vllm-serve. HF_TOKEN is set on the VM (the run's vllm-serve base, meta-llama/Llama-3.2-3B-Instruct, is gated). The 12:00Z reset closes GPUs again (scale 0.1, $5 / $3).
+- 2026-10-27T07:17Z WATCH, FREEZE CHECKS, AND THE COST-ESTIMATE FIX DEPLOYED.
+  - The run watcher (03:17Z–06:18Z) saw no run start: Hari's f17435ed is still pending, never started. The test window ($50 / $50 / visitors 1) stays open until the 12:00Z reset.
+  - Freeze checks (hackathon/G3-CHECKLIST.md):
+    - gitleaks git --log-opts=--all: 832 commits, no leaks (06:22Z).
+    - Nebius: 0 endpoints and 0 jobs in the project (listed read-only through the hosted API's own client, ~06:25Z).
+    - Golden runs d20d30f3 and 0ee1e20a: succeeded, 6/6 nodes, logs kept, eval artifacts, reports ready (d20d30f3's is the short template report; its numbers are right).
+    - make check at 4c1f7a6: ruff clean, 1177 passed, 1 skipped, web 51/51.
+    - make check E2E=1 and make ui-smoke: BLOCKED on Docker Desktop. Its registry proxy (http.docker.internal:3128) stopped answering: docker pull alpine and docker search time out, while the Mac reaches Docker Hub in 0.05 s. The first E2E=1 attempt hung 40 min in tests/providers/test_local_docker.py (docker build stuck at "resolve alpine@sha256"); it was killed by its timeout. Hari: quit and reopen Docker Desktop (WAITING_FOR_HUMAN item 5).
+  - FIX 4c1f7a6 (the 03:13Z P2): GET /runs/{id}/cost-estimate quotes only budget.gpu_nodes, and vllm-serve at its platform input (default gpu-l40s-a, $1.55/h). The new test fails on the old route. The Docker-only test now skips after a 2-min build hang instead of hanging the suite. CHANGELOG 10-27.
+  - DEPLOYED 2026-10-27T07:15:31Z 4c1f7a6 (no run in flight; 1 min 9 s). Checked: /health 200, /agent 200; f17435ed's estimate went from five H100 rows at $4.50 to one, vllm_serve gpu-l40s-a $1.55. The test-window settings are unchanged; the reset timer still fires at 12:00Z.
+  - The anonymous check must re-run after the 12:00Z reset: a deploy followed it, and at visitor scale 1 a GPU plan is not admin-only, so it cannot pass before.

@@ -294,10 +294,11 @@ def _constraint_problems(n: PlanNode) -> list[str]:
         if "nemotron" in model.lower() or not TF_FINETUNE_BASES.search(model):
             problems.append(f"Token Factory does not fine-tune {model}: use Llama 3.1 8B/70B, 3.2 1B/3B, 3.3 70B, Qwen3, "
                             "Qwen2.5, gpt-oss, DeepSeek or Gemma 4 (a Nemotron student trains with unsloth-train)")
-    if n.type == "judge-eval" and v.get("tuned_lora") and "gguf_f16" in str(v.get("base_model_ref")):
-        problems.append("base_model_ref: with tuned_lora the base is the same GGUF without the LoRA (quantize's gguf_file, "
-                        "like tuned_model_ref), not gguf_f16: an f16 base also changes the precision, and an 8B f16 "
-                        "(16 GB) does not fit the CPU eval")
+    if n.type == "judge-eval" and v.get("tuned_lora") and not all(
+            ".outputs.gguf_file" in str(v.get(k)) for k in ("base_model_ref", "tuned_model_ref")):
+        problems.append("with tuned_lora, base_model_ref and tuned_model_ref are both quantize's gguf_file: llama-server "
+                        "runs the LoRA over that GGUF on CPU, and the base is the same GGUF without it (not gguf_f16, "
+                        "16 GB for an 8B, more than the CPU eval's RAM; not an endpoint)")
     return problems
 
 

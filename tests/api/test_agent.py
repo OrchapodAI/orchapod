@@ -480,20 +480,24 @@ def test_review_refuses_a_bare_model_id_that_token_factory_does_not_price():
     judge = next(n for n in docs["nodes"] if n["type"] == "judge-eval")
     bare = {**docs, "nodes": [n if n is not judge else {**n, "inputs": {**n["inputs"], "base_model_ref": "nvidia/Llama-3.1-Nemotron-Nano-8B-v1"}}
                               for n in docs["nodes"]]}
-    new = [e for e in errors_of(bare) if e not in errors_of(docs)]
-    assert len(new) == 1 and new[0].startswith(f"{judge['id']}: base_model_ref: 'nvidia/Llama-3.1-Nemotron-Nano-8B-v1' is not a Token Factory model")
+    new = [e for e in errors_of(bare) if e not in errors_of(docs)]  # and, on this CPU plan, the tuned_lora rule's
+    assert len(new) == 2 and new[0].startswith(f"{judge['id']}: base_model_ref: 'nvidia/Llama-3.1-Nemotron-Nano-8B-v1' is not a Token Factory model")
 
 
 def test_review_refuses_an_f16_base_for_a_lora_judged_on_cpu():
     """Super planned base_model_ref = gguf_f16 for tuned (q4_k_m + LoRA) vs base (hosted, 2026-10-27, four plans in a row):
-    the student's f16 is 16 GB on a 15 GB VM, so the eval would have stalled at the end of the run. Intent #3 keeps it."""
+    the student's f16 is 16 GB on a 15 GB VM, so the eval would have stalled at the end of the run. A fifth plan judged
+    vllm-serve's refs with tuned_lora, which judge-eval refuses at the end. Intent #3 keeps its f16 baseline."""
     docs = next(t["plan"] for t in planner.templates() if t["plan"]["name"] == "nebius-docs-specialist-nemotron-nano-8b-cpu")
     quantize, judge = (next(n for n in docs["nodes"] if n["type"] == t) for t in ("quantize", "judge-eval"))
     f16 = {**docs, "nodes": [{**n, "inputs": {**n["inputs"], "keep_f16": True}} if n is quantize else
                              {**n, "inputs": {**n["inputs"], "base_model_ref": f"${{{{ nodes.{quantize['id']}.outputs.gguf_f16 }}}}"}}
                              if n is judge else n for n in docs["nodes"]]}
-    new = [e for e in errors_of(f16) if e not in errors_of(docs)]
-    assert len(new) == 1 and new[0].startswith(f"{judge['id']}: base_model_ref: with tuned_lora the base is the same GGUF")
+    priced = {**docs, "nodes": [{**n, "inputs": {**n["inputs"], "tuned_model_ref": "nvidia/nemotron-3-super-120b-a12b"}}
+                                if n is judge else n for n in docs["nodes"]]}  # then (or an endpoint) the LoRA fails the run
+    for plan in (f16, priced):
+        new = [e for e in errors_of(plan) if e not in errors_of(docs)]
+        assert len(new) == 1 and new[0].startswith(f"{judge['id']}: with tuned_lora, base_model_ref and tuned_model_ref")
     maths = next(t["plan"] for t in planner.templates() if any(n["type"] == "hf-download" for n in t["plan"]["nodes"]))
     assert "gguf_f16" in json.dumps(maths) and not [e for e in errors_of(maths) if "tuned_lora" in e]
 

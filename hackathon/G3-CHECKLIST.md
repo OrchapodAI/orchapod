@@ -5,9 +5,11 @@ else the orchestrator runs and logs in LOG.md with its output.
 
 ### A. Code and tests (orchestrator)
 - [ ] Every agent branch is merged or dropped. `git worktree list` shows only the main checkout; `git status` is clean.
+      (10-27 12:55Z: true at 8b9ab39; check again at the tag.)
 - [ ] `make check E2E=1` is green on the tag commit: pytest, web tests, ruff, the stub e2e, and the golden path through the Agent.
-- [ ] `make ui-smoke` 5/5 on the tag commit. (This and E2E=1 wait on Docker Desktop: since 10-27 its registry proxy hangs, so
-      image builds hang; Hari reopens it. `make check` without E2E is green at 4c1f7a6: 1177 passed, 1 skipped, web 51.)
+- [ ] `make ui-smoke` 5/5 on the tag commit. (10-27 12:54Z at 8b9ab39, after Docker Desktop's pulls came back at 12:50Z:
+      `make check E2E=1` exit 0: ruff clean, 1180 passed, web 51/51, the stub e2e and 4 PASS; `make ui-smoke` 5/5 in 33 s.
+      Run both again on the tag commit.)
 - [x] qa-w11's fresh-clone retest is green, with its fixes merged (hackathon/briefs/2026-10-25-qa-w11-report.md).
       (Green in 3 min 35 s, 10-25 10:11Z; its frictions fixed by wave 8, merged and deployed c5eab1f 10:22Z.)
 - [x] The security review's critical and high findings are fixed. Its medium ones are fixed or triaged in STATE.md

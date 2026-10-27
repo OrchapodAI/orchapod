@@ -980,3 +980,10 @@ worktrees:
   - Rulings on its questions:
     - The submission-day TODO(D8)s in devpost.md stay; they are Hari's D8 checks.
     - I clear the TODO(G3) markers (README:114, README:156, devpost.md:66) once the repo and the GHCR packages are public, before the tag (checklist E).
+- 2026-10-27T12:58Z DOCKER DESKTOP BACK; make check E2E=1 AND ui-smoke GREEN at 8b9ab39.
+  - footage/checks/wait-docker.sh saw `docker pull alpine` work again at 12:50:14Z. Docker Desktop was not restarted (the local stack has been up 6 h), and nobody touched it.
+  - make check E2E=1, exit 0 (footage/checks/make-check-e2e-2.log):
+    - ruff clean; pytest 1180 passed in 81 s (the Docker test now runs instead of skipping); web 51/51.
+    - Stub e2e: intent #2 PASS in 26 s. Agent e2e 4 PASS: intent #1 6 s, #2 4 s, #3 28 s, golden path 24 s; all $0, reports ready.
+  - make ui-smoke 5/5 in 33 s, exit 0 (footage/checks/ui-smoke.log): /agent intent #2; the template one-click with its dataset card; the over-cap template at scale 0.1; the canvas 409 → copy; the golden path to eval and compare.
+  - G3 checklist: every orchestrator item is green except the tag-commit re-runs (gitleaks, deploy, Nebius, both tests). Those wait on D's repo step (Hari).

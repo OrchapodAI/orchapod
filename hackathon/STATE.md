@@ -1,9 +1,9 @@
 # STATE — Orchapod × Nebius hackathon
-Updated: 2026-10-27T03:15Z · prev 2026-10-27T03:06Z by orchestrator · Phase: P3 · G1 MET 10-22 · G2 MET 10-25 (live golden run) · Next gate: G3 Oct 27 freeze · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
+Updated: 2026-10-27T03:18Z · prev 2026-10-27T03:15Z by orchestrator · Phase: P3 · G1 MET 10-22 · G2 MET 10-25 (live golden run) · Next gate: G3 Oct 27 freeze · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
 1. Nothing in flight.
-   - The hosted app runs dfe67d7 (deployed 10-25 19:13Z); TEST WINDOW (Hari, 10-27 03:13Z): day and run caps $50, visitors 0.1 ($5, no GPU) until the 12:00Z timer restores $5 / $3 / 0.1 (it waits for runs in flight); the cap rises to $20 on Oct 29 00:00Z (timer).
+   - The hosted app runs dfe67d7 (deployed 10-25 19:13Z); TEST WINDOW (Hari, 10-27 03:17Z): day and run caps $50, visitors scale 1 (GPU nodes open to everyone, $50 a day in total) until the 12:00Z timer restores $5 / $3 / 0.1 (it waits for runs in flight); the cap rises to $20 on Oct 29 00:00Z (timer).
    - The fresh clone is green in 3 min 35 s (qa-w11); the security review has no open critical or high finding; gitleaks is clean over all refs.
    - Next: G3 (Oct 27), hackathon/G3-CHECKLIST.md. Section A is done except the tag; B's anonymous check passed 10-26 00:11Z on dfe67d7; D is Hari's.
 2. DONE 10-25:

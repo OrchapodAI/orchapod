@@ -8,15 +8,18 @@ else the orchestrator runs and logs in LOG.md with its output.
 - [ ] `make check E2E=1` is green on the tag commit: pytest, web tests, ruff, the stub e2e, and the golden path through the Agent.
 - [ ] `make ui-smoke` 5/5 on the tag commit. (This and E2E=1 wait on Docker Desktop: since 10-27 its registry proxy hangs, so
       image builds hang; Hari reopens it. `make check` without E2E is green at 4c1f7a6: 1177 passed, 1 skipped, web 51.)
-- [ ] qa-w11's fresh-clone retest is green, with its fixes merged (hackathon/briefs/2026-10-25-qa-w11-report.md).
-- [ ] The security review's critical and high findings are fixed. Its medium ones are fixed or triaged in STATE.md
-      (hackathon/briefs/2026-10-25-security-review.md).
+- [x] qa-w11's fresh-clone retest is green, with its fixes merged (hackathon/briefs/2026-10-25-qa-w11-report.md).
+      (Green in 3 min 35 s, 10-25 10:11Z; its frictions fixed by wave 8, merged and deployed c5eab1f 10:22Z.)
+- [x] The security review's critical and high findings are fixed. Its medium ones are fixed or triaged in STATE.md
+      (hackathon/briefs/2026-10-25-security-review.md). (0 critical; H1 and M1 refuted with evidence, the lows accepted or
+      parked: LOG 2026-10-25T09:52Z.)
 - [ ] `gitleaks git --redact --log-opts=--all` is clean; each false positive is listed in .gitleaksignore with its reason.
       (10-27 06:22Z: 832 commits, no leaks; run again on the tag commit.)
 
 ### B. Hosted demo (orchestrator)
 - [ ] deploys.log on the VM ends with the tag commit; `https://api.orchapod.dev/health` is ok; `https://app.orchapod.dev/agent` is 200.
 - [ ] Both live golden runs (d20d30f3, 0ee1e20a) open, with logs, eval, report and an honest expired Compare tab.
+      (10-27 ~06:25Z: both succeeded, 6/6 nodes, logs, eval and reports; check again after the tag's deploy.)
 - [x] Anonymous, after 00:00 UTC (the public share resets): the golden sentence plans to six nodes marked admin-only, with the
       golden-run link, and the movie template runs to its dataset card. That spends the public's share, cents.
       (10-27 12:02Z on 4c1f7a6, after the 12:00Z reset: PASS, movie run e1f1b8b2 $0.006. Re-run only if a later deploy changes code.)

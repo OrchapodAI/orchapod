@@ -970,3 +970,4 @@ worktrees:
     - The amber "Admin-only on the public demo" note shows with the golden-run link (/runs?q=nebius-docs-specialist-nemotron-nano-8b); Run is disabled.
     - The movie template ran to its dataset card: run e1f1b8b2 SUCCEEDED, $0.006, 100 rows (train 90, eval 10, test 0: the template asks for no test split).
   - Docker Desktop's registry proxy still hangs at 12:01Z (docker pull alpine times out after 30 s), so make check E2E=1 and make ui-smoke still wait on Hari.
+- 2026-10-27T12:20Z DISPATCHED devrel-w13 (agent id ab9e5238cc9922bbc, worktree from 4071b59): G3 checklist C, the docs freeze pass (hackathon/briefs/2026-10-27-devrel-w13.md). Spend $0.

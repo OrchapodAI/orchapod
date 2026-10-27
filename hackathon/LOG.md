@@ -971,3 +971,12 @@ worktrees:
     - The movie template ran to its dataset card: run e1f1b8b2 SUCCEEDED, $0.006, 100 rows (train 90, eval 10, test 0: the template asks for no test split).
   - Docker Desktop's registry proxy still hangs at 12:01Z (docker pull alpine times out after 30 s), so make check E2E=1 and make ui-smoke still wait on Hari.
 - 2026-10-27T12:20Z DISPATCHED devrel-w13 (agent id ab9e5238cc9922bbc, worktree from 4071b59): G3 checklist C, the docs freeze pass (hackathon/briefs/2026-10-27-devrel-w13.md). Spend $0.
+- 2026-10-27T12:50Z MERGED devrel-w13 (2b893b3 = 1526faa + a13ec91; report hackathon/briefs/2026-10-27-devrel-w13-report.md). G3 checklist C is done.
+  - README and docs/devpost.md "What changed": bullets for Oct 22, 24, 25 and 27, condensed from CHANGELOG.md; the README status note is dated 2026-10-27.
+  - docs/feedback.md: 5 "what worked well" bullets, each with its source, and 32 questions, one per finding. Its four TODO(D8)s are gone; the page re-check moved to devpost.md's submission-day TODO.
+  - Two drift tests in tests/docs: every CHANGELOG date has a bullet in both lists, and feedback.md has no TODO and one question per finding.
+  - Review: facts checked against CHANGELOG; "thinking off" checked in code (synth-distilabel run.py:104, planner.py:382 and :426).
+  - Tests: make check in its worktree, 1179 passed, 1 skipped, web 51. After the merge, tests/docs and tests/test_harness.py: 40 passed. Worktree and branch removed.
+  - Rulings on its questions:
+    - The submission-day TODO(D8)s in devpost.md stay; they are Hari's D8 checks.
+    - I clear the TODO(G3) markers (README:114, README:156, devpost.md:66) once the repo and the GHCR packages are public, before the tag (checklist E).

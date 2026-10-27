@@ -1,11 +1,11 @@
 # STATE — Orchapod × Nebius hackathon
-Updated: 2026-10-27T12:05Z · prev 2026-10-27T07:17Z by orchestrator · Phase: P3 · G1 MET 10-22 · G2 MET 10-25 (live golden run) · Next gate: G3 Oct 27 freeze · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
+Updated: 2026-10-27T12:50Z · prev 2026-10-27T12:05Z by orchestrator · Phase: P3 · G1 MET 10-22 · G2 MET 10-25 (live golden run) · Next gate: G3 Oct 27 freeze · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
 1. Nothing in flight.
    - The hosted app runs 4c1f7a6 (deployed 10-27 07:15Z: the cost estimate quotes only GPU nodes). The test window closed at the 12:00Z reset: day $5, run $3, visitors 0.1 (GPU nodes admin-only again); Hari's f17435ed stays pending. The cap rises to $20 on Oct 29 00:00Z (timer).
    - The fresh clone is green in 3 min 35 s (qa-w11); the security review has no open critical or high finding; gitleaks is clean over all refs.
-   - Next: G3 (Oct 27), hackathon/G3-CHECKLIST.md. 10-27 06:22–07:15Z: gitleaks clean, Nebius 0 endpoints / 0 jobs, make check green at 4c1f7a6. make check E2E=1 and ui-smoke wait on Hari reopening Docker Desktop (its registry proxy still hangs at 12:01Z). The anonymous check PASSED at 12:02Z on 4c1f7a6. D is Hari's.
+   - Next: G3 (Oct 27), hackathon/G3-CHECKLIST.md. 10-27 06:22–07:15Z: gitleaks clean, Nebius 0 endpoints / 0 jobs, make check green at 4c1f7a6. make check E2E=1 and ui-smoke wait on Hari reopening Docker Desktop (its registry proxy still hangs at 12:01Z). The anonymous check PASSED at 12:02Z on 4c1f7a6. Checklist C is done (devrel-w13, 2b893b3). A and B wait on Docker Desktop and the tag; D is Hari's.
 2. DONE 10-25:
    - D8 rehearsal PASS: 0ee1e20a, from the hosted UI, 23.5 min, $1.58, Ultra 7/20/3 (win rate 0.57).
    - Wave 6 + frontend-w8b/w9/w10 deployed (85878e4).

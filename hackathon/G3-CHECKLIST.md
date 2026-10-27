@@ -28,9 +28,13 @@ else the orchestrator runs and logs in LOG.md with its output.
 - [ ] No admin runs on the hosted app from here on (docs/HOSTING.md): admin spend uses up the public's day share.
 
 ### C. Docs (devrel, then orchestrator)
-- [ ] README and docs/devpost.md: TODO(D8) remains only for the video link and the Devpost link. The status note is current.
-- [ ] CHANGELOG.md has every user-facing change up to the tag.
-- [ ] docs/feedback.md is ready to paste into Devpost.
+- [x] README and docs/devpost.md: TODO(D8) remains only for the video link and the Devpost link. The status note is current.
+      (devrel-w13, merged 2b893b3. Ruling: devpost.md's submission-day TODO(D8)s stay as Hari's D8 checks: links logged out, the
+      pages feedback.md cites, the paste. The TODO(G3)s at README:114, README:156 and devpost.md:66 are cleared in E.)
+- [x] CHANGELOG.md has every user-facing change up to the tag. (Up to 2b893b3; tests/docs now fails if a CHANGELOG date has no
+      bullet in the README or Devpost list.)
+- [x] docs/feedback.md is ready to paste into Devpost. (5 sourced "what worked well" bullets, one question per finding, no TODO;
+      tests/docs enforces it.)
 
 ### D. Hari
 - [ ] Keys rotated (Token Factory, Tavily, the Nebius service-account keys, the storage key) before the repo is public. The
@@ -44,5 +48,6 @@ else the orchestrator runs and logs in LOG.md with its output.
 - [ ] Devpost submitted by Oct 29, 6 PM ET, every link checked logged out.
 
 ### E. The tag (orchestrator, after A–C and Hari's yes on D's repo step)
-`git tag -a v0.1-hackathon -m "Nebius × NVIDIA hackathon submission"` on the tested commit, then `git push origin v0.1-hackathon`.
+First clear the TODO(G3) markers (README:114 private repo, README:156 GHCR packages, docs/devpost.md:66) to match what Hari
+and Purva made public. Then `git tag -a v0.1-hackathon -m "Nebius × NVIDIA hackathon submission"` on the tested commit, then `git push origin v0.1-hackathon`.
 Never move the tag. A later fix gets a new tag.

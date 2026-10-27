@@ -484,6 +484,20 @@ def test_review_refuses_a_bare_model_id_that_token_factory_does_not_price():
     assert len(new) == 1 and new[0].startswith(f"{judge['id']}: base_model_ref: 'nvidia/Llama-3.1-Nemotron-Nano-8B-v1' is not a Token Factory model")
 
 
+def test_review_refuses_an_f16_base_for_a_lora_judged_on_cpu():
+    """Super planned base_model_ref = gguf_f16 for tuned (q4_k_m + LoRA) vs base (hosted, 2026-10-27, four plans in a row):
+    the student's f16 is 16 GB on a 15 GB VM, so the eval would have stalled at the end of the run. Intent #3 keeps it."""
+    docs = next(t["plan"] for t in planner.templates() if t["plan"]["name"] == "nebius-docs-specialist-nemotron-nano-8b-cpu")
+    quantize, judge = (next(n for n in docs["nodes"] if n["type"] == t) for t in ("quantize", "judge-eval"))
+    f16 = {**docs, "nodes": [{**n, "inputs": {**n["inputs"], "keep_f16": True}} if n is quantize else
+                             {**n, "inputs": {**n["inputs"], "base_model_ref": f"${{{{ nodes.{quantize['id']}.outputs.gguf_f16 }}}}"}}
+                             if n is judge else n for n in docs["nodes"]]}
+    new = [e for e in errors_of(f16) if e not in errors_of(docs)]
+    assert len(new) == 1 and new[0].startswith(f"{judge['id']}: base_model_ref: with tuned_lora the base is the same GGUF")
+    maths = next(t["plan"] for t in planner.templates() if any(n["type"] == "hf-download" for n in t["plan"]["nodes"]))
+    assert "gguf_f16" in json.dumps(maths) and not [e for e in errors_of(maths) if "tuned_lora" in e]
+
+
 def test_review_refuses_a_node_after_judge_eval():
     """Super read "→ report" in the knowledge as a step and planned a synth-distilabel "report" after judge-eval (hosted,
     2026-10-25): ten made-up summaries, not the run's results. The Agent writes the report itself; the repair removes it."""

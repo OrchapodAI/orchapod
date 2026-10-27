@@ -4,6 +4,7 @@ Dated, user-facing changes made during the Nebius × NVIDIA hackathon submission
 
 ## 2026-10-27
 - The canvas's cost check before a run lists only the steps that rent a GPU, at the GPU they rent: vllm-serve's L40S at $1.55 an hour. Before, every step showed an H100 at $4.50, and a run with no GPU step still asked for a confirmation.
+- A plan that fine-tunes, quantizes and judges on CPU now compares the tuned model with the same 4-bit base. Before, the planner picked the 16 GB full-precision base, which does not fit the CPU eval, so such a run would have stalled at its last step.
 
 ## 2026-10-25
 - The golden path ran live, end to end on Nebius, from the hosted demo (app.orchapod.dev): Tavily research on the Nebius docs, 300 grounded Q&A pairs from Nemotron 3 Super, a LoRA fine-tune of NVIDIA Nemotron Nano 8B on an H100 Serverless Job, base and tuned served from one L40S Serverless Endpoint, and Nemotron 3 Ultra judging base against tuned: 7 wins, 22 ties, 1 loss on 30 questions. 24 minutes, $1.61.

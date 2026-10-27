@@ -230,7 +230,9 @@ class QuantizeInputs(BaseModel):
     method: QuantizeMethod = Field(description="gguf runs on CPU; awq needs a GPU job (exits 1 here)")
     precision: GGUFPrecision = Field(default=GGUFPrecision.Q4_K_M, description="GGUF only")
     bits: int = Field(default=4, description="AWQ only")
-    keep_f16: bool = Field(default=False, description="Also write the f16 GGUF as gguf_f16, judge-eval's honest baseline")
+    keep_f16: bool = Field(default=False, description="Also write the f16 GGUF as gguf_f16, judge-eval's baseline for one "
+                                                       "model's quantization loss; not with lora_adapter (tuned vs "
+                                                       "base: both sides are gguf_file, the tuned with tuned_lora)")
     lora_adapter: str | None = Field(default=None, description="r2 PEFT LoRA dir trained on this model (unsloth-train or "
                                                                "tf-finetune lora_adapter): also written as gguf_lora, which "
                                                                "judge-eval's tuned_lora serves on top of gguf_file on CPU")

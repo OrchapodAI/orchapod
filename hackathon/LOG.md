@@ -995,3 +995,11 @@ worktrees:
     - 4c8c925 + c688928: with tuned_lora, review() requires quantize's gguf_file on both sides (the repair loop fixes it). keep_f16's description, the knowledge and contracts say gguf_f16 is the baseline only for one model's quantization loss (intent #3, unchanged). CHANGELOG 10-27.
     - make check: 1181 passed, web 51. DEPLOYED 17:17:43Z 4c8c925, then 17:20:56Z c688928 (no run in flight); /health 200. Three re-plans of the same sentence afterwards: all six nodes, gguf_file on both sides, $2.54 / 65 min.
   - Recorder: footage/2026-10-27-finance/record.cjs (rehearsal.cjs for this shape; aborts before Run unless the plan judges the same GGUF with and without the LoRA). Estimate $2.54; run cap $3; day cap $5 (about $0.06 spent today). No API restart until it ends.
+- 2026-10-27T17:38Z FINANCE RUN 1 CANCELLED (2ed1e78c, $0.416), DATA FIX DEPLOYED, RUN 2 STARTED.
+  - Run 1: research 40 pages → 627 passages ($0.128; 8 queries, 0 failed; JPM's 3Q26 PDF, sec.gov, citigroup.com, goldmansachs.com, morganstanley.com, blackrock.com, businesswire.com and news sites). Synth: 288 of 600 rows from 306 calls, "exhausted"; prep 222/27/28.
+  - FINDING 1: three passages in a row with no pair (a page's menus and cookie text) ended the grounded pass at passage 306 of 627.
+  - FINDING 2: 29 of 288 rows stated a figure in neither their passage nor its URL. Examples: four Bank of America Q3 net incomes ($8.5B, $7.2B, $6.8B, $7.8B) from a teaser page, and Citigroup's "$3.2B" from a cookie banner. A finance model must not train or be judged on those.
+  - Cancelled as the admin while the H100 Job was IMAGE_PULLING (17:32Z). Nebius: the job went to DELETING, 0 endpoints.
+  - FIX 6927037: a grounded answer may state only figures (standalone numbers with 2+ digits, $, % or a decimal point) found in its passage, its URL or the instructions; others are invalid_rows. A grounded pass reads the whole corpus; the three-empty stop stays for unbounded templates. 2 tests fail on the old code. contracts and CHANGELOG updated. make check: 1183 passed, web 51.
+  - DEPLOYED 17:37:07Z 6927037 (no run in flight); orchapod/synth-distilabel:dev rebuilt on the VM, figures() checked inside it.
+  - Run 2: the same sentence, footage/2026-10-27-finance/run2.

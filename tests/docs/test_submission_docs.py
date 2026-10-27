@@ -7,6 +7,7 @@ exists, and no doc carries a stale name or an unmarked TODO.
 from __future__ import annotations
 
 import re
+from datetime import date
 
 from tests.docs.test_readme import BARE_TODO, MODELS, README, ROOT, STALE, _read
 
@@ -71,6 +72,24 @@ def test_devpost_period_paragraph_matches_the_changelog():
     first = re.search(r"first commit is (\w+ \d+, \d{4})", CHANGELOG)
     assert first, "CHANGELOG.md must state the date of the first commit"
     assert first.group(1) in _section(DEVPOST, "What changed during the submission period")
+
+
+def test_the_period_lists_have_a_bullet_for_every_changelog_date():
+    # G3 checklist C: the README and Devpost lists keep up with CHANGELOG.md, one "- <Mon> <day>" bullet per dated heading.
+    want = {f"{d:%b} {d.day}" for d in map(date.fromisoformat, re.findall(r"^## (\d{4}-\d\d-\d\d)", CHANGELOG, re.M))}
+    for name, text in {"README": README, "devpost": DEVPOST}.items():
+        listed = re.findall(r"^- (\w{3} \d+)", _section(text, "What changed during the submission period"), re.M)
+        assert sorted(want - set(listed)) == [], name
+
+
+def test_feedback_is_ready_to_paste():
+    # G3 checklist C: no TODO left, 4 to 6 sourced facts that worked, and one question per finding above.
+    assert "TODO" not in FEEDBACK
+    worked = re.findall(r"^- .*", _section(FEEDBACK, "What worked well"), re.M)
+    assert 4 <= len(worked) <= 6 and [w[:60] for w in worked if "Source:" not in w] == []
+    questions = re.findall(r"^- .*", _section(FEEDBACK, "Questions"), re.M)
+    assert len(questions) == sum(len(re.findall(r"^- ", _section(FEEDBACK, a), re.M)) for a in AREAS)
+    assert [q[:60] for q in questions if not q.endswith("?")] == []
 
 
 def test_every_feedback_finding_cites_a_source():

@@ -82,6 +82,16 @@ def test_the_period_lists_have_a_bullet_for_every_changelog_date():
         assert sorted(want - set(listed)) == [], name
 
 
+def test_feedback_is_ready_to_paste():
+    # G3 checklist C: no TODO left, 4 to 6 sourced facts that worked, and one question per finding above.
+    assert "TODO" not in FEEDBACK
+    worked = re.findall(r"^- .*", _section(FEEDBACK, "What worked well"), re.M)
+    assert 4 <= len(worked) <= 6 and [w[:60] for w in worked if "Source:" not in w] == []
+    questions = re.findall(r"^- .*", _section(FEEDBACK, "Questions"), re.M)
+    assert len(questions) == sum(len(re.findall(r"^- ", _section(FEEDBACK, a), re.M)) for a in AREAS)
+    assert [q[:60] for q in questions if not q.endswith("?")] == []
+
+
 def test_every_feedback_finding_cites_a_source():
     for area in AREAS:
         findings = re.findall(r"^- .*(?:\n  .*)*", _section(FEEDBACK, area), re.M)

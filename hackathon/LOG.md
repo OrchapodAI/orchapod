@@ -961,3 +961,12 @@ worktrees:
   - FIX 4c1f7a6 (the 03:13Z P2): GET /runs/{id}/cost-estimate quotes only budget.gpu_nodes, and vllm-serve at its platform input (default gpu-l40s-a, $1.55/h). The new test fails on the old route. The Docker-only test now skips after a 2-min build hang instead of hanging the suite. CHANGELOG 10-27.
   - DEPLOYED 2026-10-27T07:15:31Z 4c1f7a6 (no run in flight; 1 min 9 s). Checked: /health 200, /agent 200; f17435ed's estimate went from five H100 rows at $4.50 to one, vllm_serve gpu-l40s-a $1.55. The test-window settings are unchanged; the reset timer still fires at 12:00Z.
   - The anonymous check must re-run after the 12:00Z reset: a deploy followed it, and at visitor scale 1 a GPU plan is not admin-only, so it cannot pass before.
+- 2026-10-27T12:05Z TEST WINDOW CLOSED; ANONYMOUS HOSTED CHECK PASS on 4c1f7a6 (G3 checklist B).
+  - orchapod-trial-reset fired 12:00:00Z and logged "reset to baseline" at 12:00:02Z (no run in flight). The VM .env has MAX_DAY_USD=5, ANON_SCALE=0.1 and no MAX_RUN_USD line (default 3). The API was recreated and is healthy; /health 200.
+  - Checked: visitor left (0.30, run), admin (3.0, run); spent today $0.0135. The Oct 29 00:00Z daycap timer ($20) is still armed.
+  - No run started during the window: Hari's f17435ed is still pending. As a visitor it can no longer start (vllm-serve rents a GPU: gpu_guard 403).
+  - footage/checks/anon-check.cjs (no admin header), output in footage/checks/anon-1027/:
+    - The golden sentence planned six nodes (web-research → synth → data-prep → unsloth-train → vllm-serve → judge-eval, $2.66), admin_only [unsloth_train, vllm_serve].
+    - The amber "Admin-only on the public demo" note shows with the golden-run link (/runs?q=nebius-docs-specialist-nemotron-nano-8b); Run is disabled.
+    - The movie template ran to its dataset card: run e1f1b8b2 SUCCEEDED, $0.006, 100 rows (train 90, eval 10, test 0: the template asks for no test split).
+  - Docker Desktop's registry proxy still hangs at 12:01Z (docker pull alpine times out after 30 s), so make check E2E=1 and make ui-smoke still wait on Hari.

@@ -160,6 +160,35 @@ async def test_runs_carry_their_workflows_name(client, db, no_bg_tasks):
     assert made.json()["workflow_name"] == "nebius-docs-specialist-llama-8b"
 
 
+async def test_cost_estimate_quotes_only_the_nodes_that_rent_a_gpu(client, db, monkeypatch):
+    """The canvas asks for a confirmation only when a node has a quote. A cpu or api node rents no GPU, so it has none
+    (each used to get the default 1xH100's), and vllm-serve is priced on its platform input, as its endpoint is."""
+    from orchapod.prices import PRICES
+    from api.models.db import Run, Workflow
+    from api.services import provider_selector
+    asked = []
+
+    async def quote(res):
+        asked.append(res.gpu)
+        return [{"provider": "nebius", "price_per_hour": 4.5, "available": True, "gpu_type": "gpu-h100-sxm"}]
+    monkeypatch.setattr(provider_selector, "get_cost_estimate", quote)
+    wf = Workflow(user_id=uuid.uuid4(), name="w", graph_json={}, yaml="name: w\nnodes:\n"
+                  "  - {id: research, type: web-research}\n  - {id: tune, type: tf-finetune}\n"
+                  "  - {id: train, type: unsloth-train}\n  - {id: serve, type: vllm-serve}\n"
+                  "  - {id: serve_h100, type: vllm-serve, inputs: {platform: gpu-h100-sxm}}\n")
+    db.add(wf)
+    await db.flush()
+    run = Run(workflow_id=wf.id, user_id=wf.user_id)
+    db.add(run)
+    await db.commit()
+
+    quoted = {n["node_id"]: n["quotes"] for n in (await client.get(f"/runs/{run.id}/cost-estimate")).json()["nodes"]}
+    assert set(quoted) == {"train", "serve", "serve_h100"} and asked == ["1xH100"]
+    gpu = PRICES["nebius_serverless"]
+    assert [(q["gpu_type"], q["price_per_hour"]) for q in quoted["serve"] + quoted["serve_h100"]] == [
+        ("gpu-l40s-a", gpu["gpu-l40s-a"]), ("gpu-h100-sxm", gpu["gpu-h100-sxm"])]
+
+
 # ---------------------------------------------------------------------------
 # Cancel token: visitors cannot cancel each other's runs
 # ---------------------------------------------------------------------------

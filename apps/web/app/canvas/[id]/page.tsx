@@ -325,7 +325,7 @@ export default function CanvasPage() {
             <div>
               <p style={{ fontSize: 15, fontWeight: 600, color: "var(--ink-1)" }}>Cost estimate</p>
               <p className="muted" style={{ fontSize: 12.5, marginTop: 3 }}>
-                GPU quotes for each node in this run. Actual cost depends on runtime.
+                Hourly GPU prices for the steps that rent one. Actual cost depends on runtime.
               </p>
             </div>
 

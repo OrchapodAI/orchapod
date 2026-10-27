@@ -109,9 +109,11 @@ async def test_a_container_that_fails_at_once_keeps_its_exit_code_until_terminat
     tag = f"orchapod-test/exit1:{uuid.uuid4().hex[:8]}"  # throwaway: alpine whose command exits 1; unique, because other runs share the daemon
     try:
         subprocess.run(["docker", "build", "-q", "-t", tag, "-"], input=b'FROM alpine:latest\nCMD ["false"]\n',
-                       check=True, capture_output=True)
+                       check=True, capture_output=True, timeout=120)
     except subprocess.CalledProcessError as e:
         pytest.skip(f"cannot build the throwaway image: {e.stderr.decode(errors='replace')[-200:]}")
+    except subprocess.TimeoutExpired:  # seen 2026-10-27: Docker Desktop's BuildKit stuck resolving alpine's digest
+        pytest.skip("the throwaway image's docker build hung for 2 min")
     monkeypatch.setattr(local_docker, "_resolve_image", lambda image: tag)
     provider, pod = LocalDockerProvider(), None
     try:

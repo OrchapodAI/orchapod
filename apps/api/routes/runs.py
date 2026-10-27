@@ -340,20 +340,30 @@ async def list_artifacts(run_id: uuid.UUID, db: Session):
 
 @router.get("/{run_id}/cost-estimate")
 async def cost_estimate(run_id: uuid.UUID, db: Session):
-    """Return GPU cost quotes for all nodes in this run's workflow."""
+    """GPU quotes for the nodes of this run's workflow that rent a GPU (budget.gpu_nodes); the canvas asks for a
+    confirmation only when a node has one. vllm-serve's endpoint runs on its platform input, not on resources.gpu."""
     run = await db.get(Run, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     workflow = await db.get(Workflow, run.workflow_id)
 
     from api.services.provider_selector import get_cost_estimate
+    from orchapod.prices import PRICES
     from packages.workflow_schema.models import ResourceSpec
 
     dag = compile_dag(workflow.yaml, run.inputs)
     estimates = []
     for node in dag.nodes.values():
-        res = ResourceSpec(**node.resources) if isinstance(node.resources, dict) else node.resources
-        quotes = await get_cost_estimate(res)
+        if not budget.gpu_nodes([node.type]):
+            continue
+        if node.type == "vllm-serve":  # priced as containers/vllm-serve/run.py creates the endpoint
+            platform = (node.inputs or {}).get("platform") or "gpu-l40s-a"
+            price = PRICES["nebius_serverless"].get(platform)
+            quotes = [{"provider": "nebius", "price_per_hour": price, "available": True, "gpu_type": platform,
+                       "note": "Nebius AI Cloud endpoint"} if price else {"provider": "nebius", "error": f"no price for {platform}"}]
+        else:
+            res = ResourceSpec(**node.resources) if isinstance(node.resources, dict) else node.resources
+            quotes = await get_cost_estimate(res)
         estimates.append({"node_id": node.id, "node_type": node.type, "quotes": quotes})
     return {"nodes": estimates}
 

@@ -133,6 +133,7 @@ API code reads these through `apps/api/config.py` (`env(name)`: os.environ on ev
   - `max_usd: float = 1.0`: before each call, stop if its worst case (prompt + `max_tokens`) would push spend past min(`max_usd`, `ORCHAPOD_MAX_COST_USD`). The node writes what it has, exits 0 and sets `metrics.stopped = "max_usd"`, before the SDK's `BudgetExceeded` would fire.
 - Output `dataset` (`SynthDistilabelOutputs`), chat templates (self-instruct, evol-instruct, magpie, grounded):
   - Row: `{"messages": [{"role": "user", "content": q}, {"role": "assistant", "content": a}], "context": str, "source_url": str}`. Only grounded rows have `context` and `source_url`. The old `_meta` key is dropped.
+  - Grounded: one pass over the corpus, one call per passage (passages with no pair do not end it). A pair whose answer states a figure (a standalone number with 2+ digits, a $, a % or a decimal point) that is not in the passage, its URL or `instructions` is invalid: dropped and counted in `invalid_rows`.
   - The user turn is the question alone (closed-book). The passage lives only in `context`, which judge-eval passes to the judge.
   - Grounded makes one pass over the corpus: one guided-JSON call per passage returns `{"pairs": [{"question": str, "answer": str}]}`, with k = min(5, ⌈n_samples / passages⌉) pairs. Answers are ≤ 3 sentences and answerable from the passage alone.
 - Structured template: one object per line matching `row_schema`, with no extra keys.

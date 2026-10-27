@@ -225,6 +225,32 @@ def test_grounded_questions_that_lean_on_the_source_are_invalid(teacher, synth, 
     assert [r["messages"][0]["content"] for r in rows] == ["Who holds escrow funds?"] and m["invalid_rows"] == 2
 
 
+def test_grounded_answers_state_only_figures_from_their_passage(teacher, synth, files, tmp_path):
+    """Live, 2026-10-27: Super gave four different Bank of America net incomes from teaser pages and cookie banners that
+    hold none; 29 of 288 rows had a figure in neither the passage nor its URL. Such a pair is invalid."""
+    page = {"url": "https://ir.example/jpm-3q26", "text": "Net income was $15.3 billion, up 6%. Allowance: $1,217 million. " * 4}
+    files[CORPUS] = write_jsonl(tmp_path / "corpus", [page])
+    teacher(replies({"pairs": [{"question": "JPMorgan's net income in Q3?", "answer": "$15.3 billion, up 6%, in Q3 2026."},
+                               {"question": "Bank of America's net income?", "answer": "$8.5 billion."},
+                               {"question": "The allowance?", "answer": "About 1.217 billion dollars."},
+                               {"question": "Net income growth?", "answer": "It rose 7%."}]}))
+    rows, m = synth(pipeline_template="grounded", corpus=CORPUS, n_samples=4, max_tokens=800,  # k = 4 pairs
+                    instructions="Q3 2026 bank earnings.")
+    assert [r["messages"][1]["content"] for r in rows] == ["$15.3 billion, up 6%, in Q3 2026.", "About 1.217 billion dollars."]
+    assert m["invalid_rows"] == 2  # 2026 is in the instructions; 8.5 and 7% are nowhere
+
+
+def test_grounded_reads_past_passages_in_a_row_without_pairs(teacher, synth, files, tmp_path):
+    """Live, 2026-10-27: a page's menus and cookie text are passages in a row with no pair, and three of them ended the
+    pass at passage 306 of 627. A grounded pass is bounded by the corpus, so it reads on."""
+    files[CORPUS] = write_jsonl(tmp_path / "corpus", [{"url": f"https://a.example/{i}", "text": "x " * 150} for i in range(6)])
+    seen = teacher(replies({"pairs": [{"question": "First?", "answer": "A."}]}, *[{"pairs": []}] * 4,
+                           {"pairs": [{"question": "Last?", "answer": "B."}]}))
+    rows, m = synth(pipeline_template="grounded", corpus=CORPUS, n_samples=10)
+    assert [r["messages"][0]["content"] for r in rows] == ["First?", "Last?"] and len(seen) == 6
+    assert (m["calls"], m["stopped"]) == (6, "exhausted")
+
+
 DATA_NODES = {"web-research": wr, "synth-distilabel": sd, "data-prep": dp}
 
 
@@ -257,12 +283,12 @@ def sdk(monkeypatch, tmp_path):
 
 def five_pairs():
     """A teacher that answers every grounded call with five distinct pairs, as a live one does (the STUB teacher
-    answers one)."""
+    answers one). The answers name no figure, which the stub passages would not hold."""
     calls = itertools.count()
 
     def handler(request):
         i = next(calls)
-        return replies({"pairs": [{"question": f"{w} applies rule {i}-{j} of the regulation?", "answer": f"Rule {i}-{j}."}
+        return replies({"pairs": [{"question": f"{w} applies rule {i}-{j} of the regulation?", "answer": f"Rule r{i}-{j}."}
                                   for j, w in enumerate(("Who", "What", "When", "Where", "How"))]})(request)
     return handler
 

@@ -1,11 +1,12 @@
 # STATE — Orchapod × Nebius hackathon
-Updated: 2026-10-27T12:58Z · prev 2026-10-27T12:50Z by orchestrator · Phase: P3 · G1 MET 10-22 · G2 MET 10-25 (live golden run) · Next gate: G3 Oct 27 freeze · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
+Updated: 2026-10-27T18:50Z · prev 2026-10-27T12:58Z by orchestrator · Phase: P3 · G1 MET 10-22 · G2 MET 10-25 (live golden run) · Next gate: G3 Oct 27 freeze · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
 1. Nothing in flight.
-   - The hosted app runs 4c1f7a6 (deployed 10-27 07:15Z: the cost estimate quotes only GPU nodes). The test window closed at the 12:00Z reset: day $5, run $3, visitors 0.1 (GPU nodes admin-only again); Hari's f17435ed stays pending. The cap rises to $20 on Oct 29 00:00Z (timer).
+   - The hosted app runs 6927037 (deployed 10-27 17:37Z: planner rule for a LoRA judged on CPU, 4c8c925 + c688928; grounded synth keeps only figures from the passage and reads the whole corpus). Day $5, run $3, visitors 0.1 (GPU nodes admin-only); Hari's f17435ed stays pending. The cap rises to $20 on Oct 29 00:00Z (timer).
+   - Finance video (Hari, 10-27): run 6bf36882 (Q3 2026 bank-earnings analyst; 51 min, $1.36; Ultra 15/27/12, win rate 0.53) and the cut in footage/2026-10-27-finance/out/ (2:01, captions + a synthetic-voice copy; README.txt). Run 1 (2ed1e78c) was cancelled for its data ($0.42). Today's admin spend (~$1.84) used the visitors' share until 00:00Z.
    - The fresh clone is green in 3 min 35 s (qa-w11); the security review has no open critical or high finding; gitleaks is clean over all refs.
-   - Next: G3 (Oct 27), hackathon/G3-CHECKLIST.md. 10-27 06:22–07:15Z: gitleaks clean, Nebius 0 endpoints / 0 jobs, make check green at 4c1f7a6. Docker Desktop pulls again since 12:50Z: make check E2E=1 (1180 passed, web 51, e2e 4 PASS) and ui-smoke 5/5 are green at 8b9ab39. The anonymous check PASSED at 12:02Z on 4c1f7a6. Checklist C is done (devrel-w13, 2b893b3). What is left of A and B runs on the tag commit, after D's repo step (Hari).
+   - Next: G3 (Oct 27), hackathon/G3-CHECKLIST.md. 10-27 06:22–07:15Z: gitleaks clean, Nebius 0 endpoints / 0 jobs, make check green at 4c1f7a6. Docker Desktop pulls again since 12:50Z: make check E2E=1 (1180 passed, web 51, e2e 4 PASS) and ui-smoke 5/5 are green at 8b9ab39. The anonymous check PASSED at 12:02Z on 4c1f7a6, but the 17:37Z deploy changed planner and synth code: re-run it after 00:00Z (the visitors' share is spent today). Checklist C is done (devrel-w13, 2b893b3). What is left of A and B runs on the tag commit, after D's repo step (Hari).
 2. DONE 10-25:
    - D8 rehearsal PASS: 0ee1e20a, from the hosted UI, 23.5 min, $1.58, Ultra 7/20/3 (win rate 0.57).
    - Wave 6 + frontend-w8b/w9/w10 deployed (85878e4).

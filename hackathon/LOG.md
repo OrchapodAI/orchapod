@@ -1003,3 +1003,26 @@ worktrees:
   - FIX 6927037: a grounded answer may state only figures (standalone numbers with 2+ digits, $, % or a decimal point) found in its passage, its URL or the instructions; others are invalid_rows. A grounded pass reads the whole corpus; the three-empty stop stays for unbounded templates. 2 tests fail on the old code. contracts and CHANGELOG updated. make check: 1183 passed, web 51.
   - DEPLOYED 17:37:07Z 6927037 (no run in flight); orchapod/synth-distilabel:dev rebuilt on the VM, figures() checked inside it.
   - Run 2: the same sentence, footage/2026-10-27-finance/run2.
+- 2026-10-27T18:50Z FINANCE RUN 2 PASS + VIDEO BUILT. Run 6bf36882-b221-4b63-9890-181101b6395f, from the hosted /agent page as the admin (record.cjs).
+  - Totals: 51.4 min, $1.356 (estimate $2.54).
+  - Nodes:
+    - research 6 s, $0.128: 40 pages, 627 passages.
+    - synth 8.6 min, $0.163: 550 rows from 627 calls, 37 invalid. 0 rows have a figure outside their passage or URL (run 1: 29 of 288).
+    - prep: 537 rows → 430 / 53 / 54.
+    - train: H100 Job, 6.2 min to RUNNING, then 2 min of training (120 steps); loss 6.50 → 0.62; $0.945.
+    - quantize 21.4 min, $0, VM CPU: 16.07 GB f16 → 4.92 GB q4_k_m, GGUF LoRA 168 MB.
+    - judge 8.5 min, $0.12.
+  - Ultra, n 54: 15 wins / 27 ties / 12 losses, win rate 0.528, consistency 0.74, 0 errors. The base declined all 54 questions.
+  - The losses are misremembered figures: JPM net income $15,460M for $15,305M; Schwab EPS $1.58 for $1.69. The judge ranks those below "I don't know".
+  - Caveat as 10-25: the test rows are held out of the same synthetic set, so the eval measures recall of the collected releases.
+  - FINDINGS (P2, unfixed):
+    - Figure-free rows from boilerplate passages pass (a cookie-banner question is a test row).
+    - Source-leaning phrasings beyond "the passage/text/article" pass LEANS_ON_SOURCE ("according to the discussion", "in the bullet points", "the speaker").
+    - The judge once called a wrong figure a win (#46: $15,186M for $15.305B).
+    - Super's checkpoint_steps 100 left the chart's valid-loss line empty.
+  - Video (footage/2026-10-27-finance/out/, gitignored):
+    - orchapod-finance-6bf36882.mp4: 2:01, captions. A -SYNTHETIC-VOICE copy reads narration.srt (macOS say; every cue fits).
+    - Product UI throughout, except two cards drawn from the run's own corpus and dataset.
+    - The shown win (#43, JPM +6% net income) matches JPMorgan's own 3Q26 release. README.txt lists every segment.
+  - Nebius after: 0 jobs, 0 endpoints. Hosted spend today about $1.84 of $5; the visitors' share is spent until 00:00Z.
+  - G3: deploys.log ends 6927037; B3 (anonymous) re-runs on the tag commit after 00:00Z.

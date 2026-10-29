@@ -1026,3 +1026,7 @@ worktrees:
     - The shown win (#43, JPM +6% net income) matches JPMorgan's own 3Q26 release. README.txt lists every segment.
   - Nebius after: 0 jobs, 0 endpoints. Hosted spend today about $1.84 of $5; the visitors' share is spent until 00:00Z.
   - G3: deploys.log ends 6927037; B3 (anonymous) re-runs on the tag commit after 00:00Z.
+- 2026-10-29T15:22Z FINANCE VIDEO RE-CUT AS A DEMO. Hari: remove the title card; the video demos the product, with this run as its example.
+  - cuts.json drops 01-title. narration.srt drops the bank hook, moves every cue 5 s earlier, and opens with "Orchapod turns one sentence into a specialist model. In this example: a Q3 2026 bank-earnings analyst."
+  - Both cuts rebuilt in footage/2026-10-27-finance/out/ (gitignored): 1:56 (116.0 s), opening on the Agent page; all 10 voice cues fit (the first 7.2 s of 7.5 s); voice mean -17 dB, max -1.8 dB.
+  - Commit and push by a parallel agent, as Hari asked.

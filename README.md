@@ -6,7 +6,7 @@
 
 An entry in the **Nebius × NVIDIA Global AI Hackathon**, track **Best Apps and Agents**. It runs on **Nebius Token Factory** and **Nebius AI Cloud**, calls **NVIDIA Nemotron** models at runtime and uses **Tavily** for web research.
 
-**Status (2026-10-27).** The golden path has run live twice on the hosted demo, https://app.orchapod.dev: NVIDIA's Nemotron Nano 8B was trained on an H100 and served on an L40S on Nebius, then judged by Nemotron 3 Ultra. The runs took 24.2 and 23.5 min and cost $1.61 and $1.58 (Results). Intents #2 and #3 have run live too, and so has the CPU variant's shape: on multi-state real-estate compliance ($1.35) and on a Q3 2026 bank-earnings analyst, the demo video's run ($1.36). On deterministic stubs (no key, $0) the three canonical intents and the golden path pass end to end; [Setup](#setup) runs them on your machine. TODO(D8): the 3-minute video and the Devpost link; then this note goes.
+**Status (2026-10-29).** The golden path has run live twice on the hosted demo, https://app.orchapod.dev: NVIDIA's Nemotron Nano 8B was trained on an H100 and served on an L40S on Nebius, then judged by Nemotron 3 Ultra. The runs took 24.2 and 23.5 min and cost $1.61 and $1.58 (Results). Intents #2 and #3 have run live too, and so has the CPU variant's shape: on multi-state real-estate compliance ($1.35) and on a Q3 2026 bank-earnings analyst, the demo video's run ($1.36). On deterministic stubs (no key, $0) the three canonical intents and the golden path pass end to end; [Setup](#setup) runs them on your machine. The demo video (2:13): https://youtu.be/ULEYpAvsUxs.
 
 ## What it is
 
@@ -120,7 +120,7 @@ We have no Nebius console screenshots. The run page's node cards show each Job a
 
 ## Setup
 
-You need Docker with the compose plugin, Python 3.12 (`brew install python@3.12` or `uv python install 3.12`) and Node 22 with pnpm. Live runs also need a [Nebius Token Factory](https://tokenfactory.nebius.com) API key and a [Tavily](https://tavily.com) API key (free tier: 1,000 credits a month); a first run needs neither. A live run of the real-estate template also needs `HF_TOKEN`, from a Hugging Face account that accepted Meta's Llama licence, because Meta's base models are gated. The Nemotron Nano golden path needs none.
+You need Docker with the compose plugin, Python 3.12 (`brew install python@3.12` or `uv python install 3.12`) and Node 22.18 or later with pnpm. Live runs also need a [Nebius Token Factory](https://tokenfactory.nebius.com) API key and a [Tavily](https://tavily.com) API key (free tier: 1,000 credits a month); a first run needs neither. A live run of the real-estate template also needs `HF_TOKEN`, from a Hugging Face account that accepted Meta's Llama licence, because Meta's base models are gated. The Nemotron Nano golden path needs none.
 
 ```bash
 git clone https://github.com/OrchapodAI/orchapod.git
@@ -137,7 +137,7 @@ make check                      # ruff + unit tests + web tests; no keys, no spe
 
 **A first run without keys.** `python scripts/e2e_agent.py --stub` builds the node images it needs and runs the three canonical intents and the golden path through the Agent API on deterministic stubs, for $0. Each intent is planned, run and reported. The golden path posts template 4's full plan straight to `/agent/run`, and its `unsloth-train` image is a small stub stage, not the 20 GB CUDA image. The first time, the setup and this run download about 1.8 GB in all (the Postgres, Redis and MinIO images, the nodes' base images, and the pip and pnpm packages) and use about 7 GB of disk after the image builds. Each image build may take 600 s, pulls included, so a slow link can time out on `quantize`. With warm caches, a fresh clone reached a green `make check E2E=1` in 3 min 35 s (`hackathon/briefs/2026-10-25-qa-w11-report.md`).
 
-`make check E2E=1` runs it after `scripts/e2e_demo.py --stub` (intent #2 through the workflow API), and both are strict: a failed intent, or a canonical plan that names a node that does not exist, fails them. They start their own API with `STUB=1` and a throwaway database, need `make up`, and rebuild the local `orchapod/<node>:dev` images. Their API listens on 127.0.0.1, which node containers reach through Docker Desktop (macOS, Windows) but not on Linux; there, set `E2E_BIND_HOST` to Docker's bridge gateway (usually 172.17.0.1) on a throwaway machine, never the hosted VM (not yet tried on Linux). Recorded on a fresh clone on 2026-10-25 @ 0524d82: `make check` passed 1171 tests and 50 web tests, and `make check E2E=1` exited 0 with `4 PASS` in 121 s (`hackathon/briefs/2026-10-25-qa-w11-report.md`).
+`make check E2E=1` runs it after `scripts/e2e_demo.py --stub` (intent #2 through the workflow API), and both are strict: a failed intent, or a canonical plan that names a node that does not exist, fails them. They start their own API with `STUB=1` and a throwaway database, need `make up`, and rebuild the local `orchapod/<node>:dev` images. Their API listens on 127.0.0.1, which node containers reach through Docker Desktop (macOS, Windows) but not on Linux; there, set `E2E_BIND_HOST` to Docker's bridge gateway (usually 172.17.0.1) on a throwaway machine, never the hosted VM (not yet tried on Linux). Recorded on a fresh clone of the public repo on 2026-10-29 (eff1d23 with the two docs bullets that f6aeebd added): `make check` passed 1183 tests and 51 web tests, and `make check E2E=1` exited 0 with `4 PASS` in 139 s.
 
 **The app.** Two lines of `.env` decide what your browser can do:
 
@@ -207,7 +207,7 @@ The other templates need `hf-download quantize data-prep judge-eval` (maths), `w
 - **One win (d20d30f3).** Asked "What happens to computing resources and container disk when a Serverless AI job completes?", the base model answered generically. The tuned model said: "When a Serverless AI job completes, the container disk is automatically deleted, and the computing resources are released."
 - **The playground (0ee1e20a).** Inside the endpoint's keep-alive, held-out sample #0, fixed as the question before the run, went to both models. The tuned model said "The value 'spot' indicates that a job uses spot pricing."; the base model invented a `PRICE=SPOT` format. The reference uses a `pricingModel` field instead, so the judge scored this pair a tie ([the judged sample](docs/img/eval-sample.png)).
 - **The first attempt** (`fa20d166`, $0.58) failed in train: the image's Mamba-2 wheels broke `import unsloth` on a GPU. The fix (69cafd1) drops them, so the image no longer trains NemotronH students.
-- TODO(D8): the video link.
+- **The demo video** (2:13, https://youtu.be/ULEYpAvsUxs) shows run `6bf36882` below, from the typed sentence to the report.
 
 ![The eval view of run 0ee1e20a: win rate 57%, 7 wins, 20 ties, 3 losses, consistency 67%, and the judged samples](docs/img/eval-view.png)
 *Run 0ee1e20a's eval view: 7 wins, 20 ties and 3 losses on 30 held-out questions; win rate 57%, consistency 67%.*

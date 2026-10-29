@@ -72,7 +72,7 @@ Best Apps and Agents
 ## Links
 
 - Demo, free with no login until Dec 15, 2026: https://app.orchapod.dev (API: https://api.orchapod.dev). Visitors' runs are capped ($0.30 a run, $2 a day across all visitors) and steps that rent a GPU are admin-only, so the three fine-tune templates show their plan and estimate without running; the finished runs under Testing instructions show those steps end to end. TODO(D8): check it logged out before submitting.
-- Video, public on YouTube, under 3 minutes, no unlicensed music or third-party marks: TODO(D8) the URL.
+- Video, 2:13, on YouTube, with no music or third-party marks: https://youtu.be/ULEYpAvsUxs. TODO(D8): it is Unlisted; set it to Public before submitting.
 - Repository, public with the MIT license: https://github.com/OrchapodAI/orchapod (default branch main).
 - Feedback: `docs/feedback.md`. TODO(D8): re-check the pages it cites, then paste it into the Devpost field and link it on GitHub.
 

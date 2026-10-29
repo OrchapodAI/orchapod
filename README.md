@@ -6,7 +6,7 @@
 
 An entry in the **Nebius × NVIDIA Global AI Hackathon**, track **Best Apps and Agents**. It runs on **Nebius Token Factory** and **Nebius AI Cloud**, calls **NVIDIA Nemotron** models at runtime and uses **Tavily** for web research.
 
-**Status (2026-10-27).** The golden path has run live twice on the hosted demo, https://app.orchapod.dev: NVIDIA's Nemotron Nano 8B was trained on an H100 and served on an L40S on Nebius, then judged by Nemotron 3 Ultra. The runs took 24.2 and 23.5 min and cost $1.61 and $1.58 (Results). Intents #2 and #3 have run live too, and so has the CPU variant's shape, on multi-state real-estate compliance ($1.35). On deterministic stubs (no key, $0) the three canonical intents and the golden path pass end to end; [Setup](#setup) runs them on your machine. TODO(D8): the 3-minute video and the Devpost link; then this note goes.
+**Status (2026-10-27).** The golden path has run live twice on the hosted demo, https://app.orchapod.dev: NVIDIA's Nemotron Nano 8B was trained on an H100 and served on an L40S on Nebius, then judged by Nemotron 3 Ultra. The runs took 24.2 and 23.5 min and cost $1.61 and $1.58 (Results). Intents #2 and #3 have run live too, and so has the CPU variant's shape: on multi-state real-estate compliance ($1.35) and on a Q3 2026 bank-earnings analyst, the demo video's run ($1.36). On deterministic stubs (no key, $0) the three canonical intents and the golden path pass end to end; [Setup](#setup) runs them on your machine. TODO(D8): the 3-minute video and the Devpost link; then this note goes.
 
 ## What it is
 
@@ -36,6 +36,8 @@ Three intents define "done"; each must run from the chat box with no manual edit
 ## Why
 
 Every team wants a cheaper, faster, private specialist model. Today that takes an ML engineer and a pile of GPU plumbing. Orchapod turns it into a costed, capped and observable workflow.
+
+**Who it is for.** Teams that need a model fluent in their own material but have no ML engineer to build one: an analyst desk that wants this quarter's earnings figures (the demo video's run), a compliance team working from its rulebook, a support team working from its product docs. They describe the model in one sentence, see the plan and its cost before anything runs, and get a judged comparison with the base model before anyone relies on it.
 
 - **NVIDIA end to end on the golden path.** Nemotron 3 Super plans, writes the synthetic data and writes the report. Nemotron 3.5 Lightning can filter the data. Nemotron 3 Ultra judges. The student is NVIDIA's `nvidia/Llama-3.1-Nemotron-Nano-8B-v1`: Unsloth trains it on a Nebius Serverless Job, and vLLM serves it from a Serverless Endpoint, so every model call runs on Nebius. The CPU variant differs: it serves the student with llama.cpp on the API host. The other templates are not NVIDIA end to end: real estate fine-tunes Llama 3.2 3B on Token Factory (Lane A), because its intent names Llama 3B, and maths quantizes Qwen2.5-Math-1.5B-Instruct.
 - **It makes models, not only calls them.** Nemotron teaches and judges new specialist models, and every one is measured against its base.
@@ -86,6 +88,13 @@ A run planned from a sentence starts with a Nemotron call (the plan); a run star
 | Reporter | `nvidia/nemotron-3-super-120b-a12b` | Orchapod Agent: writes the run report when the run ends (what ran, metrics, cost against the estimate) |
 
 No other model provider is called: the Anthropic and OpenAI code paths (the planner's Claude path, the synthetic-data teacher branches and the evaluation's judge fallback) were deleted during the build, and the executor forwards no other model provider's key to the node containers.
+
+### Where Token Factory accelerated our workflow
+
+- **Frontier models without hosting them.** Five roles (planner, teacher, quality filter, judge, reporter) run on three Nemotron models behind one OpenAI-compatible endpoint, so a 120B teacher and a 550B judge cost us no GPUs, no serving stack and no capacity planning. The only GPUs we rent are the student's: a Serverless Job to train it and, on the endpoint lane, a Serverless Endpoint to serve it.
+- **Plans that validate on the first call.** Strict `json_schema` output makes the planner's answer a workflow drawn from the node catalog: in spike 2 the first call came back valid in 7.3 s for $0.0025. The server then checks models, inputs and cost, with up to two repair rounds.
+- **Data and evaluations in minutes, for cents.** Nemotron 3 Super wrote 300 grounded Q&A rows in about 2 minutes for $0.03 on each golden run, and 550 rows from 627 passages in 8.7 minutes for $0.16 on the finance run. Nemotron 3 Ultra judged 30 held-out questions in both answer orders in 85 s for $0.08. With thinking off, a bulk Super call took 0.66 to 0.81 s.
+- **Costs we can estimate before a run.** `GET /v1/models?verbose=true` publishes a price per token for every model, so each call is priced before it is sent, the Agent shows a plan's estimate before Run, and the caps hold while it runs.
 
 ### Token Factory fine-tuning (Lane A)
 
@@ -206,6 +215,17 @@ The other templates need `hf-download quantize data-prep judge-eval` (maths), `w
 ![The compare playground of run 0ee1e20a: one held-out question answered by the base and the tuned model side by side](docs/img/playground.png)
 *The playground inside run 0ee1e20a's keep-alive: held-out sample #0, base and tuned side by side (the judge scored this pair a tie).*
 
+**The demo video's run: a Q3 2026 bank-earnings analyst, judged on CPU (2026-10-27, hosted).** Run [`6bf36882`](https://app.orchapod.dev/runs/6bf36882-b221-4b63-9890-181101b6395f) was typed as one sentence on the hosted /agent page, and Super planned six nodes, estimated at $2.54. It took 51 min and cost $1.36.
+- **Pipeline.**
+  - Tavily read 40 pages on the eight banks' third-quarter results (their releases, SEC filings and the financial press): 627 passages, $0.13.
+  - Super made one call per passage, in 8.7 min for $0.16: 550 grounded Q&A rows, after its checks dropped 37 more, among them answers stating a figure their passage does not hold. Data prep split the rows 430 / 53 / 54.
+  - Unsloth trained the LoRA of Nemotron Nano 8B on an H100 Job: 120 steps, 12.6 min, $0.95; the loss fell from 6.50 to 0.62.
+  - quantize turned the 16.07 GB f16 student into a 4.92 GB q4_k_m GGUF, plus a 168 MB GGUF LoRA, in 21.5 min on the API host's CPU.
+  - judge-eval served both with llama-server on CPU, and Nemotron 3 Ultra judged 54 held-out questions in both answer orders for $0.12.
+- **Result.** 15 wins, 27 ties and 12 losses: a win rate of 0.53 and a consistency of 0.74. The base model declined every question. The tuned model answers from the releases (in the video, JPMorgan's 6% rise in net income, which JPMorgan's own release confirms); its losses are figures it misremembers, such as Schwab's EPS as $1.58 instead of $1.69, which the judge ranks below a refusal.
+- **Caveats.** As with the multi-state run, the test questions are held-out rows of the same synthetic set, so this measures what the model learned from the collected releases. Not investment advice.
+- **The first attempt** (`2ed1e78c`, $0.42) was cancelled for its data: about one synthetic row in ten stated a figure its page did not hold. That led to the figure check above, and to a plan check that judges a LoRA on CPU against the same 4-bit base ([CHANGELOG](CHANGELOG.md), 2026-10-27).
+
 **A third live run: multi-state real-estate compliance, judged on CPU (2026-10-25, hosted).** Run `ca9838b7-bd13-4868-91d8-289406a86994` is the first live run of the CPU variant's shape: the student is quantized and judged on CPU, with no endpoint. Super planned it from one sentence (six nodes). Before Run we edited the plan: targeted research queries, 600 rows and 120 steps. The judge's base, a bare model id, became the same GGUF; the planner bug behind it is fixed (a239409). The run took 50.7 min and cost $1.35, against a $2.54 estimate.
 - **Pipeline.**
   - Tavily read 60 pages from 15 queries: 704 passages, $0.24.
@@ -267,7 +287,8 @@ During the period (the dated list is [CHANGELOG.md](CHANGELOG.md)):
 - Oct 22: the first live runs, through the Agent on real Token Factory: intent #2 (Nemotron 3 Super planned it and wrote the report; 928 rows, 446 s, $0.10 in all) and intent #3 (a 3.1 GB maths model quantized to 0.99 GB on CPU in 75 s and judged by Nemotron 3 Ultra; $0.02), whose first attempt showed that Super's live plan can omit a dataset config, which data-prep now picks; run reports written by Super in the background when a run ends; the docs-specialist template, which trains NVIDIA Nemotron Nano 8B (Lane B) and serves base and LoRA from one L40S endpoint ($2.66 estimated), and its CPU variant without an endpoint; Token Factory's per-token LoRA deploy retired (410), so `vllm-serve` serves fine-tunes; `make agent-e2e` for one live intent with hard caps and `make e2e` for the live golden run on the hosted API; the golden path end to end in stub mode, through the Agent API and from its template card; keys passed to node containers by name only; a fresh clone green in under 7 minutes (warm caches).
 - Oct 24: the golden path's data half live on real services: Tavily extracted 20 Nebius docs pages, Nemotron 3 Super wrote 300 grounded Q&A pairs from them, each with its source passage and URL, and data prep validated them (154 s, $0.07 in all); the Tavily spike turned the 20 pages into 98 passages for 4 credits.
 - Oct 25: the hosted demo, live at app.orchapod.dev and api.orchapod.dev (a Nebius VM, Object Storage, HTTPS); the golden path live end to end on Nebius, twice, from the hosted demo (Tavily research on the Nebius docs, 300 grounded Q&A pairs from Nemotron 3 Super, a LoRA fine-tune of NVIDIA Nemotron Nano 8B on an H100 Serverless Job, base and tuned served from one L40S Serverless Endpoint, and Nemotron 3 Ultra judging base against tuned on 30 questions): 7 wins, 22 ties and 1 loss in 24 minutes for $1.61, then, typed as one sentence on the hosted /agent page, 7 wins, 20 ties and 3 losses in 23.5 minutes for $1.58; a third live run, on real-estate compliance in five states, that quantized the trained student and judged it on CPU with no endpoint: 11 wins, 19 ties and 0 losses on 30 held-out questions from its own synthetic set, in 51 minutes for $1.35; run pages that keep every node's logs, say where each step runs (a Nebius Job or Endpoint with its live state) and show the Agent's report in a Report tab; on the public demo, a plan that needs rented GPUs comes back as planned, marked admin-only, with a link to its golden run.
-- Oct 27: the canvas's cost check before a run lists only the steps that rent a GPU, at the GPU they rent (`vllm-serve`'s L40S at $1.55 an hour); before, every step showed an H100 at $4.50, and a run with no GPU step still asked for a confirmation.
+- Oct 27: the canvas's cost check before a run lists only the steps that rent a GPU, at the GPU they rent (`vllm-serve`'s L40S at $1.55 an hour); before, every step showed an H100 at $4.50, and a run with no GPU step still asked for a confirmation. The demo video's run, a Q3 2026 bank-earnings analyst (`6bf36882`), and two fixes it led to: grounded synthetic data keeps only answers whose figures appear in their source passage, and a plan that fine-tunes, quantizes and judges on CPU compares the tuned model with the same 4-bit base.
+- Oct 29: the code public at https://github.com/OrchapodAI/orchapod.
 
 ## License
 

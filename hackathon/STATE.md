@@ -1,5 +1,5 @@
 # STATE — Orchapod × Nebius hackathon
-Updated: 2026-10-29T15:40Z · prev 2026-10-29T15:22Z by orchestrator · Phase: P3 · G1 MET 10-22 · G2 MET 10-25 (live golden run) · Next gate: G3 Oct 27 freeze · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
+Updated: 2026-10-29T15:54Z · prev 2026-10-29T15:40Z (was 2026-10-29T15:22Z) by orchestrator · Phase: P3 · G1 MET 10-22 · G2 MET 10-25 (live golden run) · Next gate: G3 Oct 27 freeze · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
 1. Nothing in flight.
@@ -18,7 +18,7 @@ Updated: 2026-10-29T15:40Z · prev 2026-10-29T15:22Z by orchestrator · Phase: P
    - the day cap for the judging window;
    - rotate the keys (the code is public since 10-29 at OrchapodAI/orchapod; the orchestrator checked docs/Jira.csv);
    - Devpost submit.
-4. Oct 27: G3 freeze, tag v0.1-hackathon. Oct 29 6 PM ET: submit.
+4. Devpost deadline: Fri Oct 30, 10:00 AM PT = 17:00Z (rules §1; our G4 was Oct 29 6 PM ET). Freeze at submission: no pushes, video edits or redeploys after it (update 46207). Check: footage/devpost-check-2026-10-29.md.
    - Operating rule from now: no admin runs on the hosted app. Admin spend uses up the public's day share.
 5. P2 when idle:
    - data: quality_filter → chat(create=True);

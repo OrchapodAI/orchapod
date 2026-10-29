@@ -2,6 +2,29 @@
 
 What we hit while building Orchapod on Nebius Token Factory, Nebius AI Cloud and the NVIDIA Nemotron models. Seeded on 2026-10-21 from the docs, the OpenAPI and a rented GPU. On 2026-10-22 two spikes and the first live Agent runs added live Token Factory measurements, and on 2026-10-25 the hosted bring-up and the live golden run added the AI Cloud items. `Source:` says where each finding comes from and where we recorded it. Page paths are as read between 2026-10-20 and 2026-10-22. Nothing here is a measurement until it says so.
 
+## At a glance
+
+### Token Factory
+- **Used for:** every model call Orchapod makes at runtime (the planner, the synthetic-data teacher, the quality filter, the judge and the run report), plus Lane A's LoRA fine-tune of a Llama model.
+- **What worked:** strict `json_schema` output on Super, Lightning and Ultra; per-token prices in `GET /v1/models?verbose=true`; thinking switched off per call; data and evaluations for cents (300 grounded rows for $0.03, a 30-question judged eval for $0.08).
+- **What needs work:** serving a fine-tune (per-token LoRA deploy answers 410 and the deploy pages are 404s), unpublished fine-tuning prices, and docs that disagree with the OpenAPI (version 20261020-1a55a96cb; details below).
+- **Onboarding, zero to hello world:** about half an hour. The key was saved at 2026-10-22T03:07Z and `GET /v1/models` answered 200 with 28 models at once; by 03:40Z spike 2 had strict JSON from three Nemotron models. The API speaks the OpenAI chat format, so plain HTTP calls were enough. Source: `hackathon/LOG.md` (2026-10-22T03:07Z, 03:40Z).
+- **Would we build with it again:** yes. It gave us a 120B teacher and a 550B judge with no GPUs of our own, at prices that let the Agent estimate a run before it starts.
+
+### Nebius AI Cloud
+- **Used for:** the student's GPU steps (Unsloth training on an H100 Serverless Job, vLLM serving on an L40S Serverless Endpoint), Object Storage for every artifact, a Container Registry for the node images, and the VM that hosts the demo.
+- **What worked:** Jobs pulled a 44 GB image from a registry in the same project with no credentials; endpoints started in about 4 minutes and our API deleted them at expiry; the golden runs trained for $0.8408 and $0.839 and served for $0.6276 and $0.600.
+- **What needs work:** no REST route for Job logs, a 24-hour default Job timeout, a zero default vCPU quota in eu-north1, and creates that answered PermissionDenied after billing activation until a CLI re-login (details below).
+- **Onboarding, zero to hello world:** about 4 h 20 min on 2026-10-25, most of it account state. The bring-up started at 02:22Z with the GPU quota in place; creates were refused until billing activation and a refreshed CLI token (05:02Z); the first golden run on a Serverless Job and Endpoint passed at 06:42Z. Source: `hackathon/LOG.md` (2026-10-25T02:22Z, 02:57Z, 05:02Z, 06:42Z).
+- **Would we build with it again:** yes, for the GPU steps: a run pays for minutes of an H100 or an L40S and leaves nothing running.
+
+### NVIDIA Nemotron models
+- **Used for:** Nemotron 3 Super plans, writes the synthetic data and writes the report; Nemotron 3 Ultra judges; Nemotron 3.5 Lightning can filter data; `nvidia/Llama-3.1-Nemotron-Nano-8B-v1` is the student we fine-tune.
+- **What worked:** Super's plans validated on the first call; Ultra's verdicts held in both answer orders for 0.67 to 0.74 of the questions on four live runs; Nano 8B trained, merged and served with no extra kernels.
+- **What needs work:** different reasoning switches across the family, Lightning's slow and erratic latency on 2026-10-22, and LoRA on the hybrid Mamba models (details below).
+- **Onboarding, zero to hello world:** the same Token Factory call as above for Super, Ultra and Lightning; for the student, one spike on a rented A100 (60 LoRA steps in 62.5 s at a 15.9 GiB peak). Source: `containers/unsloth-train/spike/RESULTS.md`.
+- **Would we build with them again:** yes. One family covers the planner, the teacher, the judge and the student, so the golden path is NVIDIA end to end.
+
 ## Token Factory
 
 - **Serving a fine-tuned Llama per token: our sources disagreed, and the API settles it with a 410.** On 2026-10-22 `POST /v0/models` returned 410 `{"detail":"LoRA adapter deployment is no longer available"}`, both with an empty body and with the source of a fine-tune that had just succeeded (`<job>:<checkpoint>`, base `meta-llama/Llama-3.1-8B-Instruct`); `GET /v0/models` returns 405. No page says so: https://docs.tokenfactory.nebius.com/fine-tuning/models still offers "deploy serverless LoRA adapter models" for Llama-3.1-8B and Llama-3.3-70B, and https://docs.tokenfactory.nebius.com/post-training/models says Meta models deploy only through Dedicated endpoints. A 410 that named the replacement (Dedicated endpoint custom weights, or downloading the adapter) would have saved us a day. Source: `scripts/spikes/spike1/out/v0_models_post_empty.json`, `deploy_result.json`.
@@ -45,10 +68,12 @@ The numbers below come from one spike on a rented vast.ai A100 80 GB, outside Ne
 - **Llama-3.1-Nemotron-Nano-8B-v1 was an easy LoRA student.** With Unsloth 16-bit LoRA, 60 steps took 62.5 s at a 15.9 GiB peak, the merge to 16-bit took 40.5 s (15 GB) and vLLM 0.18.0 was healthy 51 s after start. It needed no extra kernels or dependency pins. Source: `containers/unsloth-train/spike/RESULTS.md` (Main run); `hackathon/briefs/2026-10-20-ml-engineering-spike4-report.md` (DECISION).
 - **The 30B-A3B hybrid (Mamba and MoE) passed train, merge and serve, with more work than the 8B.** PEFT cannot wrap the router, a raw `nn.Parameter`, so it stayed frozen, and PEFT 0.21 refuses LoRA on Mamba `out_proj` and `conv1d` for `nemotron_h`. The 128 routed experts stayed frozen because of our choice of LoRA targets (attention, Mamba `in_proj` and the shared experts). Installing `mamba_ssm` pulls `tilelang`, which downgrades `apache-tvm-ffi` and breaks vLLM's xgrammar import. The Hugging Face remote code loops over the experts, so training ran about 11 s a step against 1 s for the 8B, with the GPU about 38% busy, and peaked at 60.5 GiB. Source: `containers/unsloth-train/spike/RESULTS.md` (Stretch, Surprises 2 to 4).
 
-## To record from live runs
+## Measured on live runs
 
 - Spike 1 (2026-10-22): a 50-row LoRA job on `meta-llama/Llama-3.1-8B-Instruct` (1 epoch, defaults otherwise) took 6 min 45 s from create to `succeeded`: the datasets were processed in 45 s, training started about 3 minutes later and ran under 2 minutes, for 2,599 trained tokens in one step. The job read `running` from the create reply on (`validating_files` and `queued` never showed). Its cost is unknown until the console's Usage tab shows it, because the fine-tune price is not published. Source: `scripts/spikes/spike1/out/poll.jsonl`, `events.json`.
 - The golden run (2026-10-25): Super wrote 300 grounded Q&A rows in 2.1 min for $0.0295, and Ultra judged 30 pairs in 85 s for $0.0802, about $0.0027 a judged question. 0.733 of Ultra's verdicts held in both answer orders. Source: `hackathon/LOG.md` (2026-10-25T06:42Z).
+- The finance run (2026-10-27, the demo video's): Super wrote 550 grounded rows from 627 passages in 8.7 min for $0.16, and Ultra judged 54 held-out questions in both answer orders for $0.12; 0.74 of the verdicts held in both orders. Source: `hackathon/LOG.md` (2026-10-27T18:50Z).
+
 ## What worked well
 
 - **The golden path ran live twice on Serverless Jobs and Endpoints, for $1.61 and $1.58.** Each run trained a LoRA of Nemotron Nano 8B on an H100 Job (60 of 60 steps) and served the base and the adapter from one L40S Endpoint (vLLM with `--enable-lora`), in 24.2 and 23.5 min, against a $2.66 estimate. Source: `hackathon/LOG.md` (2026-10-25T06:42Z and 08:59Z).

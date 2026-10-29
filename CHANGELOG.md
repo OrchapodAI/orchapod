@@ -2,6 +2,9 @@
 
 Dated, user-facing changes made during the Nebius × NVIDIA hackathon submission period (Aug 26 – Oct 30, 2026). Orchapod's first commit is May 4, 2026 (367c605); this file becomes the Devpost "what changed" write-up.
 
+## 2026-10-29
+- The code is public at https://github.com/OrchapodAI/orchapod (MIT), with its full history; the README's setup clones it from there.
+
 ## 2026-10-27
 - The canvas's cost check before a run lists only the steps that rent a GPU, at the GPU they rent: vllm-serve's L40S at $1.55 an hour. Before, every step showed an H100 at $4.50, and a run with no GPU step still asked for a confirmation.
 - A plan that fine-tunes, quantizes and judges on CPU is checked before it runs: the tuned model is compared with the same 4-bit base. Before, the planner could pick the 16 GB full-precision base, which does not fit the CPU eval, or pair the LoRA with an endpoint, and such a run failed at its last step.

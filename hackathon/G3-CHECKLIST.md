@@ -42,9 +42,10 @@ else the orchestrator runs and logs in LOG.md with its output.
 ### D. Hari
 - [ ] Keys rotated (Token Factory, Tavily, the Nebius service-account keys, the storage key) before the repo is public. The
       new values go only into .env and the VM's /opt/orchapod/.env, then `dc up -d api`. The hosted day cap is unchanged.
-- [ ] docs/Jira.csv reviewed for personal data (or removed).
-- [ ] The repo made public (bangadpurva/orchapod.ai). GitHub's default branch is main (pre-hackathon code): Purva switches it to
-      NebiusHackathon, or Devpost links the branch.
+- [x] docs/Jira.csv checked for personal data (orchestrator, 2026-10-29): 21 tickets, no emails, phone numbers or assignees;
+      one reporter's name and Jira account id.
+- [x] The public repo (Hari, 2026-10-29): https://github.com/OrchapodAI/orchapod. Its main is NebiusHackathon with the full history
+      (gitleaks clean over 818 commits); bangadpurva/orchapod.ai stays private.
 - [ ] The video: the voice-over on footage/video-draft's cut (or a re-record), uploaded public on YouTube, under 3:00.
 - [x] The judging-window day cap: ORCHAPOD_MAX_DAY_USD=20 from Oct 29 (Hari, 2026-10-25). The VM's orchapod-daycap.timer applies it at 00:00 UTC.
       After it fires, check: `sudo grep MAX_DAY /opt/orchapod/.env` and `systemctl status orchapod-daycap.service`.

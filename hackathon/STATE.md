@@ -1,10 +1,11 @@
 # STATE — Orchapod × Nebius hackathon
-Updated: 2026-10-29T15:22Z · prev 2026-10-27T18:50Z by orchestrator · Phase: P3 · G1 MET 10-22 · G2 MET 10-25 (live golden run) · Next gate: G3 Oct 27 freeze · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
+Updated: 2026-10-29T15:40Z · prev 2026-10-29T15:22Z by orchestrator · Phase: P3 · G1 MET 10-22 · G2 MET 10-25 (live golden run) · Next gate: G3 Oct 27 freeze · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
 1. Nothing in flight.
    - The hosted app runs 6927037 (deployed 10-27 17:37Z: planner rule for a LoRA judged on CPU, 4c8c925 + c688928; grounded synth keeps only figures from the passage and reads the whole corpus). Day $5, run $3, visitors 0.1 (GPU nodes admin-only); Hari's f17435ed stays pending. The cap rises to $20 on Oct 29 00:00Z (timer).
    - Finance video (Hari, 10-27): run 6bf36882 (Q3 2026 bank-earnings analyst; 51 min, $1.36; Ultra 15/27/12, win rate 0.53) and the cut in footage/2026-10-27-finance/out/ (1:56 demo, re-cut 10-29 without the title card so it opens on the Agent page; captions + a synthetic-voice copy; README.txt). Run 1 (2ed1e78c) was cancelled for its data ($0.42). Today's admin spend (~$1.84) used the visitors' share until 00:00Z.
+   - Public repo (Hari, 10-29): https://github.com/OrchapodAI/orchapod, its main = NebiusHackathon with the full history (gitleaks clean over 818 commits); bangadpurva/orchapod.ai stays private. Public CI runs the unit tests and the frontend build; the image jobs run only in the private repo, whose Actions are blocked by billing. Devpost requirements check: footage/devpost-check-2026-10-29.md.
    - The fresh clone is green in 3 min 35 s (qa-w11); the security review has no open critical or high finding; gitleaks is clean over all refs.
    - Next: G3 (Oct 27), hackathon/G3-CHECKLIST.md. 10-27 06:22–07:15Z: gitleaks clean, Nebius 0 endpoints / 0 jobs, make check green at 4c1f7a6. Docker Desktop pulls again since 12:50Z: make check E2E=1 (1180 passed, web 51, e2e 4 PASS) and ui-smoke 5/5 are green at 8b9ab39. The anonymous check PASSED at 12:02Z on 4c1f7a6, but the 17:37Z deploy changed planner and synth code: re-run it after 00:00Z (the visitors' share is spent today). Checklist C is done (devrel-w13, 2b893b3). What is left of A and B runs on the tag commit, after D's repo step (Hari).
 2. DONE 10-25:
@@ -15,7 +16,7 @@ Updated: 2026-10-29T15:22Z · prev 2026-10-27T18:50Z by orchestrator · Phase: P
 3. Hari (hackathon/WAITING_FOR_HUMAN):
    - the voice-over and the video upload;
    - the day cap for the judging window;
-   - the repo public at G3 (keys rotated, Jira.csv);
+   - rotate the keys (the code is public since 10-29 at OrchapodAI/orchapod; the orchestrator checked docs/Jira.csv);
    - Devpost submit.
 4. Oct 27: G3 freeze, tag v0.1-hackathon. Oct 29 6 PM ET: submit.
    - Operating rule from now: no admin runs on the hosted app. Admin spend uses up the public's day share.
@@ -145,9 +146,9 @@ Updated: 2026-10-29T15:22Z · prev 2026-10-27T18:50Z by orchestrator · Phase: P
 - [ ] Devpost team + draft project (Best Apps and Agents)
 - [ ] vast.ai: two stopped instances from other projects (54041703 rec-l2-bench-2, 54062531 esci-bench-v2), stopped since 2026-10-03, still billing storage (~$0.20/h per the spike agent) — destroy them? Hari's call; agents leave them alone
 - [ ] DECISION: disclose in the README/Devpost that the build used AI coding agents? (Hari's call)
-- [ ] Before submission: GitHub's default branch is `main` (pre-hackathon code) — set it to NebiusHackathon, or link the branch explicitly in Devpost (repo admin: Purva)
+- [x] Before submission: the public repo's default branch holds the hackathon code — DONE 10-29: OrchapodAI/orchapod main = NebiusHackathon
 - [x] DECISION: golden-run topic = the Nebius docs specialist on NVIDIA Nemotron Nano 8B (R25, Hari) — DONE: live golden run d20d30f3, 2026-10-25
-- [ ] Before the repo goes public (G3): gitleaks clean over all refs — DONE 2026-10-22 (.gitleaksignore, 11 triaged false positives; no .env secret in history); keys rotated; docs/Jira.csv reviewed for personal data (Hari)
+- [ ] Before the repo goes public (G3): gitleaks clean over all refs — DONE 2026-10-22 (.gitleaksignore, 11 triaged false positives; no .env secret in history); again 10-29 over NebiusHackathon (818 commits, no leaks); docs/Jira.csv checked 10-29 (no emails, phones or assignees); keys rotated (Hari) — still open
 
 ## Tooling (installed skills/plugins/MCP, with install command)
 - Nebius MCP (user scope): `claude mcp add --env SAFE_MODE=true --transport stdio --scope user nebius -- uvx --refresh-package nebius-mcp-server --with "pydantic<2.12" "nebius-mcp-server@git+https://github.com/nebius/mcp-server@main"` (the pydantic pin works around an upstream dependency clash); Nebius CLI 0.12.294 in ~/.nebius/bin; Hostinger Connector plugin (DNS only)

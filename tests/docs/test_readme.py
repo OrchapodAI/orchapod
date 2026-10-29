@@ -69,14 +69,14 @@ def test_models_urls_and_clone_url():
     for model in MODELS:
         assert model in README, f"README must name {model}"
         assert model in CONTRACTS, f"{model} is not in docs/contracts.md"
-    for needle in ("https://api.tokenfactory.nebius.com/v1", "github.com/bangadpurva/orchapod.ai", "https://app.orchapod.dev"):
+    for needle in ("https://api.tokenfactory.nebius.com/v1", "github.com/OrchapodAI/orchapod", "https://app.orchapod.dev"):
         assert needle in README, f"README must mention {needle}"
-    assert not re.search(r"bangadpurva/orchapod(?!\.ai)", README), "the clone URL ends in orchapod.ai"
+    assert "github.com/bangadpurva" not in README, "the public repo is github.com/OrchapodAI/orchapod"
 
 
 def test_setup_and_license_lines():
     for line in (
-        "git clone -b NebiusHackathon https://github.com/bangadpurva/orchapod.ai.git",
+        "git clone https://github.com/OrchapodAI/orchapod.git",
         "make up",
         "make check",
         "[MIT](LICENSE)",

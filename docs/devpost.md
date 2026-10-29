@@ -63,7 +63,7 @@ Best Apps and Agents
 
 - Demo, free to use and unrestricted until Dec 15, 2026: https://app.orchapod.dev (API: https://api.orchapod.dev). TODO(D8): check it logged out before submitting.
 - Video, public on YouTube, under 3 minutes, no unlicensed music or third-party marks: TODO(D8) the URL.
-- Repository, public with the MIT license: TODO(G3) https://github.com/bangadpurva/orchapod.ai goes public at the freeze; TODO(D8) then check it logged out. The default branch is main, which holds the code from before the hackathon, so link the NebiusHackathon branch or switch the default before submitting.
+- Repository, public with the MIT license: https://github.com/OrchapodAI/orchapod (default branch main).
 - Feedback: `docs/feedback.md`. TODO(D8): re-check the pages it cites, then paste it into the Devpost field and link it on GitHub.
 
 ## Gallery

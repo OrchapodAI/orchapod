@@ -33,6 +33,7 @@ jobs:
   api:
     needs: test
     name: Build API image
+    if: github.repository == 'bangadpurva/orchapod.ai'   # images publish from the private repo, which owns ghcr.io/bangadpurva
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -104,6 +105,7 @@ jobs:
   containers:
     name: Build container / ${{ matrix.node }}
     needs: test
+    if: github.repository == 'bangadpurva/orchapod.ai'   # images publish from the private repo, which owns ghcr.io/bangadpurva
     runs-on: ubuntu-latest
     permissions:
       contents: read

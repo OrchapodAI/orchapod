@@ -111,11 +111,11 @@ We have no Nebius console screenshots. The run page's node cards show each Job a
 
 ## Setup
 
-You need Docker with the compose plugin, Python 3.12 (`brew install python@3.12` or `uv python install 3.12`) and Node 22 with pnpm. Live runs also need a [Nebius Token Factory](https://tokenfactory.nebius.com) API key and a [Tavily](https://tavily.com) API key (free tier: 1,000 credits a month); a first run needs neither. A live run of the real-estate template also needs `HF_TOKEN`, from a Hugging Face account that accepted Meta's Llama licence, because Meta's base models are gated. The Nemotron Nano golden path needs none. The repository is private until the hackathon freeze, so until then the clone needs read access (TODO(G3)).
+You need Docker with the compose plugin, Python 3.12 (`brew install python@3.12` or `uv python install 3.12`) and Node 22 with pnpm. Live runs also need a [Nebius Token Factory](https://tokenfactory.nebius.com) API key and a [Tavily](https://tavily.com) API key (free tier: 1,000 credits a month); a first run needs neither. A live run of the real-estate template also needs `HF_TOKEN`, from a Hugging Face account that accepted Meta's Llama licence, because Meta's base models are gated. The Nemotron Nano golden path needs none.
 
 ```bash
-git clone -b NebiusHackathon https://github.com/bangadpurva/orchapod.ai.git
-cd orchapod.ai
+git clone https://github.com/OrchapodAI/orchapod.git
+cd orchapod
 cp .env.example .env
 make up                         # Postgres on 5432, Redis on 6379, MinIO on 9000 (console 9001)
 
@@ -153,7 +153,7 @@ If port 8001 is taken, pick another, say 8061. Run uvicorn with `--port 8061`, a
 
 On Linux, add `--host 0.0.0.0` to the uvicorn line (it then listens on every interface): node containers reach the host through Docker's host gateway, which never reaches a listener on 127.0.0.1; Docker Desktop works as written. Open http://localhost:3000; `make down` stops Postgres, Redis and MinIO.
 
-**Node images.** A node runs from `orchapod/<node>:dev` when that image exists locally; otherwise Docker pulls `ghcr.io/bangadpurva/<node>:latest`, which CI pushes from NebiusHackathon (forks set `ORCHAPOD_IMAGE_PREFIX`). Those packages refuse anonymous pulls until they are made public (TODO(G3)). The hosted app pulls from our own Nebius Container Registry instead, which only our project can read. So build the images first: the stub run above builds the images of the three canonical intents and the golden path, or build them yourself from the repo root, for example for the movie data:
+**Node images.** A node runs from `orchapod/<node>:dev` when that image exists locally; otherwise Docker pulls `ghcr.io/bangadpurva/<node>:latest`, which CI pushes from NebiusHackathon (forks set `ORCHAPOD_IMAGE_PREFIX`). Those packages are private, so build the images you need locally, as below. The hosted app pulls from our own Nebius Container Registry instead, which only our project can read. So build the images first: the stub run above builds the images of the three canonical intents and the golden path, or build them yourself from the repo root, for example for the movie data:
 
 ```bash
 for n in synth-distilabel data-prep; do docker build -t orchapod/$n:dev -f containers/$n/Dockerfile .; done

@@ -1045,3 +1045,8 @@ worktrees:
   - Every value read back from the saved form; still DRAFT 4/5, not submitted. Old and new values: footage/devpost-edits-2026-10-29.md (gitignored: it holds personal answers).
   - Repo: README and docs/devpost.md link the video (https://youtu.be/ULEYpAvsUxs, 133 s, the final cut); README says Node 22.18+ and the 10-29 fresh-clone counts (1183 + 51 web, E2E 4 PASS).
   - Open, Hari: the video is Unlisted (rules: publicly visible) → Public; confirm the Builders & Brews city (New York City); optional gallery; tick the terms and Submit before Fri Oct 30 17:00Z.
+- 2026-10-29T18:29Z VIDEO PUBLIC (Hari: 'video is public now, verify it'). https://youtu.be/ULEYpAvsUxs checked signed out at 18:27Z:
+  - The watch page: not unlisted, not private, playable and embeddable (Devpost embeds it), 133 s, published 2026-10-29T17:34Z. It is in the channel's RSS feed, which lists only public videos; the built-in browser shows no Unlisted badge.
+  - Captions: YouTube's auto-generated English only; the burned-in subtitles carry the words. The description's chapter list does not show as chapters on the player (one segment). Both optional.
+  - docs/devpost.md and docs/video-script.md no longer say Unlisted / TODO for the video.
+  - Open, Hari: confirm the Builders & Brews city (New York City); optional gallery; tick the terms and Submit before Fri Oct 30 17:00Z.

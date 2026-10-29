@@ -1,12 +1,12 @@
 # STATE — Orchapod × Nebius hackathon
-Updated: 2026-10-29T17:08Z · prev 2026-10-29T15:54Z by orchestrator · Phase: P3 · G1 MET 10-22 · G2 MET 10-25 (live golden run) · Next gate: G3 Oct 27 freeze · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
+Updated: 2026-10-29T18:29Z · prev 2026-10-29T17:08Z by orchestrator · Phase: P3 · G1 MET 10-22 · G2 MET 10-25 (live golden run) · Next gate: G3 Oct 27 freeze · Branch: NebiusHackathon (checkout ~/src/orchapod-hack)
 
 ## Next actions (in order)
 1. Nothing in flight.
    - The hosted app runs 6927037 (deployed 10-27 17:37Z: planner rule for a LoRA judged on CPU, 4c8c925 + c688928; grounded synth keeps only figures from the passage and reads the whole corpus). Day $5, run $3, visitors 0.1 (GPU nodes admin-only); Hari's f17435ed stays pending. The cap rises to $20 on Oct 29 00:00Z (timer).
    - Finance video (Hari, 10-27): run 6bf36882 (Q3 2026 bank-earnings analyst; 51 min, $1.36; Ultra 15/27/12, win rate 0.53) and the cut in footage/2026-10-27-finance/out/ (1:56 demo, re-cut 10-29 without the title card so it opens on the Agent page; captions + a synthetic-voice copy; README.txt). Run 1 (2ed1e78c) was cancelled for its data ($0.42). Today's admin spend (~$1.84) used the visitors' share until 00:00Z.
    - Public repo (Hari, 10-29): https://github.com/OrchapodAI/orchapod, its main = NebiusHackathon with the full history (gitleaks clean over 818 commits); bangadpurva/orchapod.ai stays private. Public CI runs the unit tests and the frontend build; the image jobs run only in the private repo, whose Actions are blocked by billing. Devpost requirements check: footage/devpost-check-2026-10-29.md.
-   - Devpost draft 1245746 (10-29): every answer now matches the repo (record: footage/devpost-edits-2026-10-29.md); still unsubmitted. Video https://youtu.be/ULEYpAvsUxs is the final 2:13 cut but Unlisted → Hari sets Public, then submits.
+   - Devpost draft 1245746 (10-29): every answer now matches the repo (record: footage/devpost-edits-2026-10-29.md); still unsubmitted. Video https://youtu.be/ULEYpAvsUxs (the final 2:13 cut) is Public since 17:34Z, checked signed out at 18:27Z → Hari submits.
    - The fresh clone is green in 3 min 35 s (qa-w11); the security review has no open critical or high finding; gitleaks is clean over all refs.
    - Next: G3 (Oct 27), hackathon/G3-CHECKLIST.md. 10-27 06:22–07:15Z: gitleaks clean, Nebius 0 endpoints / 0 jobs, make check green at 4c1f7a6. Docker Desktop pulls again since 12:50Z: make check E2E=1 (1180 passed, web 51, e2e 4 PASS) and ui-smoke 5/5 are green at 8b9ab39. The anonymous check PASSED at 12:02Z on 4c1f7a6, but the 17:37Z deploy changed planner and synth code: re-run it after 00:00Z (the visitors' share is spent today). Checklist C is done (devrel-w13, 2b893b3). What is left of A and B runs on the tag commit, after D's repo step (Hari).
 2. DONE 10-25:
